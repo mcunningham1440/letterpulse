@@ -1,0 +1,195 @@
+{% extends 'analytics/base.html' %}
+
+{% block title %}Analyze Content - Beehiiv Analytics{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <h1 class="mb-4">Analyze Content</h1>
+        
+        <!-- Content Set Selection Card -->
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">Choose a Content Set</h5>
+            </div>
+            <div class="card-body">
+                {% if content_sets %}
+                <div class="mb-3">
+                    <label for="contentSetSelect" class="form-label fw-bold">Select Content Set</label>
+                    <select class="form-select" id="contentSetSelect">
+                        <option value="">-- Select a content set --</option>
+                        {% for content_set in content_sets %}
+                        <option value="{{ content_set.name }}">
+                            {{ content_set.name }} ({{ content_set.get_items_count }} items, created {{ content_set.created_at|date:"M d, Y" }})
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+                {% else %}
+                <div class="alert alert-info">
+                    No content sets available. Please extract and save content in the Extract tab first.
+                </div>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- Content Set Display Card -->
+        <div class="card mt-4 d-none" id="contentSetCard">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0">Content Set: <span id="contentSetName"></span></h5>
+                <button class="btn btn-sm btn-outline-primary" id="downloadBtn">
+                    Download CSV
+                </button>
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-hover" id="contentTable">
+                        <thead>
+                            <tr>
+                                <th>Post Title</th>
+                                <th>Post Date</th>
+                                <th>Item Text</th>
+                                <th>Links</th>
+                                <th class="text-end">Max Clicks</th>
+                            </tr>
+                        </thead>
+                        <tbody id="contentTableBody">
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- AI Insights Card -->
+        <div class="card mt-4 d-none" id="insightsCard">
+            <div class="card-header">
+                <h5 class="mb-0">Content Insights</h5>
+            </div>
+            <div class="card-body">
+                <button class="btn btn-primary" id="generateInsightsBtn">
+                    <span class="spinner-border spinner-border-sm d-none" id="insightsSpinner"></span>
+                    Generate Insights
+                </button>
+                
+                <div class="mt-4 d-none" id="insightsContent">
+                    <h6 class="fw-bold">Key Insights</h6>
+                    <div id="insightsText" class="mt-3"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    let currentContentSet = null;
+    
+    // Handle content set selection
+    document.getElementById('contentSetSelect').addEventListener('change', async function() {
+        const setName = this.value;
+        
+        if (!setName) {
+            document.getElementById('contentSetCard').classList.add('d-none');
+            document.getElementById('insightsCard').classList.add('d-none');
+            return;
+        }
+        
+        // Load content set
+        try {
+            const response = await fetch(`/analyze/load-content-set/${encodeURIComponent(setName)}/`);
+            const data = await response.json();
+            
+            if (data.success) {
+                currentContentSet = setName;
+                displayContentSet(data);
+                document.getElementById('contentSetCard').classList.remove('d-none');
+                document.getElementById('insightsCard').classList.remove('d-none');
+                document.getElementById('insightsContent').classList.add('d-none');
+            } else {
+                alert('Error loading content set: ' + data.error);
+            }
+        } catch (error) {
+            alert('Error loading content set: ' + error.message);
+        }
+    });
+    
+    // Display content set data
+    function displayContentSet(data) {
+        document.getElementById('contentSetName').textContent = data.name;
+        
+        const tbody = document.getElementById('contentTableBody');
+        tbody.innerHTML = '';
+        
+        data.data.forEach(item => {
+            const row = document.createElement('tr');
+            row.innerHTML = `
+                <td>${item.post_title}</td>
+                <td>${item.post_date}</td>
+                <td>${truncateText(item.text, 50)}</td>
+                <td><span class="badge bg-secondary">${item.links.length} link${item.links.length !== 1 ? 's' : ''}</span></td>
+                <td class="text-end">${item.max_clicks}</td>
+            `;
+            tbody.appendChild(row);
+        });
+    }
+    
+    // Truncate text helper
+    function truncateText(text, maxLength) {
+        if (text.length <= maxLength) return text;
+        return text.substring(0, maxLength) + '...';
+    }
+    
+    // Generate insights
+    document.getElementById('generateInsightsBtn').addEventListener('click', async function() {
+        if (!currentContentSet) return;
+        
+        const spinner = document.getElementById('insightsSpinner');
+        const button = this;
+        
+        button.disabled = true;
+        spinner.classList.remove('d-none');
+        
+        try {
+            const formData = new FormData();
+            formData.append('set_name', currentContentSet);
+            formData.append('csrfmiddlewaretoken', '{{ csrf_token }}');
+            
+            const response = await fetch('/analyze/generate-insights/', {
+                method: 'POST',
+                body: formData
+            });
+            
+            const data = await response.json();
+            
+            if (data.success) {
+                document.getElementById('insightsText').innerHTML = formatInsights(data.insights);
+                document.getElementById('insightsContent').classList.remove('d-none');
+            } else {
+                alert('Error generating insights: ' + data.error);
+            }
+        } catch (error) {
+            alert('Error generating insights: ' + error.message);
+        } finally {
+            button.disabled = false;
+            spinner.classList.add('d-none');
+        }
+    });
+    
+    // Format insights (convert markdown-like text to HTML)
+    function formatInsights(text) {
+        // Simple formatting: convert line breaks and bullet points
+        return text
+            .replace(/\n\n/g, '<br><br>')
+            .replace(/\n/g, '<br>')
+            .replace(/^- /gm, '• ');
+    }
+    
+    // Download CSV
+    document.getElementById('downloadBtn').addEventListener('click', function() {
+        if (currentContentSet) {
+            window.location.href = `/analyze/download-csv/${encodeURIComponent(currentContentSet)}/`;
+        }
+    });
+</script>
+{% endblock %}

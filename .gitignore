@@ -1,0 +1,10 @@
+config.py
+sandbox.ipynb
+data/
+__pycache__/
+sandboxes/
+code_dump/
+testing_data/
+
+.env
+*.pyc

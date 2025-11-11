@@ -1,0 +1,188 @@
+{% extends 'analytics/base.html' %}
+
+{% block title %}Extract Content - Beehiiv Analytics{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <h1 class="mb-4">Extract Content from Posts</h1>
+        
+        <!-- Posts Selection Card -->
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">Select Posts for Extraction</h5>
+            </div>
+            <div class="card-body">
+                <div class="alert alert-info mb-3">
+                    <i class="bi bi-info-circle"></i>
+                    Check the boxes next to posts you want to analyze, then provide a content description below.
+                </div>
+                
+                <form method="post" action="{% url 'analytics:run_extraction' %}" id="extractionForm">
+                    {% csrf_token %}
+                    
+                    <div class="table-responsive" style="max-height: 500px; overflow-y: auto;">
+                        <table class="table table-hover table-sm">
+                            <thead class="sticky-top bg-white">
+                                <tr>
+                                    <th style="width: 40px;">
+                                        <input type="checkbox" id="selectAll" class="form-check-input">
+                                    </th>
+                                    <th>Publish Date</th>
+                                    <th>Title</th>
+                                    <th>Subtitle</th>
+                                    <th class="text-end">Recipients</th>
+                                    <th class="text-end">Opens</th>
+                                    <th class="text-end">Clicks</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for post in posts %}
+                                <tr>
+                                    <td>
+                                        <input type="checkbox" name="selected_posts" value="{{ forloop.counter0 }}" 
+                                               class="form-check-input post-checkbox">
+                                    </td>
+                                    <td>{{ post.publish_date_cst }}</td>
+                                    <td>{{ post.title }}</td>
+                                    <td>{{ post.subtitle|default:"-" }}</td>
+                                    <td class="text-end">{{ post.recipients|default:0 }}</td>
+                                    <td class="text-end">{{ post.unique_email_opens|default:0 }}</td>
+                                    <td class="text-end">{{ post.unique_email_clicks|default:0 }}</td>
+                                </tr>
+                                {% empty %}
+                                <tr>
+                                    <td colspan="7" class="text-center text-muted">No posts available</td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                    
+                    <hr class="my-4">
+                    
+                    <!-- Content Description -->
+                    <div class="row">
+                        <div class="col-md-9">
+                            <label for="content_desc" class="form-label fw-bold">Content Description</label>
+                            <input type="text" 
+                                   class="form-control" 
+                                   id="content_desc" 
+                                   name="content_desc" 
+                                   placeholder="e.g., 'Items in the quick links section'"
+                                   required>
+                            <div class="form-text">Describe the content you want to extract from the selected posts</div>
+                        </div>
+                        <div class="col-md-3 d-flex align-items-end">
+                            <button type="submit" class="btn btn-primary w-100">
+                                <span class="spinner-border spinner-border-sm d-none" id="extractSpinner"></span>
+                                Extract Content
+                            </button>
+                        </div>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- Extracted Items Card -->
+        {% if extracted_items %}
+        <div class="card mt-4">
+            <div class="card-header">
+                <h5 class="mb-0">Extracted Items</h5>
+            </div>
+            <div class="card-body">
+                <form method="post" action="{% url 'analytics:delete_items' %}" id="deleteForm">
+                    {% csrf_token %}
+                    
+                    <div class="table-responsive">
+                        <table class="table table-hover">
+                            <thead>
+                                <tr>
+                                    <th style="width: 40px;">
+                                        <input type="checkbox" id="selectAllItems" class="form-check-input">
+                                    </th>
+                                    <th>Post Title</th>
+                                    <th>Post Date</th>
+                                    <th>Item Text</th>
+                                    <th>Links</th>
+                                    <th class="text-end">Max Clicks</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for item in extracted_items %}
+                                <tr>
+                                    <td>
+                                        <input type="checkbox" name="items_to_delete" value="{{ forloop.counter0 }}" 
+                                               class="form-check-input item-checkbox">
+                                    </td>
+                                    <td>{{ item.post_title }}</td>
+                                    <td>{{ item.post_date }}</td>
+                                    <td>{{ item.text|truncatewords:15 }}</td>
+                                    <td>
+                                        <span class="badge bg-secondary">{{ item.links|length }} link{{ item.links|length|pluralize }}</span>
+                                    </td>
+                                    <td class="text-end">{{ item.max_clicks }}</td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                    
+                    <div class="text-center mt-3">
+                        <button type="submit" class="btn btn-danger">Remove Selected Items</button>
+                    </div>
+                </form>
+                
+                <hr class="my-4">
+                
+                <!-- Save Content Set -->
+                <h5 class="mb-3">Save Content Set</h5>
+                <form method="post" action="{% url 'analytics:save_content_set' %}">
+                    {% csrf_token %}
+                    <div class="row">
+                        <div class="col-md-9">
+                            <label for="content_set_name" class="form-label fw-bold">Content Set Name</label>
+                            <input type="text" 
+                                   class="form-control" 
+                                   id="content_set_name" 
+                                   name="content_set_name" 
+                                   placeholder="e.g., 'quick_links_q1_2024'"
+                                   required>
+                            <div class="form-text">Enter a unique name for this content set</div>
+                        </div>
+                        <div class="col-md-3 d-flex align-items-end">
+                            <button type="submit" class="btn btn-primary w-100">Save Content Set</button>
+                        </div>
+                    </div>
+                </form>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    // Select all posts checkbox
+    document.getElementById('selectAll').addEventListener('change', function() {
+        const checkboxes = document.querySelectorAll('.post-checkbox');
+        checkboxes.forEach(cb => cb.checked = this.checked);
+    });
+    
+    // Select all items checkbox
+    const selectAllItems = document.getElementById('selectAllItems');
+    if (selectAllItems) {
+        selectAllItems.addEventListener('change', function() {
+            const checkboxes = document.querySelectorAll('.item-checkbox');
+            checkboxes.forEach(cb => cb.checked = this.checked);
+        });
+    }
+    
+    // Show spinner on form submit
+    document.getElementById('extractionForm').addEventListener('submit', function() {
+        const spinner = document.getElementById('extractSpinner');
+        spinner.classList.remove('d-none');
+    });
+</script>
+{% endblock %}
