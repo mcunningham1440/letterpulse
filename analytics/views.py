@@ -104,7 +104,7 @@ def run_extraction(request):
         
         # Prepare data for parallel extraction
         posts_data = [
-            (row.title, f"post_{row.id}.html", row.publish_date_cst, row.unique_email_opens)
+            (row.title, f"{row.id}.html", row.publish_date_cst, row.unique_email_opens)
             for _, row in posts_of_interest.iterrows()
         ]
         
@@ -127,6 +127,11 @@ def run_extraction(request):
         
         if items_list:
             extracted_df = pd.concat(items_list, ignore_index=True)
+            
+            # Convert date objects to strings for JSON serialization
+            if 'post_date' in extracted_df.columns:
+                extracted_df['post_date'] = extracted_df['post_date'].astype(str)
+            
             # Store in session as list of dicts
             request.session['extracted_items'] = extracted_df.to_dict('records')
             messages.success(request, f"Successfully extracted {len(extracted_df)} items from {len(items_list)} posts!")

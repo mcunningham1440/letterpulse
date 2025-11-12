@@ -15,8 +15,6 @@ import time
 from bs4 import BeautifulSoup
 from django.conf import settings
 
-from config import config
-
 
 async def llm_call(function_name, messages, model, response_format=None):
     """Make an async call to OpenAI API and log the request"""
@@ -24,7 +22,7 @@ async def llm_call(function_name, messages, model, response_format=None):
     start_time = time.time()
 
     if asyncio.get_event_loop().is_running():
-        client = AsyncOpenAI(api_key=config.OPENAI_API_KEY)
+        client = AsyncOpenAI(api_key=os.environ.get('OPENAI_API_KEY'))
         if response_format is not None:
             completion = await client.beta.chat.completions.parse(
                 model=model,
@@ -37,7 +35,7 @@ async def llm_call(function_name, messages, model, response_format=None):
                 messages=messages
             )
     else:
-        client = OpenAI(api_key=config.OPENAI_API_KEY)
+        client = OpenAI(api_key=os.environ.get('OPENAI_API_KEY'))
         if response_format is not None:
             completion = client.beta.chat.completions.parse(
                 model=model,

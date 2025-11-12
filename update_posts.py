@@ -4,15 +4,16 @@ import os
 import asyncio
 import aiohttp
 import json
+from dotenv import load_dotenv
 
-from config import config
+load_dotenv()
 
 # Get data on the new posts (parallelized)
 pagination_size = 10
-header = {"Authorization": config.BEEHIIV_TOKEN}
+header = {"Authorization": os.getenv("BEEHIIV_TOKEN")}
 
 async def fetch_posts_page(session, page, semaphore):
-    url = f"https://api.beehiiv.com/v2/publications/{config.BEEHIIV_PUB_ID}/posts?expand=stats&limit={pagination_size}&page={page}"
+    url = f"https://api.beehiiv.com/v2/publications/{os.getenv('BEEHIIV_PUB_ID')}/posts?expand=stats&limit={pagination_size}&page={page}"
     async with semaphore:
         async with session.get(url, headers=header) as response:
             print(f"Page {page} status code: {response.status}")
@@ -114,7 +115,7 @@ for i, row in posts.iterrows():
     archived_htmls = os.listdir("data/archived_htmls")
 
     if f"{id}.html" not in archived_htmls:
-        url = f"https://api.beehiiv.com/v2/publications/{config.BEEHIIV_PUB_ID}/posts/{id}?expand=free_email_content"
+        url = f"https://api.beehiiv.com/v2/publications/{os.getenv('BEEHIIV_PUB_ID')}/posts/{id}?expand=free_email_content"
 
         response = requests.get(url, headers=header)
 

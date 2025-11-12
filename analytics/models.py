@@ -36,7 +36,7 @@ class Post(models.Model):
     @property
     def html_filename(self):
         """Return the expected HTML filename for this post"""
-        return f"post_{self.post_id}.html"
+        return f"{self.post_id}.html"
 
 
 class ContentSet(models.Model):
