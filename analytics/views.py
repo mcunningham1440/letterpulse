@@ -15,9 +15,8 @@ from asgiref.sync import async_to_sync
 
 from .models import Post, ContentSet
 from .utils import (
-    load_clicks_by_title, 
     load_posts_from_db,
-    fetch_posts_html_parallel,
+    fetch_posts_html_and_clicks_parallel,
     extract_items_parallel,
     generate_content_insights,
     refresh_posts_data
@@ -97,43 +96,50 @@ def run_extraction(request):
         # Load data from database
         posts_df = load_posts_from_db()
         posts_df = posts_df.iloc[::-1].reset_index(drop=True)  # Reverse to match display
-        clicks_by_title = load_clicks_by_title()
         
         # Get selected posts
         posts_of_interest = posts_df.iloc[selected_indices]
         
-        # Extract post IDs for fetching HTMLs
+        # Extract post IDs for fetching HTMLs and clicks
         post_ids = posts_of_interest['id'].tolist()
         
-        # Fetch HTMLs dynamically from API in parallel
-        messages.info(request, f"Fetching HTML content for {len(post_ids)} posts...")
-        htmls = async_to_sync(fetch_posts_html_parallel)(post_ids)
+        # Fetch HTMLs and clicks dynamically from API in parallel
+        messages.info(request, f"Fetching HTML content and click data for {len(post_ids)} posts...")
+        htmls, clicks_by_id = async_to_sync(fetch_posts_html_and_clicks_parallel)(post_ids)
         
         if not htmls:
             messages.error(request, "Failed to fetch HTML content from API.")
             return redirect('analytics:extract')
         
-        # Prepare data for parallel extraction
+        # Prepare data for parallel extraction (now includes post_id)
         posts_data = [
-            (row.title, f"{row.id}.html", row.publish_date_cst, row.unique_email_opens)
+            (row.id, row.title, f"{row.id}.html", row.publish_date_cst, row.unique_email_opens)
             for _, row in posts_of_interest.iterrows()
         ]
         
-        # Check for missing HTML files
-        missing_files = [
-            title for title, html_file, _, _ in posts_data 
+        # Check for missing HTML or clicks data
+        missing_html = [
+            title for post_id, title, html_file, _, _ in posts_data 
             if html_file not in htmls
         ]
-        if missing_files:
-            for title in missing_files:
+        missing_clicks = [
+            title for post_id, title, _, _, _ in posts_data 
+            if post_id not in clicks_by_id
+        ]
+        
+        if missing_html:
+            for title in missing_html:
                 messages.warning(request, f"Failed to fetch HTML for post: {title}")
+        if missing_clicks:
+            for title in missing_clicks:
+                messages.warning(request, f"Failed to fetch click data for post: {title}")
         
         # Run async extraction
         items_list = async_to_sync(extract_items_parallel)(
             posts_data, 
             content_desc, 
             htmls, 
-            clicks_by_title
+            clicks_by_id
         )
         
         if items_list:

@@ -11,7 +11,6 @@ import asyncio
 import aiohttp
 import csv
 import os
-import json
 from datetime import datetime
 import time
 from bs4 import BeautifulSoup
@@ -107,6 +106,56 @@ async def fetch_post_html(session, post_id, semaphore):
             return (post_id, None)
 
 
+async def fetch_post_clicks(session, post_id, semaphore):
+    """
+    Fetch clicks stats for a single post from Beehiiv API.
+    
+    Args:
+        session: aiohttp ClientSession
+        post_id: The Beehiiv post ID
+        semaphore: asyncio.Semaphore to limit concurrent requests
+    
+    Returns:
+        Tuple of (post_id, clicks_dict) or (post_id, None) on error
+        clicks_dict maps URLs to their unique click counts
+    """
+    beehiiv_token = os.environ.get('BEEHIIV_TOKEN')
+    beehiiv_pub_id = os.environ.get('BEEHIIV_PUB_ID')
+    
+    if not beehiiv_token or not beehiiv_pub_id:
+        print(f"Error: Missing BEEHIIV_TOKEN or BEEHIIV_PUB_ID environment variables")
+        return (post_id, None)
+    
+    url = f"https://api.beehiiv.com/v2/publications/{beehiiv_pub_id}/posts/{post_id}?expand=stats"
+    headers = {"Authorization": beehiiv_token}
+    
+    async with semaphore:
+        try:
+            async with session.get(url, headers=headers) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    clicks_data = data.get('data', {}).get('stats', {}).get('clicks', [])
+                    
+                    # Build clicks dictionary mapping URL to max unique clicks
+                    clicks_dict = {}
+                    for link_data in clicks_data:
+                        url_link = link_data['url']
+                        if link_data['email']['unique_clicks'] > 0:
+                            clicks_dict[url_link] = max(
+                                link_data['email']['unique_clicks'], 
+                                clicks_dict.get(url_link, 0)
+                            )
+                    
+                    print(f"Successfully fetched clicks for post {post_id}")
+                    return (post_id, clicks_dict)
+                else:
+                    print(f"Error fetching clicks for post {post_id}: status {response.status}")
+                    return (post_id, None)
+        except Exception as e:
+            print(f"Exception fetching clicks for post {post_id}: {str(e)}")
+            return (post_id, None)
+
+
 async def fetch_posts_html_parallel(post_ids):
     """
     Fetch HTML content for multiple posts in parallel with rate limiting.
@@ -135,14 +184,56 @@ async def fetch_posts_html_parallel(post_ids):
     return htmls
 
 
-async def extract_items(post_html, content_desc, clicks_by_title, title, post_date, unique_email_opens):
+async def fetch_posts_html_and_clicks_parallel(post_ids):
+    """
+    Fetch HTML content and clicks stats for multiple posts in parallel.
+    Since we can't use expand=free_email_content and expand=stats together,
+    we make 2 requests per post.
+    
+    Args:
+        post_ids: List of Beehiiv post IDs
+    
+    Returns:
+        Tuple of (htmls, clicks_by_id) where:
+        - htmls: Dictionary mapping post IDs to HTML content
+        - clicks_by_id: Dictionary mapping post IDs to clicks dictionaries
+    """
+    semaphore = asyncio.Semaphore(5)  # Limit to 5 concurrent requests
+    htmls = {}
+    clicks_by_id = {}
+    
+    timeout = aiohttp.ClientTimeout(total=60)  # Increased timeout for more requests
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        # Fetch HTML content
+        html_tasks = [fetch_post_html(session, post_id, semaphore) for post_id in post_ids]
+        html_results = await asyncio.gather(*html_tasks)
+        
+        for post_id, html_content in html_results:
+            if html_content is not None:
+                htmls[f"{post_id}.html"] = html_content
+        
+        # Fetch clicks data
+        clicks_tasks = [fetch_post_clicks(session, post_id, semaphore) for post_id in post_ids]
+        clicks_results = await asyncio.gather(*clicks_tasks)
+        
+        for post_id, clicks_dict in clicks_results:
+            if clicks_dict is not None:
+                clicks_by_id[post_id] = clicks_dict
+    
+    # Give the event loop a moment to complete cleanup
+    await asyncio.sleep(0)
+    
+    return htmls, clicks_by_id
+
+
+async def extract_items(post_html, content_desc, clicks_dict, title, post_date, unique_email_opens):
     """
     Extract items from a single post HTML using AI.
     
     Args:
         post_html: HTML content of the post
         content_desc: Description of the content to extract
-        clicks_by_title: Dictionary mapping post titles to click data
+        clicks_dict: Dictionary mapping URLs to click counts for this post
         title: Post title
         post_date: Date the post was published
         unique_email_opens: Number of unique email opens
@@ -192,8 +283,8 @@ Content Description:
         # Extract all links
         html_links = [link['href'].replace("&jwt_token={{jwt_token}}", "") for link in soup.find_all('a') if link.has_attr('href')]
         
-        # Get clicks for each link
-        clicks = [clicks_by_title[title].get(link, 0) for link in html_links]
+        # Get clicks for each link from clicks_dict
+        clicks = [clicks_dict.get(link, 0) for link in html_links]
 
         news_items.append({
             "post_title": title,
@@ -209,24 +300,25 @@ Content Description:
     return items
 
 
-async def extract_items_parallel(posts_data, content_desc, htmls, clicks_by_title):
+async def extract_items_parallel(posts_data, content_desc, htmls, clicks_by_id):
     """
     Extract items from multiple posts in parallel using asyncio.
     
     Args:
-        posts_data: List of tuples containing (title, html_filename, post_date, unique_email_opens)
+        posts_data: List of tuples containing (post_id, title, html_filename, post_date, unique_email_opens)
         content_desc: Description of content to extract
         htmls: Dictionary of HTML content keyed by filename
-        clicks_by_title: Dictionary of click data
+        clicks_by_id: Dictionary mapping post IDs to their clicks dictionaries
     
     Returns:
         List of DataFrames containing extracted items
     """
     tasks = []
-    for title, html_filename, post_date, unique_email_opens in posts_data:
-        if html_filename in htmls:
+    for post_id, title, html_filename, post_date, unique_email_opens in posts_data:
+        if html_filename in htmls and post_id in clicks_by_id:
             current_html = htmls[html_filename]
-            task = extract_items(current_html, content_desc, clicks_by_title, title, post_date, unique_email_opens)
+            clicks_dict = clicks_by_id[post_id]
+            task = extract_items(current_html, content_desc, clicks_dict, title, post_date, unique_email_opens)
             tasks.append(task)
     
     # Run all extractions concurrently
@@ -301,16 +393,6 @@ def get_items_with_clicks_as_str(items, mode="by_clicks", max_items=None):
         item_str += f"Max Clicks: {max_clicks}\n\n"
     
     return item_str
-
-
-def load_clicks_by_title():
-    """Load the clicks by title JSON data"""
-    import json
-    clicks_file = settings.CLICKS_BY_TITLE_JSON
-    if os.path.exists(clicks_file):
-        with open(clicks_file, "r", encoding="utf-8") as f:
-            return json.load(f)
-    return {}
 
 
 def load_posts_from_db():
@@ -390,15 +472,13 @@ async def fetch_all_posts():
 
 def process_posts_data(posts_list):
     """
-    Process raw posts data from API into DataFrame and clicks dictionary.
+    Process raw posts data from API into DataFrame.
     
     Args:
         posts_list: List of post dictionaries from API
     
     Returns:
-        Tuple of (posts_df, clicks_by_title) where:
-        - posts_df is a pandas DataFrame of post data
-        - clicks_by_title is a dict mapping post titles to click data
+        pandas DataFrame of post data
     """
     posts = {
         'id': [], 
@@ -449,21 +529,6 @@ def process_posts_data(posts_list):
     
     posts_df = posts_df.drop(columns=['publish_date'])
     
-    # Build clicks_by_title dictionary
-    clicks_by_title = {}
-    
-    for title in posts_df['title']:
-        clicks_by_title[title] = {}
-        
-        for link_data in clicks[title]:
-            url = link_data['url']
-            
-            if link_data['email']['unique_clicks'] > 0:
-                clicks_by_title[title][url] = max(
-                    link_data['email']['unique_clicks'], 
-                    clicks_by_title[title].get(url, 0)
-                )
-    
     # Filter posts
     posts_df = posts_df[
         (posts_df['recipients'] > 10) & 
@@ -473,12 +538,12 @@ def process_posts_data(posts_list):
     
     posts_df = posts_df.drop(columns=['platform'])
     
-    return posts_df, clicks_by_title
+    return posts_df
 
 
 async def refresh_posts_data():
     """
-    Fetch all posts from Beehiiv API and save to JSON file.
+    Fetch all posts from Beehiiv API.
     
     Returns:
         Tuple of (posts_df, success_message) or (None, error_message)
@@ -491,12 +556,7 @@ async def refresh_posts_data():
             return None, "No posts were fetched from the API."
         
         # Process the data
-        posts_df, clicks_by_title = process_posts_data(posts_list)
-        
-        # Save clicks_by_title to JSON
-        clicks_file = settings.CLICKS_BY_TITLE_JSON
-        with open(clicks_file, "w", encoding="utf-8") as f:
-            json.dump(clicks_by_title, f, ensure_ascii=False, indent=2)
+        posts_df = process_posts_data(posts_list)
         
         return posts_df, f"Successfully fetched and processed {len(posts_df)} posts."
         

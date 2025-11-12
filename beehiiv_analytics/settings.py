@@ -123,4 +123,3 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 # Data directories
 DATA_DIR = BASE_DIR / 'data'
-CLICKS_BY_TITLE_JSON = DATA_DIR / 'clicks_by_title.json'
