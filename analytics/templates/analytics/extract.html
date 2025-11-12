@@ -5,7 +5,15 @@
 {% block content %}
 <div class="row">
     <div class="col-12">
-        <h1 class="mb-4">Extract Content from Posts</h1>
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h1 class="mb-0">Extract Content from Posts</h1>
+            <form method="post" action="{% url 'analytics:refresh_posts' %}" style="display: inline;">
+                {% csrf_token %}
+                <button type="submit" class="btn btn-success" id="refreshPostsBtn">
+                    <i class="bi bi-arrow-clockwise"></i> Refresh Posts
+                </button>
+            </form>
+        </div>
         
         <!-- Posts Selection Card -->
         <div class="card">
@@ -184,5 +192,14 @@
         const spinner = document.getElementById('extractSpinner');
         spinner.classList.remove('d-none');
     });
+    
+    // Handle refresh posts button
+    const refreshBtn = document.getElementById('refreshPostsBtn');
+    if (refreshBtn) {
+        refreshBtn.closest('form').addEventListener('submit', function(e) {
+            refreshBtn.disabled = true;
+            refreshBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Refreshing...';
+        });
+    }
 </script>
 {% endblock %}

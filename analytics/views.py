@@ -16,10 +16,11 @@ from asgiref.sync import async_to_sync
 from .models import Post, ContentSet
 from .utils import (
     load_clicks_by_title, 
-    load_posts_csv,
+    load_posts_from_db,
     fetch_posts_html_parallel,
     extract_items_parallel,
-    generate_content_insights
+    generate_content_insights,
+    refresh_posts_data
 )
 
 
@@ -32,8 +33,8 @@ def extract_view(request):
     """
     Display the extract page with posts table.
     """
-    # Load posts from CSV (in production, you'd load from DB)
-    posts_df = load_posts_csv()
+    # Load posts from database
+    posts_df = load_posts_from_db()
     
     # Reverse order so newer posts appear first
     posts_df = posts_df.iloc[::-1].reset_index(drop=True)
@@ -93,8 +94,8 @@ def run_extraction(request):
         # Convert indices to integers
         selected_indices = [int(idx) for idx in selected_indices]
         
-        # Load data
-        posts_df = load_posts_csv()
+        # Load data from database
+        posts_df = load_posts_from_db()
         posts_df = posts_df.iloc[::-1].reset_index(drop=True)  # Reverse to match display
         clicks_by_title = load_clicks_by_title()
         
@@ -360,3 +361,56 @@ def download_csv(request, set_name):
     except Exception as e:
         messages.error(request, f"Error downloading CSV: {str(e)}")
         return redirect('analytics:analyze')
+
+
+@require_POST
+def refresh_posts(request):
+    """
+    Refresh posts data from Beehiiv API and update the database.
+    """
+    try:
+        messages.info(request, "Fetching latest posts from Beehiiv API...")
+        
+        # Fetch and process posts data
+        posts_df, result_message = async_to_sync(refresh_posts_data)()
+        
+        if posts_df is None:
+            messages.error(request, result_message)
+            return redirect('analytics:extract')
+        
+        # Update database with new posts
+        created_count = 0
+        updated_count = 0
+        
+        for _, row in posts_df.iterrows():
+            post, created = Post.objects.update_or_create(
+                post_id=row['id'],
+                defaults={
+                    'title': row['title'],
+                    'subtitle': row.get('subtitle', ''),
+                    'publish_date_cst': row['publish_date_cst'],
+                    'recipients': row.get('recipients', 0),
+                    'delivered': row.get('delivered', 0),
+                    'email_opens': row.get('email_opens', 0),
+                    'unique_email_opens': row.get('unique_email_opens', 0),
+                    'email_clicks': row.get('email_clicks', 0),
+                    'unique_email_clicks': row.get('unique_email_clicks', 0),
+                    'unsubscribes': row.get('unsubscribes', 0),
+                    'spam_reports': row.get('spam_reports', 0),
+                }
+            )
+            
+            if created:
+                created_count += 1
+            else:
+                updated_count += 1
+        
+        messages.success(
+            request, 
+            f"Successfully refreshed posts! Created {created_count} new posts and updated {updated_count} existing posts."
+        )
+        
+    except Exception as e:
+        messages.error(request, f"Error refreshing posts: {str(e)}")
+    
+    return redirect('analytics:extract')

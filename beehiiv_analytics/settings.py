@@ -123,7 +123,4 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 # Data directories
 DATA_DIR = BASE_DIR / 'data'
-ARCHIVED_HTMLS_DIR = DATA_DIR / 'archived_htmls'
-CONTENT_SETS_FILEPATH = DATA_DIR / 'content_sets.json'
-POSTS_CSV = DATA_DIR / 'posts.csv'
 CLICKS_BY_TITLE_JSON = DATA_DIR / 'clicks_by_title.json'

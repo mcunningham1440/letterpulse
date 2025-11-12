@@ -11,6 +11,7 @@ import asyncio
 import aiohttp
 import csv
 import os
+import json
 from datetime import datetime
 import time
 from bs4 import BeautifulSoup
@@ -302,18 +303,6 @@ def get_items_with_clicks_as_str(items, mode="by_clicks", max_items=None):
     return item_str
 
 
-def load_htmls():
-    """Load all HTML files from the archived_htmls directory"""
-    htmls = {}
-    html_dir = settings.ARCHIVED_HTMLS_DIR
-    if os.path.exists(html_dir):
-        for item in os.listdir(html_dir):
-            if item.endswith('.html'):
-                with open(html_dir / item, "r", encoding="utf-8") as f:
-                    htmls[item] = f.read()
-    return htmls
-
-
 def load_clicks_by_title():
     """Load the clicks by title JSON data"""
     import json
@@ -324,12 +313,192 @@ def load_clicks_by_title():
     return {}
 
 
-def load_posts_csv():
-    """Load posts from CSV file into a DataFrame"""
-    posts_file = settings.POSTS_CSV
-    if os.path.exists(posts_file):
-        df = pd.read_csv(posts_file)
-        # Convert publish_date_cst to datetime with UTC awareness and extract just the date
-        df['publish_date_cst'] = pd.to_datetime(df['publish_date_cst'], utc=True).dt.date
+def load_posts_from_db():
+    """Load posts from database into a DataFrame"""
+    from .models import Post
+    
+    posts = Post.objects.all().values(
+        'post_id', 'title', 'subtitle', 'publish_date_cst',
+        'recipients', 'delivered', 'email_opens', 'unique_email_opens',
+        'email_clicks', 'unique_email_clicks', 'unsubscribes', 'spam_reports'
+    )
+    
+    if posts:
+        df = pd.DataFrame(list(posts))
+        # Rename post_id to id to match the expected format
+        df = df.rename(columns={'post_id': 'id'})
         return df
     return pd.DataFrame()
+
+
+async def fetch_posts_page(session, page, pagination_size, semaphore):
+    """
+    Fetch a single page of posts from Beehiiv API.
+    
+    Args:
+        session: aiohttp ClientSession
+        page: Page number to fetch
+        pagination_size: Number of posts per page
+        semaphore: asyncio.Semaphore to limit concurrent requests
+    
+    Returns:
+        List of post data dictionaries
+    """
+    beehiiv_token = os.environ.get('BEEHIIV_TOKEN')
+    beehiiv_pub_id = os.environ.get('BEEHIIV_PUB_ID')
+    
+    url = f"https://api.beehiiv.com/v2/publications/{beehiiv_pub_id}/posts?expand=stats&limit={pagination_size}&page={page}"
+    headers = {"Authorization": beehiiv_token}
+    
+    async with semaphore:
+        async with session.get(url, headers=headers) as response:
+            print(f"Page {page} status code: {response.status}")
+            data = await response.json()
+            return data.get('data', [])
+
+
+async def fetch_all_posts():
+    """
+    Fetch all posts from Beehiiv API in parallel with pagination.
+    
+    Returns:
+        List of all post data dictionaries
+    """
+    pagination_size = 10
+    posts_list = []
+    semaphore = asyncio.Semaphore(10)
+    
+    timeout = aiohttp.ClientTimeout(total=60)
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        page = 1
+        while True:
+            tasks = [fetch_posts_page(session, p, pagination_size, semaphore) for p in range(page, page + 5)]
+            results = await asyncio.gather(*tasks)
+            all_empty = True
+            for posts_data in results:
+                if posts_data:
+                    all_empty = False
+                    posts_list.extend(posts_data)
+                if len(posts_data) < pagination_size:
+                    return posts_list
+            if all_empty:
+                break
+            page += 5
+    
+    return posts_list
+
+
+def process_posts_data(posts_list):
+    """
+    Process raw posts data from API into DataFrame and clicks dictionary.
+    
+    Args:
+        posts_list: List of post dictionaries from API
+    
+    Returns:
+        Tuple of (posts_df, clicks_by_title) where:
+        - posts_df is a pandas DataFrame of post data
+        - clicks_by_title is a dict mapping post titles to click data
+    """
+    posts = {
+        'id': [], 
+        'title': [], 
+        'subtitle': [], 
+        'publish_date': [],
+        'web_url': [],
+        'platform': [],
+        'recipients': [],
+        'delivered': [],
+        'email_opens': [],
+        'unique_email_opens': [],
+        'email_clicks': [],
+        'unique_email_clicks': [],
+        'unsubscribes': [],
+        'spam_reports': [],
+    }
+    
+    email_keys = {
+        'recipients': 'recipients', 
+        'delivered': 'delivered',
+        'email_opens': 'opens',
+        'unique_email_opens': 'unique_opens', 
+        'email_clicks': 'clicks',
+        'unique_email_clicks': 'unique_clicks', 
+        'unsubscribes': 'unsubscribes', 
+        'spam_reports': 'spam_reports'
+    }
+    
+    clicks = {}
+    
+    for post in posts_list:
+        for key in posts.keys():
+            if key not in email_keys:
+                posts[key].append(post[key])
+            else:
+                posts[key].append(post['stats']['email'][email_keys[key]])
+        
+        clicks[post['title']] = post['stats']['clicks']
+    
+    posts_df = pd.DataFrame(posts)
+    
+    # Add derived columns
+    posts_df['publish_date_cst'] = pd.to_datetime(posts_df['publish_date'], unit='s', utc=True).dt.tz_convert('America/Chicago')
+    posts_df['publish_dow'] = posts_df['publish_date_cst'].dt.strftime('%A')
+    posts_df['email_open_rate'] = posts_df['unique_email_opens'] / posts_df['delivered']
+    posts_df['email_click_rate'] = posts_df['unique_email_clicks'] / posts_df['unique_email_opens']
+    
+    posts_df = posts_df.drop(columns=['publish_date'])
+    
+    # Build clicks_by_title dictionary
+    clicks_by_title = {}
+    
+    for title in posts_df['title']:
+        clicks_by_title[title] = {}
+        
+        for link_data in clicks[title]:
+            url = link_data['url']
+            
+            if link_data['email']['unique_clicks'] > 0:
+                clicks_by_title[title][url] = max(
+                    link_data['email']['unique_clicks'], 
+                    clicks_by_title[title].get(url, 0)
+                )
+    
+    # Filter posts
+    posts_df = posts_df[
+        (posts_df['recipients'] > 10) & 
+        (posts_df['platform'].isin(('web', 'both'))) & 
+        (posts_df['title'] != "Replit's software engineering agent stuns users")
+    ]
+    
+    posts_df = posts_df.drop(columns=['platform'])
+    
+    return posts_df, clicks_by_title
+
+
+async def refresh_posts_data():
+    """
+    Fetch all posts from Beehiiv API and save to JSON file.
+    
+    Returns:
+        Tuple of (posts_df, success_message) or (None, error_message)
+    """
+    try:
+        # Fetch posts
+        posts_list = await fetch_all_posts()
+        
+        if not posts_list:
+            return None, "No posts were fetched from the API."
+        
+        # Process the data
+        posts_df, clicks_by_title = process_posts_data(posts_list)
+        
+        # Save clicks_by_title to JSON
+        clicks_file = settings.CLICKS_BY_TITLE_JSON
+        with open(clicks_file, "w", encoding="utf-8") as f:
+            json.dump(clicks_by_title, f, ensure_ascii=False, indent=2)
+        
+        return posts_df, f"Successfully fetched and processed {len(posts_df)} posts."
+        
+    except Exception as e:
+        return None, f"Error refreshing posts: {str(e)}"
