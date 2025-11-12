@@ -5,9 +5,10 @@ Adapted from the original utils.py for Streamlit.
 
 from openai import AsyncOpenAI, OpenAI
 from pydantic import BaseModel
-from typing import List
+from typing import List, Dict
 import pandas as pd
 import asyncio
+import aiohttp
 import csv
 import os
 from datetime import datetime
@@ -23,30 +24,36 @@ async def llm_call(function_name, messages, model, response_format=None):
 
     if asyncio.get_event_loop().is_running():
         client = AsyncOpenAI(api_key=os.environ.get('OPENAI_API_KEY'))
-        if response_format is not None:
-            completion = await client.beta.chat.completions.parse(
-                model=model,
-                messages=messages,
-                response_format=response_format
-            )
-        else:
-            completion = await client.chat.completions.create(
-                model=model,
-                messages=messages
-            )
+        try:
+            if response_format is not None:
+                completion = await client.beta.chat.completions.parse(
+                    model=model,
+                    messages=messages,
+                    response_format=response_format
+                )
+            else:
+                completion = await client.chat.completions.create(
+                    model=model,
+                    messages=messages
+                )
+        finally:
+            await client.close()
     else:
         client = OpenAI(api_key=os.environ.get('OPENAI_API_KEY'))
-        if response_format is not None:
-            completion = client.beta.chat.completions.parse(
-                model=model,
-                messages=messages,
-                response_format=response_format
-            )
-        else:
-            completion = client.chat.completions.create(
-                model=model,
-                messages=messages
-            )
+        try:
+            if response_format is not None:
+                completion = client.beta.chat.completions.parse(
+                    model=model,
+                    messages=messages,
+                    response_format=response_format
+                )
+            else:
+                completion = client.chat.completions.create(
+                    model=model,
+                    messages=messages
+                )
+        finally:
+            client.close()
     duration = time.time() - start_time
 
     log_file = settings.DATA_DIR / "llm_call_logs.csv"
@@ -59,6 +66,72 @@ async def llm_call(function_name, messages, model, response_format=None):
         writer.writerow([function_name, start_datetime, f"{duration:.4f}", model, completion.usage.prompt_tokens, completion.usage.completion_tokens])
     
     return completion
+
+
+async def fetch_post_html(session, post_id, semaphore):
+    """
+    Fetch HTML content for a single post from Beehiiv API.
+    
+    Args:
+        session: aiohttp ClientSession
+        post_id: The Beehiiv post ID
+        semaphore: asyncio.Semaphore to limit concurrent requests
+    
+    Returns:
+        Tuple of (post_id, html_content) or (post_id, None) on error
+    """
+    beehiiv_token = os.environ.get('BEEHIIV_TOKEN')
+    beehiiv_pub_id = os.environ.get('BEEHIIV_PUB_ID')
+    
+    if not beehiiv_token or not beehiiv_pub_id:
+        print(f"Error: Missing BEEHIIV_TOKEN or BEEHIIV_PUB_ID environment variables")
+        return (post_id, None)
+    
+    url = f"https://api.beehiiv.com/v2/publications/{beehiiv_pub_id}/posts/{post_id}?expand=free_email_content"
+    headers = {"Authorization": beehiiv_token}
+    
+    async with semaphore:
+        try:
+            async with session.get(url, headers=headers) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    html_content = data.get('data', {}).get('content', {}).get('free', {}).get('email', '')
+                    print(f"Successfully fetched HTML for post {post_id}")
+                    return (post_id, html_content)
+                else:
+                    print(f"Error fetching post {post_id}: status {response.status}")
+                    return (post_id, None)
+        except Exception as e:
+            print(f"Exception fetching post {post_id}: {str(e)}")
+            return (post_id, None)
+
+
+async def fetch_posts_html_parallel(post_ids):
+    """
+    Fetch HTML content for multiple posts in parallel with rate limiting.
+    
+    Args:
+        post_ids: List of Beehiiv post IDs
+    
+    Returns:
+        Dictionary mapping post IDs to HTML content
+    """
+    semaphore = asyncio.Semaphore(5)  # Limit to 5 concurrent requests
+    htmls = {}
+    
+    timeout = aiohttp.ClientTimeout(total=30)
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        tasks = [fetch_post_html(session, post_id, semaphore) for post_id in post_ids]
+        results = await asyncio.gather(*tasks)
+        
+        for post_id, html_content in results:
+            if html_content is not None:
+                htmls[f"{post_id}.html"] = html_content
+    
+    # Give the event loop a moment to complete cleanup
+    await asyncio.sleep(0)
+    
+    return htmls
 
 
 async def extract_items(post_html, content_desc, clicks_by_title, title, post_date, unique_email_opens):

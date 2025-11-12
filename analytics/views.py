@@ -15,9 +15,9 @@ from asgiref.sync import async_to_sync
 
 from .models import Post, ContentSet
 from .utils import (
-    load_htmls, 
     load_clicks_by_title, 
     load_posts_csv,
+    fetch_posts_html_parallel,
     extract_items_parallel,
     generate_content_insights
 )
@@ -96,11 +96,21 @@ def run_extraction(request):
         # Load data
         posts_df = load_posts_csv()
         posts_df = posts_df.iloc[::-1].reset_index(drop=True)  # Reverse to match display
-        htmls = load_htmls()
         clicks_by_title = load_clicks_by_title()
         
         # Get selected posts
         posts_of_interest = posts_df.iloc[selected_indices]
+        
+        # Extract post IDs for fetching HTMLs
+        post_ids = posts_of_interest['id'].tolist()
+        
+        # Fetch HTMLs dynamically from API in parallel
+        messages.info(request, f"Fetching HTML content for {len(post_ids)} posts...")
+        htmls = async_to_sync(fetch_posts_html_parallel)(post_ids)
+        
+        if not htmls:
+            messages.error(request, "Failed to fetch HTML content from API.")
+            return redirect('analytics:extract')
         
         # Prepare data for parallel extraction
         posts_data = [
@@ -115,7 +125,7 @@ def run_extraction(request):
         ]
         if missing_files:
             for title in missing_files:
-                messages.warning(request, f"HTML file not found for post: {title}")
+                messages.warning(request, f"Failed to fetch HTML for post: {title}")
         
         # Run async extraction
         items_list = async_to_sync(extract_items_parallel)(
