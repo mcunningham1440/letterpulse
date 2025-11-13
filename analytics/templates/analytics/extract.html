@@ -153,21 +153,64 @@
                 
                 <!-- Save Content Set -->
                 <h5 class="mb-3">Save Content Set</h5>
+                
+                <!-- Toggle Switch -->
+                <div class="form-check form-switch mb-3">
+                    <input class="form-check-input" type="checkbox" id="addToExistingSwitch">
+                    <label class="form-check-label" for="addToExistingSwitch">
+                        <span id="switchLabel">Add to Existing Set</span>
+                    </label>
+                </div>
+                
                 <form method="post" action="{% url 'analytics:save_content_set' %}">
                     {% csrf_token %}
-                    <div class="row">
-                        <div class="col-md-9">
-                            <label for="content_set_name" class="form-label fw-bold">Content Set Name</label>
-                            <input type="text" 
-                                   class="form-control" 
-                                   id="content_set_name" 
-                                   name="content_set_name" 
-                                   placeholder="e.g., 'quick_links_q1_2024'"
-                                   required>
-                            <div class="form-text">Enter a unique name for this content set</div>
+                    
+                    <!-- Hidden field to indicate mode -->
+                    <input type="hidden" id="setMode" name="set_mode" value="create">
+                    
+                    <!-- Create New Set Fields -->
+                    <div id="createNewFields">
+                        <div class="row">
+                            <div class="col-md-9">
+                                <label for="content_set_name" class="form-label fw-bold">Content Set Name</label>
+                                <input type="text" 
+                                       class="form-control" 
+                                       id="content_set_name" 
+                                       name="content_set_name" 
+                                       placeholder="e.g., 'quick_links_q1_2024'">
+                                <div class="form-text">Enter a unique name for this content set</div>
+                            </div>
+                            <div class="col-md-3 d-flex align-items-end">
+                                <button type="submit" id="submitBtn" class="btn btn-primary w-100">Save Content Set</button>
+                            </div>
                         </div>
-                        <div class="col-md-3 d-flex align-items-end">
-                            <button type="submit" class="btn btn-primary w-100">Save Content Set</button>
+                    </div>
+                    
+                    <!-- Add to Existing Set Fields -->
+                    <div id="addToExistingFields" style="display: none;">
+                        <div class="row">
+                            <div class="col-md-9">
+                                <label for="existing_set_name" class="form-label fw-bold">Select Existing Content Set</label>
+                                <select class="form-select" 
+                                        id="existing_set_name" 
+                                        name="existing_set_name">
+                                    <option value="">-- Choose a content set --</option>
+                                    {% for content_set in all_content_sets %}
+                                    <option value="{{ content_set.name }}">{{ content_set.name }} ({{ content_set.get_items_count }} items)</option>
+                                    {% endfor %}
+                                </select>
+                                <div class="form-text">Select which content set to add items to</div>
+                                
+                                <div class="form-check mt-2">
+                                    <input class="form-check-input" type="checkbox" id="keepCopy" name="keep_copy" value="true">
+                                    <label class="form-check-label" for="keepCopy">
+                                        Keep copy of old set
+                                    </label>
+                                </div>
+                            </div>
+                            <div class="col-md-3 d-flex align-items-end">
+                                <button type="submit" id="addToSetBtn" class="btn btn-primary w-100">Add to Set</button>
+                            </div>
                         </div>
                     </div>
                 </form>
@@ -285,6 +328,38 @@
                 downloadClickVizBtn.innerHTML = originalHtml;
                 document.body.removeChild(form);
             }, 3000);
+        });
+    }
+    
+    // Handle toggle switch for Create New Set / Add to Existing Set
+    const addToExistingSwitch = document.getElementById('addToExistingSwitch');
+    const createNewFields = document.getElementById('createNewFields');
+    const addToExistingFields = document.getElementById('addToExistingFields');
+    const setModeInput = document.getElementById('setMode');
+    const contentSetNameInput = document.getElementById('content_set_name');
+    const existingSetNameInput = document.getElementById('existing_set_name');
+    
+    if (addToExistingSwitch) {
+        addToExistingSwitch.addEventListener('change', function() {
+            if (this.checked) {
+                // Switch to "Add to Existing Set" mode
+                createNewFields.style.display = 'none';
+                addToExistingFields.style.display = 'block';
+                setModeInput.value = 'add';
+                
+                // Update required fields
+                contentSetNameInput.removeAttribute('required');
+                existingSetNameInput.setAttribute('required', 'required');
+            } else {
+                // Switch to "Create New Set" mode
+                createNewFields.style.display = 'block';
+                addToExistingFields.style.display = 'none';
+                setModeInput.value = 'create';
+                
+                // Update required fields
+                contentSetNameInput.setAttribute('required', 'required');
+                existingSetNameInput.removeAttribute('required');
+            }
         });
     }
 </script>

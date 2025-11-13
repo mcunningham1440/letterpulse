@@ -64,9 +64,13 @@ def extract_view(request):
         
         extracted_items_data = df.to_dict('records')
     
+    # Get all content sets for the dropdown
+    all_content_sets = ContentSet.objects.all().order_by('name')
+    
     context = {
         'posts': posts_data,
         'extracted_items': extracted_items_data,
+        'all_content_sets': all_content_sets,
     }
     
     return render(request, 'analytics/extract.html', context)
@@ -202,19 +206,10 @@ def delete_items(request):
 @require_POST
 def save_content_set(request):
     """
-    Save extracted items as a named content set.
+    Save extracted items as a named content set or add to existing set.
     """
     try:
-        content_set_name = request.POST.get('content_set_name', '').strip()
-        
-        if not content_set_name:
-            messages.error(request, "Please provide a name for the content set.")
-            return redirect('analytics:extract')
-        
-        # Check if name already exists
-        if ContentSet.objects.filter(name=content_set_name).exists():
-            messages.error(request, f"A content set named '{content_set_name}' already exists. Please choose a different name.")
-            return redirect('analytics:extract')
+        set_mode = request.POST.get('set_mode', 'create')
         
         # Get extracted items from session
         extracted_items = request.session.get('extracted_items', [])
@@ -223,12 +218,72 @@ def save_content_set(request):
             messages.error(request, "No extracted items to save.")
             return redirect('analytics:extract')
         
-        # Create ContentSet
-        df = pd.DataFrame(extracted_items)
-        content_set = ContentSet.from_dataframe(content_set_name, df)
-        content_set.save()
-        
-        messages.success(request, f"Content set '{content_set_name}' saved successfully!")
+        if set_mode == 'create':
+            # Create new content set
+            content_set_name = request.POST.get('content_set_name', '').strip()
+            
+            if not content_set_name:
+                messages.error(request, "Please provide a name for the content set.")
+                return redirect('analytics:extract')
+            
+            # Check if name already exists
+            if ContentSet.objects.filter(name=content_set_name).exists():
+                messages.error(request, f"A content set named '{content_set_name}' already exists. Please choose a different name.")
+                return redirect('analytics:extract')
+            
+            # Create ContentSet
+            df = pd.DataFrame(extracted_items)
+            content_set = ContentSet.from_dataframe(content_set_name, df)
+            content_set.save()
+            
+            messages.success(request, f"Content set '{content_set_name}' saved successfully!")
+            
+        elif set_mode == 'add':
+            # Add to existing content set
+            existing_set_name = request.POST.get('existing_set_name', '').strip()
+            keep_copy = request.POST.get('keep_copy') == 'true'
+            
+            if not existing_set_name:
+                messages.error(request, "Please select an existing content set.")
+                return redirect('analytics:extract')
+            
+            # Get the existing content set
+            try:
+                existing_set = ContentSet.objects.get(name=existing_set_name)
+            except ContentSet.DoesNotExist:
+                messages.error(request, f"Content set '{existing_set_name}' not found.")
+                return redirect('analytics:extract')
+            
+            # Keep a copy of the old set if requested
+            if keep_copy:
+                import datetime
+                backup_name = f"{existing_set_name} copy"
+                
+                # Create a backup copy
+                backup_set = ContentSet(
+                    name=backup_name,
+                    description=f"Backup of '{existing_set_name}' before adding items",
+                    items_data=existing_set.items_data
+                )
+                backup_set.save()
+                messages.info(request, f"Backup created: '{backup_name}'")
+            
+            # Merge the new items with existing items
+            existing_items = existing_set.items_data if isinstance(existing_set.items_data, list) else []
+            new_items_df = pd.DataFrame(extracted_items)
+            
+            if existing_items:
+                existing_df = pd.DataFrame(existing_items)
+                # Concatenate the dataframes
+                combined_df = pd.concat([existing_df, new_items_df], ignore_index=True)
+            else:
+                combined_df = new_items_df
+            
+            # Update the existing content set
+            existing_set.items_data = combined_df.to_dict(orient='records')
+            existing_set.save()
+            
+            messages.success(request, f"Added {len(extracted_items)} items to content set '{existing_set_name}'!")
         
         # Clear extracted items from session
         request.session.pop('extracted_items', None)

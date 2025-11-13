@@ -139,12 +139,17 @@
         });
         
         // Initialize DataTable
-        $('#contentTable').DataTable({
+        const table = $('#contentTable').DataTable({
             order: [[1, 'desc']], // Sort by Post Date descending by default
             paging: false,
             scrollY: '400px',
             scrollCollapse: true
         });
+        
+        // Adjust column widths after initialization
+        setTimeout(() => {
+            table.columns.adjust().draw();
+        }, 0);
     }
     
     // Truncate text helper
