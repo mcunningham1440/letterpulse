@@ -420,3 +420,89 @@ def refresh_posts(request):
         messages.error(request, f"Error refreshing posts: {str(e)}")
     
     return redirect('analytics:extract')
+
+
+@require_POST
+def download_click_visualization(request):
+    """
+    Generate and download click visualization HTML files for selected posts.
+    Returns a ZIP file containing HTML files with click counts overlaid.
+    """
+    import zipfile
+    import io
+    from .utils import generate_click_visualization_html
+    
+    try:
+        # Get selected post indices
+        selected_indices = request.POST.getlist('selected_posts')
+        
+        if not selected_indices:
+            messages.error(request, "Please select at least one post.")
+            return redirect('analytics:extract')
+        
+        # Convert indices to integers
+        selected_indices = [int(idx) for idx in selected_indices]
+        
+        # Load posts from database
+        posts_df = load_posts_from_db()
+        posts_df = posts_df.iloc[::-1].reset_index(drop=True)  # Reverse to match display
+        
+        # Get selected posts
+        posts_of_interest = posts_df.iloc[selected_indices]
+        
+        # Extract post IDs
+        post_ids = posts_of_interest['id'].tolist()
+        
+        # Fetch HTMLs and clicks from API
+        messages.info(request, f"Fetching HTML content and click data for {len(post_ids)} posts...")
+        htmls, clicks_by_id = async_to_sync(fetch_posts_html_and_clicks_parallel)(post_ids)
+        
+        if not htmls:
+            messages.error(request, "Failed to fetch HTML content from API.")
+            return redirect('analytics:extract')
+        
+        # Create in-memory ZIP file
+        zip_buffer = io.BytesIO()
+        
+        with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+            for _, row in posts_of_interest.iterrows():
+                post_id = row['id']
+                html_filename = f"{post_id}.html"
+                
+                # Check if we have HTML and clicks for this post
+                if html_filename not in htmls:
+                    continue
+                    
+                if post_id not in clicks_by_id:
+                    continue
+                
+                # Get the HTML and clicks
+                post_html = htmls[html_filename]
+                clicks_dict = clicks_by_id[post_id]
+                unique_email_opens = row['unique_email_opens']
+                
+                # Generate click visualization HTML
+                visualization_html = generate_click_visualization_html(
+                    post_html, 
+                    clicks_dict, 
+                    unique_email_opens
+                )
+                
+                # Create a safe filename from the post title
+                safe_title = "".join(c if c.isalnum() or c in (' ', '-', '_') else '_' for c in row['title'])
+                safe_title = safe_title[:50]  # Limit length
+                
+                # Add to ZIP with a descriptive filename
+                zip_filename = f"{safe_title}_{post_id}_clicks.html"
+                zip_file.writestr(zip_filename, visualization_html)
+        
+        # Prepare the response
+        zip_buffer.seek(0)
+        response = HttpResponse(zip_buffer.getvalue(), content_type='application/zip')
+        response['Content-Disposition'] = 'attachment; filename="click_visualizations.zip"'
+        
+        return response
+        
+    except Exception as e:
+        messages.error(request, f"Error generating click visualizations: {str(e)}")
+        return redirect('analytics:extract')

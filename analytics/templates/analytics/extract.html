@@ -29,9 +29,9 @@
                 <form method="post" action="{% url 'analytics:run_extraction' %}" id="extractionForm">
                     {% csrf_token %}
                     
-                    <div class="table-responsive" style="max-height: 500px; overflow-y: auto;">
-                        <table class="table table-hover table-sm">
-                            <thead class="sticky-top bg-white">
+                    <div class="table-responsive">
+                        <table class="table table-hover table-sm" id="postsTable">
+                            <thead>
                                 <tr>
                                     <th style="width: 40px;">
                                         <input type="checkbox" id="selectAll" class="form-check-input">
@@ -51,20 +51,28 @@
                                         <input type="checkbox" name="selected_posts" value="{{ forloop.counter0 }}" 
                                                class="form-check-input post-checkbox">
                                     </td>
-                                    <td>{{ post.publish_date_cst }}</td>
+                                    <td>{{ post.publish_date_cst|date:"Y-m-d" }}</td>
                                     <td>{{ post.title }}</td>
                                     <td>{{ post.subtitle|default:"-" }}</td>
                                     <td class="text-end">{{ post.recipients|default:0 }}</td>
                                     <td class="text-end">{{ post.unique_email_opens|default:0 }}</td>
                                     <td class="text-end">{{ post.unique_email_clicks|default:0 }}</td>
                                 </tr>
-                                {% empty %}
-                                <tr>
-                                    <td colspan="7" class="text-center text-muted">No posts available</td>
-                                </tr>
                                 {% endfor %}
                             </tbody>
                         </table>
+                    </div>
+                    
+                    <hr class="my-4">
+                    
+                    <!-- Download Click Visualization Button -->
+                    <div class="row mb-4">
+                        <div class="col-12">
+                            <button type="button" class="btn btn-info" id="downloadClickVizBtn">
+                                <i class="bi bi-download"></i> Download Click Visualization
+                            </button>
+                            <div class="form-text">Downloads HTML files showing click counts next to each link in the selected posts</div>
+                        </div>
                     </div>
                     
                     <hr class="my-4">
@@ -103,7 +111,7 @@
                     {% csrf_token %}
                     
                     <div class="table-responsive">
-                        <table class="table table-hover">
+                        <table class="table table-hover" id="extractedItemsTable">
                             <thead>
                                 <tr>
                                     <th style="width: 40px;">
@@ -172,6 +180,32 @@
 
 {% block extra_js %}
 <script>
+    // Initialize DataTables for posts table
+    $(document).ready(function() {
+        $('#postsTable').DataTable({
+            order: [[1, 'desc']], // Sort by Publish Date descending by default
+            paging: false,
+            scrollY: '400px',
+            scrollCollapse: true,
+            columnDefs: [
+                { orderable: false, targets: 0 } // Disable sorting on checkbox column
+            ]
+        });
+        
+        // Initialize DataTables for extracted items table if it exists
+        if ($('#extractedItemsTable').length) {
+            $('#extractedItemsTable').DataTable({
+                order: [[2, 'desc']], // Sort by Post Date descending by default
+                paging: false,
+                scrollY: '400px',
+                scrollCollapse: true,
+                columnDefs: [
+                    { orderable: false, targets: 0 } // Disable sorting on checkbox column
+                ]
+            });
+        }
+    });
+    
     // Select all posts checkbox
     document.getElementById('selectAll').addEventListener('change', function() {
         const checkboxes = document.querySelectorAll('.post-checkbox');
@@ -199,6 +233,58 @@
         refreshBtn.closest('form').addEventListener('submit', function(e) {
             refreshBtn.disabled = true;
             refreshBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Refreshing...';
+        });
+    }
+    
+    // Handle download click visualization button
+    const downloadClickVizBtn = document.getElementById('downloadClickVizBtn');
+    if (downloadClickVizBtn) {
+        downloadClickVizBtn.addEventListener('click', function() {
+            // Check if any posts are selected
+            const selectedCheckboxes = document.querySelectorAll('.post-checkbox:checked');
+            
+            if (selectedCheckboxes.length === 0) {
+                alert('Please select at least one post.');
+                return;
+            }
+            
+            // Create a form to submit the selected posts
+            const form = document.createElement('form');
+            form.method = 'POST';
+            form.action = "{% url 'analytics:download_click_visualization' %}";
+            
+            // Add CSRF token
+            const csrfInput = document.createElement('input');
+            csrfInput.type = 'hidden';
+            csrfInput.name = 'csrfmiddlewaretoken';
+            csrfInput.value = '{{ csrf_token }}';
+            form.appendChild(csrfInput);
+            
+            // Add selected post indices
+            selectedCheckboxes.forEach(checkbox => {
+                const input = document.createElement('input');
+                input.type = 'hidden';
+                input.name = 'selected_posts';
+                input.value = checkbox.value;
+                form.appendChild(input);
+            });
+            
+            // Submit the form
+            document.body.appendChild(form);
+            
+            // Disable button and show loading state
+            downloadClickVizBtn.disabled = true;
+            const originalHtml = downloadClickVizBtn.innerHTML;
+            downloadClickVizBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Generating...';
+            
+            form.submit();
+            
+            // Re-enable button after a delay (form submission will navigate away or download will start)
+            setTimeout(function() {
+                downloadClickVizBtn.disabled = false;
+                downloadClickVizBtn.innerHTML = originalHtml;
+                document.body.removeChild(form);
+            }, 3000);
         });
     }
 </script>

@@ -562,3 +562,42 @@ async def refresh_posts_data():
         
     except Exception as e:
         return None, f"Error refreshing posts: {str(e)}"
+
+
+def generate_click_visualization_html(post_html, clicks_dict, unique_email_opens):
+    """
+    Generate HTML with click counts and CTR displayed next to each link.
+    
+    Args:
+        post_html: HTML content of the post
+        clicks_dict: Dictionary mapping URLs to click counts
+        unique_email_opens: Number of unique email opens for CTR calculation
+    
+    Returns:
+        Modified HTML string with click visualizations
+    """
+    soup = BeautifulSoup(post_html, 'html.parser')
+    
+    # Find all links
+    all_links = soup.find_all('a', href=True)
+    
+    for link in all_links:
+        # Remove jwt_token parameter to match the clicks_dict format
+        href = link['href'].replace("&jwt_token={{jwt_token}}", "")
+        
+        # Get click count for this link
+        click_count = clicks_dict.get(href, 0)
+        
+        # Calculate CTR
+        ctr = (click_count / unique_email_opens * 100) if unique_email_opens > 0 else 0
+        
+        # Create a highlighted span with click info
+        if click_count > 0:
+            click_info = soup.new_tag('span', style='background-color: yellow; font-weight: bold; margin-left: 5px; padding: 2px 5px; border-radius: 3px; font-size: 0.9em;')
+            has_s = "s" if click_count != 1 else ""
+            click_info.string = f"[{click_count} click{has_s}, {ctr:.1f}% CTR]"
+            
+            # Insert the click info after the link
+            link.insert_after(click_info)
+    
+    return str(soup)

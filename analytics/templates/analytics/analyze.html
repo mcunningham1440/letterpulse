@@ -43,7 +43,7 @@
             </div>
             <div class="card-body">
                 <div class="table-responsive">
-                    <table class="table table-hover" id="contentTable">
+                    <table class="table table-hover table-sm" id="contentTable">
                         <thead>
                             <tr>
                                 <th>Post Title</th>
@@ -118,6 +118,11 @@
     function displayContentSet(data) {
         document.getElementById('contentSetName').textContent = data.name;
         
+        // Destroy existing DataTable if it exists
+        if ($.fn.DataTable.isDataTable('#contentTable')) {
+            $('#contentTable').DataTable().destroy();
+        }
+        
         const tbody = document.getElementById('contentTableBody');
         tbody.innerHTML = '';
         
@@ -131,6 +136,14 @@
                 <td class="text-end">${item.max_clicks}</td>
             `;
             tbody.appendChild(row);
+        });
+        
+        // Initialize DataTable
+        $('#contentTable').DataTable({
+            order: [[1, 'desc']], // Sort by Post Date descending by default
+            paging: false,
+            scrollY: '400px',
+            scrollCollapse: true
         });
     }
     
