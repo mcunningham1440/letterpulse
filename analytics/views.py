@@ -392,6 +392,236 @@ def generate_insights(request):
         }, status=500)
 
 
+@require_POST
+def rename_set(request):
+    """
+    Rename a content set.
+    """
+    try:
+        old_name = request.POST.get('old_name')
+        new_name = request.POST.get('new_name')
+        
+        if not old_name or not new_name:
+            return JsonResponse({
+                'success': False,
+                'error': 'Both old and new names are required.'
+            }, status=400)
+        
+        # Check if new name already exists
+        if ContentSet.objects.filter(name=new_name).exists():
+            return JsonResponse({
+                'success': False,
+                'error': f"A content set named '{new_name}' already exists."
+            }, status=400)
+        
+        content_set = ContentSet.objects.get(name=old_name)
+        content_set.name = new_name
+        content_set.save()
+        
+        return JsonResponse({
+            'success': True,
+            'message': f"Content set renamed to '{new_name}'."
+        })
+        
+    except ContentSet.DoesNotExist:
+        return JsonResponse({
+            'success': False,
+            'error': f"Content set '{old_name}' not found."
+        }, status=404)
+    except Exception as e:
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        }, status=500)
+
+
+@require_POST
+def copy_set(request):
+    """
+    Create a copy of a content set.
+    """
+    try:
+        set_name = request.POST.get('set_name')
+        
+        if not set_name:
+            return JsonResponse({
+                'success': False,
+                'error': 'Content set name is required.'
+            }, status=400)
+        
+        content_set = ContentSet.objects.get(name=set_name)
+        copy_name = set_name + ' copy'
+        
+        # Find a unique name if copy already exists
+        counter = 2
+        while ContentSet.objects.filter(name=copy_name).exists():
+            copy_name = f"{set_name} copy {counter}"
+            counter += 1
+        
+        # Create the copy with items_data
+        import copy as copy_module
+        copy_set = ContentSet.objects.create(
+            name=copy_name,
+            description=content_set.description,
+            items_data=copy_module.deepcopy(content_set.items_data)
+        )
+        
+        return JsonResponse({
+            'success': True,
+            'message': f"Content set copied as '{copy_name}'.",
+            'copy_name': copy_name
+        })
+        
+    except ContentSet.DoesNotExist:
+        return JsonResponse({
+            'success': False,
+            'error': f"Content set '{set_name}' not found."
+        }, status=404)
+    except Exception as e:
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        }, status=500)
+
+
+@require_POST
+def merge_sets(request):
+    """
+    Merge one content set into another.
+    """
+    try:
+        source_set_name = request.POST.get('source_set')
+        target_set_name = request.POST.get('target_set')
+        
+        if not source_set_name or not target_set_name:
+            return JsonResponse({
+                'success': False,
+                'error': 'Both source and target set names are required.'
+            }, status=400)
+        
+        source_set = ContentSet.objects.get(name=source_set_name)
+        target_set = ContentSet.objects.get(name=target_set_name)
+        
+        # Merge items_data from source to target
+        source_items = source_set.items_data if isinstance(source_set.items_data, list) else []
+        target_items = target_set.items_data if isinstance(target_set.items_data, list) else []
+        
+        # Extend target with source items
+        target_items.extend(source_items)
+        target_set.items_data = target_items
+        target_set.save()
+        
+        items_added = len(source_items)
+        
+        return JsonResponse({
+            'success': True,
+            'message': f"Merged {items_added} items from '{source_set_name}' into '{target_set_name}'.",
+            'items_added': items_added
+        })
+        
+    except ContentSet.DoesNotExist as e:
+        return JsonResponse({
+            'success': False,
+            'error': 'One or both content sets not found.'
+        }, status=404)
+    except Exception as e:
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        }, status=500)
+
+
+@require_POST
+def delete_items_from_set(request):
+    """
+    Delete specific items from a content set by their indices.
+    """
+    try:
+        set_name = request.POST.get('set_name')
+        indices_json = request.POST.get('indices')
+        
+        if not set_name or not indices_json:
+            return JsonResponse({
+                'success': False,
+                'error': 'Set name and item indices are required.'
+            }, status=400)
+        
+        indices = json.loads(indices_json)
+        
+        content_set = ContentSet.objects.get(name=set_name)
+        items = content_set.items_data if isinstance(content_set.items_data, list) else []
+        
+        # Validate indices
+        if not all(0 <= idx < len(items) for idx in indices):
+            return JsonResponse({
+                'success': False,
+                'error': 'Invalid item indices.'
+            }, status=400)
+        
+        # Delete items at specified indices (in reverse order to maintain correct indices)
+        indices_sorted = sorted(indices, reverse=True)
+        for idx in indices_sorted:
+            items.pop(idx)
+        
+        content_set.items_data = items
+        content_set.save()
+        
+        return JsonResponse({
+            'success': True,
+            'message': f"Deleted {len(indices)} item(s) from '{set_name}'."
+        })
+        
+    except ContentSet.DoesNotExist:
+        return JsonResponse({
+            'success': False,
+            'error': f"Content set '{set_name}' not found."
+        }, status=404)
+    except json.JSONDecodeError:
+        return JsonResponse({
+            'success': False,
+            'error': 'Invalid indices format.'
+        }, status=400)
+    except Exception as e:
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        }, status=500)
+
+
+@require_POST
+def delete_set(request):
+    """
+    Delete an entire content set.
+    """
+    try:
+        set_name = request.POST.get('set_name')
+        
+        if not set_name:
+            return JsonResponse({
+                'success': False,
+                'error': 'Content set name is required.'
+            }, status=400)
+        
+        content_set = ContentSet.objects.get(name=set_name)
+        content_set.delete()
+        
+        return JsonResponse({
+            'success': True,
+            'message': f"Content set '{set_name}' deleted successfully."
+        })
+        
+    except ContentSet.DoesNotExist:
+        return JsonResponse({
+            'success': False,
+            'error': f"Content set '{set_name}' not found."
+        }, status=404)
+    except Exception as e:
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        }, status=500)
+
+
 def download_csv(request, set_name):
     """
     Download a content set as CSV.

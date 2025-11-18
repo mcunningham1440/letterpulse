@@ -46,6 +46,7 @@
                     <table class="table table-hover table-sm" id="contentTable">
                         <thead>
                             <tr>
+                                <th><input type="checkbox" id="selectAll"></th>
                                 <th>Post Title</th>
                                 <th>Post Date</th>
                                 <th>Item Text</th>
@@ -56,6 +57,25 @@
                         <tbody id="contentTableBody">
                         </tbody>
                     </table>
+                </div>
+            </div>
+            <div class="card-footer">
+                <div class="d-flex gap-2 flex-wrap">
+                    <button class="btn btn-sm btn-info" id="renameBtn">
+                        <i class="bi bi-pencil"></i> Rename Set
+                    </button>
+                    <button class="btn btn-sm btn-success" id="copyBtn">
+                        <i class="bi bi-files"></i> Make Copy
+                    </button>
+                    <button class="btn btn-sm btn-secondary" id="mergeBtn">
+                        <i class="bi bi-union"></i> Merge With...
+                    </button>
+                    <button class="btn btn-sm btn-warning" id="deleteItemsBtn">
+                        <i class="bi bi-trash"></i> Delete Selected Items
+                    </button>
+                    <button class="btn btn-sm btn-danger" id="deleteSetBtn">
+                        <i class="bi bi-trash-fill"></i> Delete Set
+                    </button>
                 </div>
             </div>
         </div>
@@ -126,9 +146,10 @@
         const tbody = document.getElementById('contentTableBody');
         tbody.innerHTML = '';
         
-        data.data.forEach(item => {
+        data.data.forEach((item, index) => {
             const row = document.createElement('tr');
             row.innerHTML = `
+                <td><input type="checkbox" class="item-checkbox" data-index="${index}"></td>
                 <td>${item.post_title}</td>
                 <td>${item.post_date}</td>
                 <td>${truncateText(item.text, 50)}</td>
@@ -207,6 +228,234 @@
     document.getElementById('downloadBtn').addEventListener('click', function() {
         if (currentContentSet) {
             window.location.href = `/analyze/download-csv/${encodeURIComponent(currentContentSet)}/`;
+        }
+    });
+    
+    // Select all checkbox handler
+    document.getElementById('selectAll').addEventListener('change', function() {
+        const checkboxes = document.querySelectorAll('.item-checkbox');
+        checkboxes.forEach(cb => cb.checked = this.checked);
+    });
+    
+    // Rename set
+    document.getElementById('renameBtn').addEventListener('click', async function() {
+        if (!currentContentSet) return;
+        
+        const newName = prompt('Enter new name for the content set:', currentContentSet);
+        if (!newName || newName === currentContentSet) return;
+        
+        try {
+            const formData = new FormData();
+            formData.append('old_name', currentContentSet);
+            formData.append('new_name', newName);
+            formData.append('csrfmiddlewaretoken', '{{ csrf_token }}');
+            
+            const response = await fetch('/analyze/rename-set/', {
+                method: 'POST',
+                body: formData
+            });
+            
+            const data = await response.json();
+            
+            if (data.success) {
+                alert('Content set renamed successfully!');
+                location.reload();
+            } else {
+                alert('Error renaming set: ' + data.error);
+            }
+        } catch (error) {
+            alert('Error renaming set: ' + error.message);
+        }
+    });
+    
+    // Make copy
+    document.getElementById('copyBtn').addEventListener('click', async function() {
+        if (!currentContentSet) return;
+        
+        const copyName = currentContentSet + ' copy';
+        
+        if (!confirm(`Create a copy named "${copyName}"?`)) return;
+        
+        try {
+            const formData = new FormData();
+            formData.append('set_name', currentContentSet);
+            formData.append('csrfmiddlewaretoken', '{{ csrf_token }}');
+            
+            const response = await fetch('/analyze/copy-set/', {
+                method: 'POST',
+                body: formData
+            });
+            
+            const data = await response.json();
+            
+            if (data.success) {
+                alert('Content set copied successfully!');
+                location.reload();
+            } else {
+                alert('Error copying set: ' + data.error);
+            }
+        } catch (error) {
+            alert('Error copying set: ' + error.message);
+        }
+    });
+    
+    // Merge with another set
+    document.getElementById('mergeBtn').addEventListener('click', async function() {
+        if (!currentContentSet) return;
+        
+        // Get list of other content sets
+        const select = document.getElementById('contentSetSelect');
+        const otherSets = Array.from(select.options)
+            .map(opt => opt.value)
+            .filter(val => val && val !== currentContentSet);
+        
+        if (otherSets.length === 0) {
+            alert('No other content sets available to merge with.');
+            return;
+        }
+        
+        // Create a custom modal dialog with dropdown
+        const modalHtml = `
+            <div class="modal fade" id="mergeModal" tabindex="-1">
+                <div class="modal-dialog">
+                    <div class="modal-content">
+                        <div class="modal-header">
+                            <h5 class="modal-title">Merge Content Sets</h5>
+                            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                        </div>
+                        <div class="modal-body">
+                            <p>Merge "<strong>${currentContentSet}</strong>" into:</p>
+                            <select class="form-select" id="mergeTargetSelect">
+                                <option value="">-- Select target set --</option>
+                                ${otherSets.map(set => `<option value="${set}">${set}</option>`).join('')}
+                            </select>
+                            <div class="alert alert-info mt-3 mb-0">
+                                <small>This will add all items from "${currentContentSet}" to the selected set.</small>
+                            </div>
+                        </div>
+                        <div class="modal-footer">
+                            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                            <button type="button" class="btn btn-primary" id="confirmMergeBtn">Merge</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+        
+        // Remove any existing modal
+        const existingModal = document.getElementById('mergeModal');
+        if (existingModal) existingModal.remove();
+        
+        // Add modal to page
+        document.body.insertAdjacentHTML('beforeend', modalHtml);
+        
+        // Show modal
+        const modal = new bootstrap.Modal(document.getElementById('mergeModal'));
+        modal.show();
+        
+        // Handle merge confirmation
+        document.getElementById('confirmMergeBtn').addEventListener('click', async function() {
+            const targetSet = document.getElementById('mergeTargetSelect').value;
+            
+            if (!targetSet) {
+                alert('Please select a target set.');
+                return;
+            }
+            
+            modal.hide();
+            
+            // Proceed with merge
+            
+            try {
+                const formData = new FormData();
+                formData.append('source_set', currentContentSet);
+                formData.append('target_set', targetSet);
+                formData.append('csrfmiddlewaretoken', '{{ csrf_token }}');
+                
+                const response = await fetch('/analyze/merge-sets/', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    alert(`Successfully merged! ${data.items_added} items added to "${targetSet}".`);
+                    location.reload();
+                } else {
+                    alert('Error merging sets: ' + data.error);
+                }
+            } catch (error) {
+                alert('Error merging sets: ' + error.message);
+            }
+        });
+    });
+    
+    // Delete selected items
+    document.getElementById('deleteItemsBtn').addEventListener('click', async function() {
+        if (!currentContentSet) return;
+        
+        const checkedBoxes = document.querySelectorAll('.item-checkbox:checked');
+        if (checkedBoxes.length === 0) {
+            alert('Please select items to delete.');
+            return;
+        }
+        
+        const indices = Array.from(checkedBoxes).map(cb => parseInt(cb.dataset.index));
+        
+        if (!confirm(`Delete ${indices.length} selected item(s) from "${currentContentSet}"?\n\nThis action cannot be undone.`)) return;
+        
+        try {
+            const formData = new FormData();
+            formData.append('set_name', currentContentSet);
+            formData.append('indices', JSON.stringify(indices));
+            formData.append('csrfmiddlewaretoken', '{{ csrf_token }}');
+            
+            const response = await fetch('/analyze/delete-items/', {
+                method: 'POST',
+                body: formData
+            });
+            
+            const data = await response.json();
+            
+            if (data.success) {
+                alert(`Successfully deleted ${indices.length} item(s)!`);
+                // Reload the page to update both the content and the dropdown
+                location.reload();
+            } else {
+                alert('Error deleting items: ' + data.error);
+            }
+        } catch (error) {
+            alert('Error deleting items: ' + error.message);
+        }
+    });
+    
+    // Delete set
+    document.getElementById('deleteSetBtn').addEventListener('click', async function() {
+        if (!currentContentSet) return;
+        
+        if (!confirm(`Delete the entire content set "${currentContentSet}"?\n\nThis action cannot be undone and will permanently delete all data in this set.`)) return;
+        
+        try {
+            const formData = new FormData();
+            formData.append('set_name', currentContentSet);
+            formData.append('csrfmiddlewaretoken', '{{ csrf_token }}');
+            
+            const response = await fetch('/analyze/delete-set/', {
+                method: 'POST',
+                body: formData
+            });
+            
+            const data = await response.json();
+            
+            if (data.success) {
+                alert('Content set deleted successfully!');
+                location.reload();
+            } else {
+                alert('Error deleting set: ' + data.error);
+            }
+        } catch (error) {
+            alert('Error deleting set: ' + error.message);
         }
     });
 </script>

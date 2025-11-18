@@ -15,4 +15,9 @@ urlpatterns = [
     path('analyze/load-content-set/<str:set_name>/', views.load_content_set, name='load_content_set'),
     path('analyze/generate-insights/', views.generate_insights, name='generate_insights'),
     path('analyze/download-csv/<str:set_name>/', views.download_csv, name='download_csv'),
+    path('analyze/rename-set/', views.rename_set, name='rename_set'),
+    path('analyze/copy-set/', views.copy_set, name='copy_set'),
+    path('analyze/merge-sets/', views.merge_sets, name='merge_sets'),
+    path('analyze/delete-items/', views.delete_items_from_set, name='delete_items_from_set'),
+    path('analyze/delete-set/', views.delete_set, name='delete_set'),
 ]
