@@ -243,10 +243,10 @@ async def extract_items(post_html, content_desc, clicks_dict, title, post_date, 
     """
     # Step 1: Get line numbers for sections matching the content description
     parsing_prompt = f"""You are given an HTML document with line numbers.
-Your task is to identify sections of the HTML that correspond to the content described below.
-Provide the start and end line numbers (inclusive) for each section that matches the description.
-Make each discrete item a separate section.
-Do not include any sections that do not match the description.
+Your task is to identify items within the HTML that correspond to the content described below.
+Provide the start and end line numbers (inclusive) for each item that matches the description.
+Make each discrete item a separate pair of start and end line numbers.
+Do not include any items that do not match the description.
 
 Content Description:
 {content_desc}."""
@@ -255,26 +255,26 @@ Content Description:
     all_lines = soup.prettify().split('\n')
     numbered_lines = [f"{i+1}\t{line}" for i, line in enumerate(all_lines)]
     
-    class Section(BaseModel):
+    class Item(BaseModel):
         StartLine: int
         EndLine: int
 
-    class AllSections(BaseModel):
-        Sections: List[Section]
+    class AllItems(BaseModel):
+        Items: List[Item]
 
     messages = [
         {"role": "system", "content": parsing_prompt},
         {"role": "user", "content": '\n'.join(numbered_lines)}
     ]
 
-    completion = await llm_call("extract_items", messages, "gpt-5-mini", response_format=AllSections)
+    completion = await llm_call("extract_items", messages, "gpt-5-mini", response_format=AllItems)
     output = completion.choices[0].message.parsed
 
     # Step 2: Extract text and links from each section
     news_items = []
 
-    for section in output.Sections:
-        reconstructed_html = "\n".join(all_lines[section.StartLine - 1:section.EndLine])
+    for item in output.Items:
+        reconstructed_html = "\n".join(all_lines[item.StartLine - 1:item.EndLine])
         soup = BeautifulSoup(reconstructed_html, 'html.parser')
         
         # Extract text
