@@ -15,6 +15,8 @@ from datetime import datetime
 import time
 from bs4 import BeautifulSoup
 from django.conf import settings
+import numpy as np
+from Levenshtein import distance as levenshtein_distance
 
 
 async def llm_call(function_name, messages, model, response_format=None):
@@ -154,35 +156,7 @@ async def fetch_post_clicks(session, post_id, semaphore):
         except Exception as e:
             print(f"Exception fetching clicks for post {post_id}: {str(e)}")
             return (post_id, None)
-
-
-async def fetch_posts_html_parallel(post_ids):
-    """
-    Fetch HTML content for multiple posts in parallel with rate limiting.
-    
-    Args:
-        post_ids: List of Beehiiv post IDs
-    
-    Returns:
-        Dictionary mapping post IDs to HTML content
-    """
-    semaphore = asyncio.Semaphore(5)  # Limit to 5 concurrent requests
-    htmls = {}
-    
-    timeout = aiohttp.ClientTimeout(total=30)
-    async with aiohttp.ClientSession(timeout=timeout) as session:
-        tasks = [fetch_post_html(session, post_id, semaphore) for post_id in post_ids]
-        results = await asyncio.gather(*tasks)
         
-        for post_id, html_content in results:
-            if html_content is not None:
-                htmls[f"{post_id}.html"] = html_content
-    
-    # Give the event loop a moment to complete cleanup
-    await asyncio.sleep(0)
-    
-    return htmls
-
 
 async def fetch_posts_html_and_clicks_parallel(post_ids):
     """
@@ -224,6 +198,62 @@ async def fetch_posts_html_and_clicks_parallel(post_ids):
     await asyncio.sleep(0)
     
     return htmls, clicks_by_id
+
+
+def match_links_with_clicks(html_links_raw, clicks_dict, relative_distance_cutoff=0.4):
+    """
+    Match HTML links with click report links using exact matching first,
+    then Levenshtein distance for unmatched links.
+    
+    Args:
+        html_links_raw: List of raw HTML links (may contain jwt_token)
+        clicks_dict: Dictionary mapping click report URLs to click counts
+        relative_distance_cutoff: Maximum relative Levenshtein distance for fuzzy matching (default 0.4)
+    
+    Returns:
+        Dictionary mapping cleaned HTML links to their click counts
+    """
+    # Step 1: Clean HTML links by removing jwt_token
+    html_links_cleaned = [link.replace("&jwt_token={{jwt_token}}", "") for link in html_links_raw]
+    
+    # Track which HTML links are still available for matching
+    available_html_links = set(html_links_cleaned)
+    
+    # Result dictionary: HTML link -> click count
+    link_to_clicks = {}
+    
+    # Step 2: Exact matching pass
+    for click_link, click_count in clicks_dict.items():
+        if click_link in available_html_links:
+            link_to_clicks[click_link] = click_count
+            available_html_links.remove(click_link)
+    
+    # Step 3: Fuzzy matching with Levenshtein distance for unmatched click report links
+    unmatched_click_links = [link for link in clicks_dict.keys() if link not in link_to_clicks]
+    
+    if unmatched_click_links and available_html_links:
+        available_html_links_list = list(available_html_links)
+        
+        for click_link in unmatched_click_links:
+            # Calculate distances to all remaining HTML links
+            distances = [levenshtein_distance(click_link, html_link) for html_link in available_html_links_list]
+            
+            # Find the closest match
+            min_idx = np.argmin(distances)
+            closest_html_link = available_html_links_list[min_idx]
+            min_distance = distances[min_idx]
+            
+            # Calculate relative distance
+            max_length = max(len(click_link), len(closest_html_link))
+            relative_distance = min_distance / max_length if max_length > 0 else 0
+            
+            # Only match if relative distance is below cutoff
+            if relative_distance <= relative_distance_cutoff:
+                link_to_clicks[closest_html_link] = clicks_dict[click_link]
+                # Remove from available list to prevent duplicate matching
+                available_html_links_list.pop(min_idx)
+    
+    return link_to_clicks
 
 
 async def extract_items(post_html, content_desc, clicks_dict, title, post_date, unique_email_opens):
@@ -280,11 +310,17 @@ Content Description:
         # Extract text
         text = soup.get_text(" ", strip=True)
         
-        # Extract all links
-        html_links = [link['href'].replace("&jwt_token={{jwt_token}}", "") for link in soup.find_all('a') if link.has_attr('href')]
+        # Extract all links (raw, with jwt_token if present)
+        html_links_raw = [link['href'] for link in soup.find_all('a') if link.has_attr('href')]
         
-        # Get clicks for each link from clicks_dict
-        clicks = [clicks_dict.get(link, 0) for link in html_links]
+        # Match HTML links with clicks using improved matching algorithm
+        link_to_clicks = match_links_with_clicks(html_links_raw, clicks_dict)
+        
+        # Clean HTML links for output
+        html_links = [link.replace("&jwt_token={{jwt_token}}", "") for link in html_links_raw]
+        
+        # Get clicks for each link using the matched results
+        clicks = [link_to_clicks.get(link, 0) for link in html_links]
 
         news_items.append({
             "post_title": title,
@@ -567,6 +603,7 @@ async def refresh_posts_data():
 def generate_click_visualization_html(post_html, clicks_dict, unique_email_opens):
     """
     Generate HTML with click counts and CTR displayed next to each link.
+    Uses improved link matching with Levenshtein distance.
     
     Args:
         post_html: HTML content of the post
@@ -579,14 +616,18 @@ def generate_click_visualization_html(post_html, clicks_dict, unique_email_opens
     soup = BeautifulSoup(post_html, 'html.parser')
     
     # Find all links
-    all_links = soup.find_all('a', href=True)
+    html_links = soup.find_all('a', href=True)
+    html_links_raw = [link['href'] for link in html_links]
     
-    for link in all_links:
-        # Remove jwt_token parameter to match the clicks_dict format
+    # Use improved matching to get clicks for each link
+    link_to_clicks = match_links_with_clicks(html_links_raw, clicks_dict)
+    
+    for link in html_links:
+        # Clean the href to match against link_to_clicks
         href = link['href'].replace("&jwt_token={{jwt_token}}", "")
         
         # Get click count for this link
-        click_count = clicks_dict.get(href, 0)
+        click_count = link_to_clicks.get(href, 0)
         
         # Calculate CTR
         ctr = (click_count / unique_email_opens * 100) if unique_email_opens > 0 else 0

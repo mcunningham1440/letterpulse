@@ -8,3 +8,4 @@ testing_data/
 
 .env
 *.pyc
+.DS_Store
