@@ -19,7 +19,7 @@ import numpy as np
 from Levenshtein import distance as levenshtein_distance
 
 
-async def llm_call(function_name, messages, model, response_format=None):
+async def llm_call(function_name, messages, model, reasoning_level, response_format=None):
     """Make an async call to OpenAI API and log the request"""
     start_datetime = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     start_time = time.time()
@@ -31,12 +31,14 @@ async def llm_call(function_name, messages, model, response_format=None):
                 response = await client.responses.parse(
                     model=model,
                     input=messages,
-                    text_format=response_format
+                    text_format=response_format,
+                    reasoning={"effort": reasoning_level}
                 )
             else:
                 response = await client.responses.create(
                     model=model,
-                    input=messages
+                    input=messages,
+                    reasoning={"effort": reasoning_level}
                 )
         finally:
             await client.close()
@@ -47,12 +49,14 @@ async def llm_call(function_name, messages, model, response_format=None):
                 response = client.responses.parse(
                     model=model,
                     input=messages,
-                    text_format=response_format
+                    text_format=response_format,
+                    reasoning={"effort:": reasoning_level}
                 )
             else:
                 response = client.responses.create(
                     model=model,
-                    input=messages
+                    input=messages,
+                    reasoning={"effort:": reasoning_level}
                 )
         finally:
             client.close()
@@ -297,7 +301,9 @@ Content Description:
         {"role": "user", "content": '\n'.join(numbered_lines)}
     ]
 
-    response = await llm_call("extract_items", messages, "gpt-5-mini", response_format=AllItems)
+    # 5.1: 'none', 'low', 'medium', and 'high'
+    # 5-mini: 'minimal', 'low', 'medium', and 'high'
+    response = await llm_call("extract_items", messages, "gpt-5.1", "low", response_format=AllItems)
     output = response.output[-1].content[0].parsed
 
     # Step 2: Extract text and links from each section
@@ -392,7 +398,7 @@ Limit your response to 3 concise takeaways at most."""
         {"role": "user", "content": items_str}
     ]
     
-    response = await llm_call("generate_content_insights", messages, "gpt-5")
+    response = await llm_call("generate_content_insights", messages, "gpt-5.1", "none")
     
     return response
 
