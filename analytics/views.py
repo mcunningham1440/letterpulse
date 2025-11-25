@@ -373,7 +373,7 @@ def generate_insights(request):
         
         # Generate insights using async function
         response = async_to_sync(generate_content_insights)(df)
-        insights = response.choices[0].message.content
+        insights = response.output[-1].content[0].text
         
         return JsonResponse({
             'success': True,

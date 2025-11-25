@@ -28,15 +28,15 @@ async def llm_call(function_name, messages, model, response_format=None):
         client = AsyncOpenAI(api_key=os.environ.get('OPENAI_API_KEY'))
         try:
             if response_format is not None:
-                completion = await client.beta.chat.completions.parse(
+                response = await client.responses.parse(
                     model=model,
-                    messages=messages,
-                    response_format=response_format
+                    input=messages,
+                    text_format=response_format
                 )
             else:
-                completion = await client.chat.completions.create(
+                response = await client.responses.create(
                     model=model,
-                    messages=messages
+                    input=messages
                 )
         finally:
             await client.close()
@@ -44,15 +44,15 @@ async def llm_call(function_name, messages, model, response_format=None):
         client = OpenAI(api_key=os.environ.get('OPENAI_API_KEY'))
         try:
             if response_format is not None:
-                completion = client.beta.chat.completions.parse(
+                response = client.responses.parse(
                     model=model,
-                    messages=messages,
-                    response_format=response_format
+                    input=messages,
+                    text_format=response_format
                 )
             else:
-                completion = client.chat.completions.create(
+                response = client.responses.create(
                     model=model,
-                    messages=messages
+                    input=messages
                 )
         finally:
             client.close()
@@ -64,10 +64,10 @@ async def llm_call(function_name, messages, model, response_format=None):
     with open(log_file, 'a', newline='', encoding='utf-8') as f:
         writer = csv.writer(f)
         if not file_exists:
-            writer.writerow(['function_name', 'run_datetime', 'run_time_s', 'model', 'prompt_tokens', 'completion_tokens'])
-        writer.writerow([function_name, start_datetime, f"{duration:.4f}", model, completion.usage.prompt_tokens, completion.usage.completion_tokens])
+            writer.writerow(['function_name', 'run_datetime', 'run_time_s', 'model', 'input_tokens', 'output_tokens'])
+        writer.writerow([function_name, start_datetime, f"{duration:.4f}", model, response.usage.input_tokens, response.usage.output_tokens])
     
-    return completion
+    return response
 
 
 async def fetch_post_html(session, post_id, semaphore):
@@ -297,11 +297,14 @@ Content Description:
         {"role": "user", "content": '\n'.join(numbered_lines)}
     ]
 
-    completion = await llm_call("extract_items", messages, "gpt-5-mini", response_format=AllItems)
-    output = completion.choices[0].message.parsed
+    response = await llm_call("extract_items", messages, "gpt-5-mini", response_format=AllItems)
+    output = response.output[-1].content[0].parsed
 
     # Step 2: Extract text and links from each section
     news_items = []
+
+    html_links_raw = [link['href'] for link in soup.find_all('a') if link.has_attr('href')]
+    link_to_clicks = match_links_with_clicks(html_links_raw, clicks_dict)
 
     for item in output.Items:
         reconstructed_html = "\n".join(all_lines[item.StartLine - 1:item.EndLine])
@@ -309,24 +312,18 @@ Content Description:
         
         # Extract text
         text = soup.get_text(" ", strip=True)
-        
-        # Extract all links (raw, with jwt_token if present)
-        html_links_raw = [link['href'] for link in soup.find_all('a') if link.has_attr('href')]
-        
-        # Match HTML links with clicks using improved matching algorithm
-        link_to_clicks = match_links_with_clicks(html_links_raw, clicks_dict)
-        
+                        
         # Clean HTML links for output
-        html_links = [link.replace("&jwt_token={{jwt_token}}", "") for link in html_links_raw]
+        selected_links = [link['href'].replace("&jwt_token={{jwt_token}}", "") for link in soup.find_all('a') if link.has_attr('href')]
         
         # Get clicks for each link using the matched results
-        clicks = [link_to_clicks.get(link, 0) for link in html_links]
+        clicks = [link_to_clicks.get(link, 0) for link in selected_links]
 
         news_items.append({
             "post_title": title,
             "post_date": post_date,
             "text": text,
-            "links": html_links,
+            "links": selected_links,
             "clicks": clicks,
             "click_rate": [clicks / unique_email_opens if unique_email_opens > 0 else 0 for clicks in clicks]
         })
