@@ -19,45 +19,39 @@ import numpy as np
 from Levenshtein import distance as levenshtein_distance
 
 
-async def llm_call(function_name, messages, model, reasoning_level, response_format=None):
+async def llm_call(function_name, messages, model, reasoning_level, response_format=None, tools=None):
     """Make an async call to OpenAI API and log the request"""
     start_datetime = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     start_time = time.time()
 
+    kwargs = {
+        "model": model,
+        "input": messages,
+        "reasoning": {"effort": reasoning_level}
+    }
+    if tools is not None:
+        kwargs["tools"] = tools
+
     if asyncio.get_event_loop().is_running():
         client = AsyncOpenAI(api_key=os.environ.get('OPENAI_API_KEY'))
-        try:
+        try:            
             if response_format is not None:
-                response = await client.responses.parse(
-                    model=model,
-                    input=messages,
-                    text_format=response_format,
-                    reasoning={"effort": reasoning_level}
-                )
+                kwargs["text_format"] = response_format
+
+                response = await client.responses.parse(**kwargs)
             else:
-                response = await client.responses.create(
-                    model=model,
-                    input=messages,
-                    reasoning={"effort": reasoning_level}
-                )
+                response = await client.responses.create(**kwargs)
         finally:
             await client.close()
     else:
         client = OpenAI(api_key=os.environ.get('OPENAI_API_KEY'))
         try:
             if response_format is not None:
-                response = client.responses.parse(
-                    model=model,
-                    input=messages,
-                    text_format=response_format,
-                    reasoning={"effort:": reasoning_level}
-                )
+                kwargs["text_format"] = response_format
+
+                response = client.responses.parse(**kwargs)
             else:
-                response = client.responses.create(
-                    model=model,
-                    input=messages,
-                    reasoning={"effort:": reasoning_level}
-                )
+                response = client.responses.create(**kwargs)
         finally:
             client.close()
     duration = time.time() - start_time
@@ -413,51 +407,84 @@ async def generate_content_insights(items_display):
         items_display: DataFrame containing the content items with clicks
     
     Returns:
-        OpenAI response object containing the insights
+        OpenAI response object containing structured insights with 3 tags
     """
     analysis_prompt = """You will be provided with a list of items from a newsletter and their click counts.
 Your task is to identify common characteristics among the most clicked items.
-Limit your response to 3 concise takeaways at most."""
+Provide exactly 3 concise tags that describe common characteristics.
+Each item will later be automatically classified as fitting each tag or not by an LLM.
+Make sure each tag can unambiguously apply to an item or not based on its content so as not to confuse the classifier.
+Make sure the tags are distinct from each other and cover different aspects of the content.
+
+Examples of good tags:
+"News about mergers, acquisitions, and deals"
+"Hands-on tutorials"
+"Cryptocurrency-related"
+"Open-source technology"
+"Involves a major bank like JPMorgan or Goldman Sachs"
+"Regulatory or legal developments"
+"New product launches"
+"Disasters"
+
+Each tag should be a short, descriptive phrase."""
 
     # Use the items with clicks formatted as string
-    items_str = get_items_with_clicks_as_str(items_display, mode="by_clicks")
+    items_str = get_items_with_clicks_as_str(items_display, mode="sampled", max_items=None)
+    
+    class ContentInsights(BaseModel):
+        tag1: str
+        tag2: str
+        tag3: str
     
     messages = [
         {"role": "user", "content": analysis_prompt},
         {"role": "user", "content": items_str}
     ]
     
-    response = await llm_call("generate_content_insights", messages, "gpt-5.1", "none")
+    response = await llm_call("generate_content_insights", messages, "gpt-5.1", "medium", response_format=ContentInsights)
     
     return response
 
 
-def get_items_with_clicks_as_str(items, mode="by_clicks", max_items=None):
+def get_items_with_clicks_as_str(items, mode="top_k", max_items=None, use_id=False):
     """
     Format items DataFrame as a string for AI analysis.
     
     Args:
         items: DataFrame of items
-        mode: 'by_clicks' to sort by clicks, 'shuffled' for random order
+        mode: 'top_k' for top items by clicks, 'sampled' for random items sorted by clicks, 
+              'shuffled' for random items in random order
         max_items: Maximum number of items to include
+        use_id: Whether to use item index as ID in output
     
     Returns:
         Formatted string representation
     """
-    if mode == "by_clicks":
+    if mode == "top_k":
+        # Sort by clicks in descending order and take top max_items
         items_transformed = items.iloc[items["clicks"].apply(max).sort_values(ascending=False).index]
+        if max_items is not None:
+            items_transformed = items_transformed.head(max_items)
+    elif mode == "sampled":
+        # Take random sample, then sort by clicks in descending order
+        if max_items is not None:
+            items_transformed = items.sample(n=min(max_items, len(items))).reset_index(drop=True)
+        else:
+            items_transformed = items.copy()
+        items_transformed = items_transformed.iloc[items_transformed["clicks"].apply(max).sort_values(ascending=False).index]
     elif mode == "shuffled":
-        items_transformed = items.sample(frac=1).reset_index(drop=True)
+        # Take random sample in random order
+        if max_items is not None:
+            items_transformed = items.sample(n=min(max_items, len(items))).reset_index(drop=True)
+        else:
+            items_transformed = items.sample(frac=1).reset_index(drop=True)
     else:
-        raise ValueError("mode must be 'by_clicks' or 'shuffled'")
-    
-    if max_items is not None:
-        items_transformed = items_transformed.head(max_items)
+        raise ValueError("mode must be 'top_k', 'sampled', or 'shuffled'")
     
     item_str = ""
-    for _, row in items_transformed.iterrows():
+    for i, row in items_transformed.iterrows():
         max_clicks = max(row["clicks"])
-        item_str += f"Text: {row['text']}\n"
+        item_str += f"Text: {row['text']}\n" if not use_id else f"ID {i}. {row['text']}\n"
         item_str += f"Max Clicks: {max_clicks}\n\n"
     
     return item_str
@@ -666,9 +693,9 @@ def generate_click_visualization_html(post_html, clicks_dict, unique_email_opens
         
         # Create a highlighted span with click info
         if click_count > 0:
-            click_info = soup.new_tag('span', style='background-color: yellow; font-weight: bold; margin-left: 5px; padding: 2px 5px; border-radius: 3px; font-size: 0.9em;')
+            click_info = soup.new_tag('span', style='background-color: yellow; color: black; padding: 10px; margin: 10px 0; border-left: 4px solid orange; font-weight: bold; font-family: Arial, sans-serif; font-size: 14px;')
             has_s = "s" if click_count != 1 else ""
-            click_info.string = f"[{click_count} click{has_s}, {ctr:.1f}% CTR]"
+            click_info.string = f"{click_count} click{has_s} ({ctr:.1f}% CTR)"
             
             # Insert the click info after the link
             link.insert_after(click_info)

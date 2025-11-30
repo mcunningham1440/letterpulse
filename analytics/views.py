@@ -373,7 +373,10 @@ def generate_insights(request):
         
         # Generate insights using async function
         response = async_to_sync(generate_content_insights)(df)
-        insights = response.output[-1].content[0].text
+        parsed_insights = response.output[-1].content[0].parsed
+        
+        # Merge the 3 tags into a single text string
+        insights = f"1. {parsed_insights.tag1}\n2. {parsed_insights.tag2}\n3. {parsed_insights.tag3}"
         
         return JsonResponse({
             'success': True,
