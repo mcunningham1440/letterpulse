@@ -52,6 +52,7 @@
                                 <th>Item Text</th>
                                 <th>Links</th>
                                 <th class="text-end">Max Clicks</th>
+                                <th class="text-end">Max CTR</th>
                             </tr>
                         </thead>
                         <tbody id="contentTableBody">
@@ -155,6 +156,7 @@
                 <td>${truncateText(item.text, 50)}</td>
                 <td><span class="badge bg-secondary">${item.links.length} link${item.links.length !== 1 ? 's' : ''}</span></td>
                 <td class="text-end">${item.max_clicks}</td>
+                <td class="text-end">${item.max_click_rate}</td>
             `;
             tbody.appendChild(row);
         });
@@ -202,7 +204,7 @@
             const data = await response.json();
             
             if (data.success) {
-                document.getElementById('insightsText').innerHTML = formatInsights(data.insights);
+                document.getElementById('insightsText').innerHTML = marked.parse(data.insights);
                 document.getElementById('insightsContent').classList.remove('d-none');
             } else {
                 alert('Error generating insights: ' + data.error);
@@ -215,14 +217,7 @@
         }
     });
     
-    // Format insights (convert markdown-like text to HTML)
-    function formatInsights(text) {
-        // Simple formatting: convert line breaks and bullet points
-        return text
-            .replace(/\n\n/g, '<br><br>')
-            .replace(/\n/g, '<br>')
-            .replace(/^- /gm, '• ');
-    }
+
     
     // Download CSV
     document.getElementById('downloadBtn').addEventListener('click', function() {

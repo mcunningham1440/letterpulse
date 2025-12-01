@@ -54,13 +54,16 @@ def extract_view(request):
                     lambda x: ast.literal_eval(x) if isinstance(x, str) else x
                 )
         
+        # Calculate max clicks and max click rate before formatting
+        df['max_clicks'] = df['clicks'].apply(lambda x: max(x) if x else 0)
+        df['max_click_rate'] = df['click_rate'].apply(
+            lambda x: f"{max(x) * 100:.2f}%" if x and max(x) > 0 else "0.00%"
+        )
+        
         # Format click rates as percentages
         df['click_rate'] = df['click_rate'].apply(
             lambda x: [f"{rate * 100:.2f}%" for rate in x] if x else []
         )
-        
-        # Calculate max clicks
-        df['max_clicks'] = df['clicks'].apply(lambda x: max(x) if x else 0)
         
         extracted_items_data = df.to_dict('records')
     
@@ -318,13 +321,16 @@ def load_content_set(request, set_name):
         
         # Format for display
         if not df.empty:
+            # Calculate max clicks and max click rate before formatting
+            df['max_clicks'] = df['clicks'].apply(lambda x: max(x) if x else 0)
+            df['max_click_rate'] = df['click_rate'].apply(
+                lambda x: f"{max(x) * 100:.2f}%" if x and max(x) > 0 else "0.00%"
+            )
+            
             # Format click rates as percentages
             df['click_rate'] = df['click_rate'].apply(
                 lambda x: [f"{rate * 100:.2f}%" for rate in x] if x else []
             )
-            
-            # Calculate max clicks
-            df['max_clicks'] = df['clicks'].apply(lambda x: max(x) if x else 0)
             
             data = df.to_dict('records')
         else:
@@ -373,11 +379,8 @@ def generate_insights(request):
         
         # Generate insights using async function
         response = async_to_sync(generate_content_insights)(df)
-        parsed_insights = response.output[-1].content[0].parsed
-        
-        # Merge the 3 tags into a single text string
-        insights = f"1. {parsed_insights.tag1}\n2. {parsed_insights.tag2}\n3. {parsed_insights.tag3}"
-        
+        insights = response.output[-1].content[0].text
+                
         return JsonResponse({
             'success': True,
             'insights': insights,
@@ -633,13 +636,16 @@ def download_csv(request, set_name):
         content_set = ContentSet.objects.get(name=set_name)
         df = content_set.to_dataframe()
         
+        # Calculate max clicks and max click rate before formatting
+        df['max_clicks'] = df['clicks'].apply(lambda x: max(x) if x else 0)
+        df['max_click_rate'] = df['click_rate'].apply(
+            lambda x: f"{max(x) * 100:.2f}%" if x and max(x) > 0 else "0.00%"
+        )
+        
         # Format click rates as percentages
         df['click_rate'] = df['click_rate'].apply(
             lambda x: [f"{rate * 100:.2f}%" for rate in x] if x else []
         )
-        
-        # Calculate max clicks
-        df['max_clicks'] = df['clicks'].apply(lambda x: max(x) if x else 0)
         
         # Create CSV response
         response = HttpResponse(content_type='text/csv')

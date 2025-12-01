@@ -409,39 +409,179 @@ async def generate_content_insights(items_display):
     Returns:
         OpenAI response object containing structured insights with 3 tags
     """
-    analysis_prompt = """You will be provided with a list of items from a newsletter and their click counts.
-Your task is to identify common characteristics among the most clicked items.
-Provide exactly 3 concise tags that describe common characteristics.
-Each item will later be automatically classified as fitting each tag or not by an LLM.
-Make sure each tag can unambiguously apply to an item or not based on its content so as not to confuse the classifier.
-Make sure the tags are distinct from each other and cover different aspects of the content.
+    analysis_prompt = """
+<instructions>
+You are an expert data analyst.
+You have been given a list of items featured in a newsletter, each with an associated click-through rate (CTR) and percentile ranking among all items.
+Produce a report analyzing the dataset of items and their click-through rates (CTR), following the provided template.
+Aim for ~3 top performing item archetypes, each supported by multiple examples from the data, and 1-3 underperforming archetypes for contrast. 
+Highlight key insights and patterns. 
+Set your "top tier" threshold to include 5-10 of the top items by CTR.
+Use markdown formatting with headings, bullet points, and sections as shown in the template.
+</instructions>
 
-Examples of good tags:
-"News about mergers, acquisitions, and deals"
-"Hands-on tutorials"
-"Cryptocurrency-related"
-"Open-source technology"
-"Involves a major bank like JPMorgan or Goldman Sachs"
-"Regulatory or legal developments"
-"New product launches"
-"Disasters"
+<template>
+Here’s what stands out when you look at the highest‑click-through rate (CTR) links (90th percentile and above) and compare them to the rest.
 
-Each tag should be a short, descriptive phrase."""
+Top tier (≥90th percentile):
+
+- ID 53 – Chicago Tech Mixer and Social (Tech / AI / Data) – 9.6% (100%)
+- ID 7 – From Idea to MVP – 9.3% (97%)
+- ID 27 – Chicago Coffee Club | Vertical AI Founders & Funders – 9.3% (97%)
+- ID 4 – Machine Learning Reading Group Social Hour – 9.2% (94%)
+- ID 48 – The AI Collective – 9.2% (94%)
+- ID 50 – Fireside Chat: Unlocking the Power of Context Engineering w/ Pinecone – 9.0% (92%)
+- ID 43 – Emerging Tech Inno Week: AI Day – 8.7% (90%)
+
+
+---
+
+### 1. Community‑first, social AI/tech gatherings perform extremely well
+
+High performers with this flavor:
+
+- ID 53 – Chicago Tech Mixer and Social (Tech / AI / Data) – 9.6% (100%)
+- ID 4 – Machine Learning Reading Group Social Hour – 9.2% (94%)
+- ID 48 – The AI Collective – 9.2% (94%)
+- ID 27 – Chicago Coffee Club | Vertical AI Founders & Funders – 9.3% (97%)
+- ID 29 – Chicago Data Happy Hour – 7.2% (80%)
+- ID 54 – Chicago Tech Connect Breakfast – 7.3% (83%)
+- ID 5 – Chicago – International Generalist Day Meetup – 7.0% (76%)
+
+Supporting mid/high performers showing the same pattern:
+
+- ID 18 – Chicago Data Night: Haifeng Xu (UChicago)… – 6.2% (64%)
+- ID 35 – Chicago Data & Databases Meetup – 6.2% (64%)
+
+**Common traits:**
+
+- The framing is explicitly social or communal: “Mixer and Social,” “Happy Hour,” “Breakfast,” “Coffee Club,” “Collective,” “Social Hour.”
+- Often broad but targeted topics: “Tech / AI / Data,” “Machine Learning,” “Vertical AI” rather than a hyper‑narrow niche.
+- Implied low barrier to entry: you can “drop in,” meet people, and benefit even if you’re not deeply technical or prepared.
+- Titles emphasize the *community* more than a specific talk title or speaker.
+
+**Event type that works:**  
+Community‑centric meetups and socials for AI / tech / data people, with clear networking and “come hang out” positioning.
+
+
+---
+
+### 2. Builder‑focused, “ship something” sessions are very strong
+
+High performers in this category:
+
+- ID 7 – From Idea to MVP – 9.3% (97%)
+- ID 0 – Vibe Coding Unlocked: Effortless App Building with Databricks – 7.5% (85%)
+- ID 31 – Building an MCP in Node.js & Using WebAssembly to Safely Run Unsafe Code – 6.7% (70%)
+
+Related events with a builder/founder flavor:
+
+- ID 30 – AI in Healthcare: Innovation, Infrastructure & Human-Centered Trust – 6.8% (74%)
+- ID 38 – Chicago’s Next Big Bets – 6.3% (66%)
+
+**Common traits:**
+
+- Clear “you will build / create / launch” promise: “Idea to MVP,” “App Building,” “Building an MCP.”
+- Concrete outcomes or skills implied, often around modern stacks (Databricks, Node.js, WebAssembly) that builders care about.
+- Strong appeal to early‑stage founders and technical product people.
+
+**Event type that works:**  
+Hands‑on or concept‑to‑product sessions that speak directly to founders, makers, and engineers trying to get from idea to something real.
+
+
+---
+
+### 3. AI‑specific and infra‑deep‑dive content pops, especially with credible brands
+
+Strong examples:
+
+- ID 50 – Fireside Chat: Unlocking the Power of Context Engineering w/ Pinecone – 9.0% (92%)
+- ID 43 – Emerging Tech Inno Week: AI Day – 8.7% (90%)
+- ID 37 – AI Tinkerers #21 Hosted by Drive Capital – 8.2% (88%)
+- ID 22 – WCXO INSIGHTS: AI Infrastructure for Financial Services by Supermicro & NVIDIA – 5.1% (52%) – mid, but notable given topic and brands.
+
+**Common traits:**
+
+- Explicit AI focus, often on infrastructure or cutting‑edge concepts: “Context Engineering,” “AI Day,” “AI Tinkerers,” “AI Infrastructure.”
+- Involvement of recognizable tech brands (Pinecone, NVIDIA, Supermicro) or known communities (AI Tinkerers).
+- Framed as deep dives or insider discussions (e.g., “Fireside Chat,” “Insights,” “Tinkerers”) rather than generic panels.
+
+**Event type that works:**  
+AI‑forward, infra‑oriented sessions with a clear advanced topic and credible technical brand or community.
+
+
+---
+
+
+### What underperforms by comparison
+
+Lower‑CTR events cluster around a few themes:
+
+1. **Finance/crypto/policy‑heavy without a builder angle**
+
+   - ID 44 – Chicago Stablecoin Social – 2.0% (2%)
+   - ID 40 – Blockchain & Digital Assets: US Policy Trends & 2026 Outlook – 2.6% (13%)
+   - ID 46 – Money Moves: The Future of Investment Management – 2.5% (10%)
+   - ID 32 – Bitwise Crypto Diligence Summit – 3.2% (22%)
+   - ID 33 – VC / LP Gallery Series w Private Chef: II – 2.6% (13%)
+
+   These skew investor/finance/policy‑oriented, with little in the title about how founders or builders will benefit directly.
+
+2. **Generic networking / corporate events with vague outcomes**
+
+   - ID 3 – Generation Work Networking Event – 5.5% (58%) – mid, but not strong.
+   - ID 56 – Connect & Grow Chicago – 4.9% (47%)
+   - ID 24 – Hispanic Heritage Month Celebration 1871 X LIT – 2.4% (8%)
+   - ID 41 – Health2Tech Chicago – 5.4% (55%)
+   - ID 55 – Navigate the Patient Landscape – 4.6% (41%)
+
+   These may be valuable for community or mission reasons, but the title doesn’t promise a sharp, actionable benefit to a founder/AI/tech builder audience.
+
+3. **Recurring programs without a specific topical hook**
+
+   - IDs 6, 17, 57 – 1 Million Cups Chicago – low CTRs across the board.
+   - ID 11 – ChiTech Fall: Gravity Outlook – 2.1% (4%)
+   - ID 42 – Java Global Insights: Innovation w/ Discover and Brazilian Experts – 2.1% (4%)
+
+   The framing is abstract (“Outlook,” “Insights,” “Innovation”) and not clearly tied to what this specific audience will learn, build, or who they’ll meet.
+
+These types of events may still be important for diversity of programming, ecosystem health, or specific partner commitments, but they are not your primary CTR drivers.
+
+
+---
+
+### Summary: Top‑performing link archetypes
+
+Based on CTR and percentiles, the consistently high‑engagement link types are:
+
+1. **Community‑centric AI/tech socials**
+   - Mixers, happy hours, breakfasts, “collectives,” and “clubs” with a clear AI/tech/data focus and a strong networking/social promise.
+
+2. **Builder‑oriented sessions**
+   - Events that promise movement from idea → MVP, app building, or concrete technical outcomes that appeal to founders and engineers.
+
+3. **AI‑infra and advanced topic deep dives with strong brands**
+   - AI Day, AI Tinkerers, context engineering, infra for financial services—especially when co‑branded with known vendors (Pinecone, NVIDIA, etc.).
+
+If you’re optimizing for engagement, skew your programming and naming toward these patterns, and treat generic finance/policy events, broad “innovation” talks, and unspecific recurring programs as secondary or as vehicles for other goals (e.g., ecosystem signaling, partner relations) rather than CTR workhorses.
+</template>
+"""
 
     # Use the items with clicks formatted as string
-    items_str = get_items_with_clicks_as_str(items_display, mode="sampled", max_items=None)
+    items_display["max_click_rate"] = items_display["click_rate"].apply(max)
+    items_display["max_click_rate_percentile"] = items_display["max_click_rate"].rank(pct=True)
     
-    class ContentInsights(BaseModel):
-        tag1: str
-        tag2: str
-        tag3: str
-    
+    newsletter_items = ""
+    for i, row in items_display.iterrows():
+        newsletter_items += f"ID {i}. " + row["text"] + "\n"
+        newsletter_items += f"CTR: {row['max_click_rate'] * 100}% (percentile {row['max_click_rate_percentile']:.0%})\n\n"
+        
     messages = [
         {"role": "user", "content": analysis_prompt},
-        {"role": "user", "content": items_str}
+        {"role": "user", "content": newsletter_items}
     ]
     
-    response = await llm_call("generate_content_insights", messages, "gpt-5.1", "medium", response_format=ContentInsights)
+    response = await llm_call("generate_content_insights", messages, "gpt-5.1", "medium")
     
     return response
 

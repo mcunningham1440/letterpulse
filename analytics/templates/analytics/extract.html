@@ -122,6 +122,7 @@
                                     <th>Item Text</th>
                                     <th>Links</th>
                                     <th class="text-end">Max Clicks</th>
+                                    <th class="text-end">Max CTR</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -138,6 +139,7 @@
                                         <span class="badge bg-secondary">{{ item.links|length }} link{{ item.links|length|pluralize }}</span>
                                     </td>
                                     <td class="text-end">{{ item.max_clicks }}</td>
+                                    <td class="text-end">{{ item.max_click_rate }}</td>
                                 </tr>
                                 {% endfor %}
                             </tbody>
