@@ -448,11 +448,6 @@ High performers with this flavor:
 - ID 54 – Chicago Tech Connect Breakfast – 7.3% (83%)
 - ID 5 – Chicago – International Generalist Day Meetup – 7.0% (76%)
 
-Supporting mid/high performers showing the same pattern:
-
-- ID 18 – Chicago Data Night: Haifeng Xu (UChicago)… – 6.2% (64%)
-- ID 35 – Chicago Data & Databases Meetup – 6.2% (64%)
-
 **Common traits:**
 
 - The framing is explicitly social or communal: “Mixer and Social,” “Happy Hour,” “Breakfast,” “Coffee Club,” “Collective,” “Social Hour.”
@@ -473,11 +468,7 @@ High performers in this category:
 - ID 7 – From Idea to MVP – 9.3% (97%)
 - ID 0 – Vibe Coding Unlocked: Effortless App Building with Databricks – 7.5% (85%)
 - ID 31 – Building an MCP in Node.js & Using WebAssembly to Safely Run Unsafe Code – 6.7% (70%)
-
-Related events with a builder/founder flavor:
-
 - ID 30 – AI in Healthcare: Innovation, Infrastructure & Human-Centered Trust – 6.8% (74%)
-- ID 38 – Chicago’s Next Big Bets – 6.3% (66%)
 
 **Common traits:**
 
@@ -498,11 +489,10 @@ Strong examples:
 - ID 50 – Fireside Chat: Unlocking the Power of Context Engineering w/ Pinecone – 9.0% (92%)
 - ID 43 – Emerging Tech Inno Week: AI Day – 8.7% (90%)
 - ID 37 – AI Tinkerers #21 Hosted by Drive Capital – 8.2% (88%)
-- ID 22 – WCXO INSIGHTS: AI Infrastructure for Financial Services by Supermicro & NVIDIA – 5.1% (52%) – mid, but notable given topic and brands.
 
 **Common traits:**
 
-- Explicit AI focus, often on infrastructure or cutting‑edge concepts: “Context Engineering,” “AI Day,” “AI Tinkerers,” “AI Infrastructure.”
+- Explicit AI focus, often on infrastructure or cutting‑edge concepts: “Context Engineering,” “AI Day,” “AI Tinkerers.”
 - Involvement of recognizable tech brands (Pinecone, NVIDIA, Supermicro) or known communities (AI Tinkerers).
 - Framed as deep dives or insider discussions (e.g., “Fireside Chat,” “Insights,” “Tinkerers”) rather than generic panels.
 
@@ -529,10 +519,8 @@ Lower‑CTR events cluster around a few themes:
 
 2. **Generic networking / corporate events with vague outcomes**
 
-   - ID 3 – Generation Work Networking Event – 5.5% (58%) – mid, but not strong.
    - ID 56 – Connect & Grow Chicago – 4.9% (47%)
    - ID 24 – Hispanic Heritage Month Celebration 1871 X LIT – 2.4% (8%)
-   - ID 41 – Health2Tech Chicago – 5.4% (55%)
    - ID 55 – Navigate the Patient Landscape – 4.6% (41%)
 
    These may be valuable for community or mission reasons, but the title doesn’t promise a sharp, actionable benefit to a founder/AI/tech builder audience.

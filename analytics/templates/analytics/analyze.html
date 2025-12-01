@@ -89,12 +89,34 @@
             <div class="card-body">
                 <button class="btn btn-primary" id="generateInsightsBtn">
                     <span class="spinner-border spinner-border-sm d-none" id="insightsSpinner"></span>
-                    Generate Insights
+                    Generate Report
                 </button>
                 
                 <div class="mt-4 d-none" id="insightsContent">
-                    <h6 class="fw-bold">Key Insights</h6>
-                    <div id="insightsText" class="mt-3"></div>
+                    <hr class="my-4">
+                    
+                    <h6 class="fw-bold mb-3">Save Report</h6>
+                    <div class="row mb-4">
+                        <div class="col-md-9">
+                            <label for="report_name" class="form-label fw-bold">Report Name</label>
+                            <input type="text" 
+                                   class="form-control" 
+                                   id="report_name" 
+                                   placeholder="e.g., 'Quick links analysis - November 2025'">
+                            <div class="form-text">Enter a name for this report</div>
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label fw-bold invisible">Action</label>
+                            <button class="btn btn-success w-100" id="saveReportBtn">
+                                <i class="bi bi-save"></i> Save Report
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <hr class="my-4">
+                    
+                    <h6 class="fw-bold mb-3">Report</h6>
+                    <div id="insightsText"></div>
                 </div>
             </div>
         </div>
@@ -181,7 +203,7 @@
         return text.substring(0, maxLength) + '...';
     }
     
-    // Generate insights
+    // Generate report
     document.getElementById('generateInsightsBtn').addEventListener('click', async function() {
         if (!currentContentSet) return;
         
@@ -452,6 +474,12 @@
         } catch (error) {
             alert('Error deleting set: ' + error.message);
         }
+    });
+    
+    // Save report (placeholder functionality)
+    document.getElementById('saveReportBtn').addEventListener('click', function() {
+        // Placeholder - no action for now
+        console.log('Save Report clicked - functionality to be implemented');
     });
 </script>
 {% endblock %}
