@@ -13,7 +13,7 @@ import asyncio
 import ast
 from asgiref.sync import async_to_sync
 
-from .models import Post, ContentSet
+from .models import Post, ContentSet, Report
 from .utils import (
     load_posts_from_db,
     fetch_posts_html_and_clicks_parallel,
@@ -380,6 +380,10 @@ def generate_insights(request):
         # Generate insights using async function
         response = async_to_sync(generate_content_insights)(df)
         insights = response.output[-1].content[0].text
+
+        ###
+        # insights = response
+        ###
                 
         return JsonResponse({
             'success': True,
@@ -800,3 +804,154 @@ def download_click_visualization(request):
     except Exception as e:
         messages.error(request, f"Error generating click visualizations: {str(e)}")
         return redirect('analytics:extract')
+
+
+@require_POST
+def save_report(request):
+    """
+    Save a generated report to the database.
+    """
+    try:
+        report_name = request.POST.get('report_name', '').strip()
+        report_text = request.POST.get('report_text', '').strip()
+        set_name = request.POST.get('set_name', '').strip()
+        
+        if not report_name:
+            return JsonResponse({
+                'success': False,
+                'error': 'Report name is required.'
+            }, status=400)
+        
+        if not report_text:
+            return JsonResponse({
+                'success': False,
+                'error': 'Report text is required.'
+            }, status=400)
+        
+        if not set_name:
+            return JsonResponse({
+                'success': False,
+                'error': 'Content set name is required.'
+            }, status=400)
+        
+        # Get the content set
+        content_set = ContentSet.objects.get(name=set_name)
+        
+        # Check if a report with this name already exists for this content set
+        if Report.objects.filter(name=report_name, content_set=content_set).exists():
+            return JsonResponse({
+                'success': False,
+                'error': f'A report named "{report_name}" already exists for this content set.'
+            }, status=400)
+        
+        # Create the report
+        report = Report.objects.create(
+            name=report_name,
+            content_set=content_set,
+            report_text=report_text
+        )
+        
+        return JsonResponse({
+            'success': True,
+            'message': f'Report "{report_name}" saved successfully!',
+            'report_id': report.id
+        })
+        
+    except ContentSet.DoesNotExist:
+        return JsonResponse({
+            'success': False,
+            'error': f"Content set '{set_name}' not found."
+        }, status=404)
+    except Exception as e:
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        }, status=500)
+
+
+def load_report(request, report_id):
+    """
+    Load a saved report and return as JSON.
+    """
+    try:
+        report = Report.objects.get(id=report_id)
+        
+        return JsonResponse({
+            'success': True,
+            'report_name': report.name,
+            'report_text': report.report_text,
+            'content_set_name': report.content_set.name,
+            'created_at': report.created_at.strftime('%Y-%m-%d %H:%M:%S')
+        })
+        
+    except Report.DoesNotExist:
+        return JsonResponse({
+            'success': False,
+            'error': f"Report not found."
+        }, status=404)
+    except Exception as e:
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        }, status=500)
+
+
+def get_reports_for_content_set(request, set_name):
+    """
+    Get all reports for a specific content set.
+    """
+    try:
+        content_set = ContentSet.objects.get(name=set_name)
+        reports = Report.objects.filter(content_set=content_set).order_by('-created_at')
+        
+        reports_data = [
+            {
+                'id': report.id,
+                'name': report.name,
+                'created_at': report.created_at.strftime('created %b %-d, %Y')
+            }
+            for report in reports
+        ]
+        
+        return JsonResponse({
+            'success': True,
+            'reports': reports_data
+        })
+        
+    except ContentSet.DoesNotExist:
+        return JsonResponse({
+            'success': False,
+            'error': f"Content set '{set_name}' not found."
+        }, status=404)
+    except Exception as e:
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        }, status=500)
+
+
+@require_POST
+def delete_report(request, report_id):
+    """
+    Delete a saved report.
+    """
+    try:
+        report = Report.objects.get(id=report_id)
+        report_name = report.name
+        report.delete()
+        
+        return JsonResponse({
+            'success': True,
+            'message': f'Report "{report_name}" deleted successfully.'
+        })
+        
+    except Report.DoesNotExist:
+        return JsonResponse({
+            'success': False,
+            'error': 'Report not found.'
+        }, status=404)
+    except Exception as e:
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        }, status=500)

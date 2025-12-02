@@ -409,6 +409,10 @@ async def generate_content_insights(items_display):
     Returns:
         OpenAI response object containing structured insights with 3 tags
     """
+    ###
+    # return "Test insights response"
+    ###
+
     analysis_prompt = """
 <instructions>
 You are an expert data analyst.

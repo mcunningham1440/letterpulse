@@ -87,3 +87,26 @@ class ContentSet(models.Model):
             description=description,
             items_data=items_data
         )
+
+
+class Report(models.Model):
+    """Model representing a saved content insights report"""
+    
+    name = models.CharField(max_length=255)
+    content_set = models.ForeignKey(
+        ContentSet, 
+        on_delete=models.CASCADE, 
+        related_name='reports',
+        help_text="The content set this report is based on"
+    )
+    report_text = models.TextField(help_text="The markdown-formatted report content")
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        ordering = ['-created_at']
+        unique_together = [['name', 'content_set']]
+    
+    def __str__(self):
+        return f"{self.name} - {self.content_set.name}"

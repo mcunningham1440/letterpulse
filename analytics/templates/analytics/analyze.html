@@ -82,38 +82,53 @@
         </div>
 
         <!-- AI Insights Card -->
-        <div class="card mt-4 d-none" id="insightsCard">
+        <div class="card mt-4" id="insightsCard">
             <div class="card-header">
                 <h5 class="mb-0">Content Insights</h5>
             </div>
             <div class="card-body">
-                <button class="btn btn-primary" id="generateInsightsBtn">
+                <div class="mb-4">
+                    <label for="reportSelect" class="form-label fw-bold">Select Report</label>
+                    <select class="form-select" id="reportSelect">
+                        <option value="">-- Select a saved report --</option>
+                    </select>
+                    <button class="btn btn-sm btn-danger mt-2 d-none" id="deleteReportBtn">
+                        <i class="bi bi-trash-fill"></i> Delete Report
+                    </button>
+                </div>
+                
+                <hr class="my-3">
+                
+                <button class="btn btn-primary" id="generateInsightsBtn" disabled>
                     <span class="spinner-border spinner-border-sm d-none" id="insightsSpinner"></span>
                     Generate Report
                 </button>
+                <div class="form-text mt-2" id="generateSubtext">Select a content set to generate insights</div>
                 
                 <div class="mt-4 d-none" id="insightsContent">
                     <hr class="my-4">
                     
-                    <h6 class="fw-bold mb-3">Save Report</h6>
-                    <div class="row mb-4">
-                        <div class="col-md-9">
-                            <label for="report_name" class="form-label fw-bold">Report Name</label>
-                            <input type="text" 
-                                   class="form-control" 
-                                   id="report_name" 
-                                   placeholder="e.g., 'Quick links analysis - November 2025'">
-                            <div class="form-text">Enter a name for this report</div>
+                    <div id="saveReportSection">
+                        <h6 class="fw-bold mb-3">Save Report</h6>
+                        <div class="row mb-4">
+                            <div class="col-md-9">
+                                <label for="report_name" class="form-label fw-bold">Report Name</label>
+                                <input type="text" 
+                                       class="form-control" 
+                                       id="report_name" 
+                                       placeholder="e.g., 'Quick links analysis'">
+                                <div class="form-text">Enter a name for this report</div>
+                            </div>
+                            <div class="col-md-3">
+                                <label class="form-label fw-bold invisible">Action</label>
+                                <button class="btn btn-success w-100" id="saveReportBtn">
+                                    <i class="bi bi-save"></i> Save Report
+                                </button>
+                            </div>
                         </div>
-                        <div class="col-md-3">
-                            <label class="form-label fw-bold invisible">Action</label>
-                            <button class="btn btn-success w-100" id="saveReportBtn">
-                                <i class="bi bi-save"></i> Save Report
-                            </button>
-                        </div>
+                        
+                        <hr class="my-4">
                     </div>
-                    
-                    <hr class="my-4">
                     
                     <h6 class="fw-bold mb-3">Report</h6>
                     <div id="insightsText"></div>
@@ -127,6 +142,8 @@
 {% block extra_js %}
 <script>
     let currentContentSet = null;
+    let currentReportText = null;
+    let isViewingSavedReport = false;
     
     // Handle content set selection
     document.getElementById('contentSetSelect').addEventListener('change', async function() {
@@ -134,7 +151,11 @@
         
         if (!setName) {
             document.getElementById('contentSetCard').classList.add('d-none');
-            document.getElementById('insightsCard').classList.add('d-none');
+            currentContentSet = null;
+            document.getElementById('generateInsightsBtn').disabled = true;
+            document.getElementById('generateSubtext').textContent = 'Select a content set to generate insights';
+            document.getElementById('reportSelect').innerHTML = '<option value="">-- Select a saved report --</option>';
+            document.getElementById('insightsContent').classList.add('d-none');
             return;
         }
         
@@ -147,8 +168,12 @@
                 currentContentSet = setName;
                 displayContentSet(data);
                 document.getElementById('contentSetCard').classList.remove('d-none');
-                document.getElementById('insightsCard').classList.remove('d-none');
                 document.getElementById('insightsContent').classList.add('d-none');
+                document.getElementById('generateInsightsBtn').disabled = false;
+                document.getElementById('generateSubtext').textContent = `Generate content insights from ${setName}`;
+                
+                // Load available reports for this content set
+                loadReportsForContentSet(setName);
             } else {
                 alert('Error loading content set: ' + data.error);
             }
@@ -203,6 +228,60 @@
         return text.substring(0, maxLength) + '...';
     }
     
+    // Load reports for content set
+    async function loadReportsForContentSet(setName) {
+        try {
+            const response = await fetch(`/analyze/get-reports/${encodeURIComponent(setName)}/`);
+            const data = await response.json();
+            
+            if (data.success) {
+                const reportSelect = document.getElementById('reportSelect');
+                reportSelect.innerHTML = '<option value="">-- Select a saved report --</option>';
+                
+                data.reports.forEach(report => {
+                    const option = document.createElement('option');
+                    option.value = report.id;
+                    option.textContent = `${report.name} (${report.created_at})`;
+                    reportSelect.appendChild(option);
+                });
+            }
+        } catch (error) {
+            console.error('Error loading reports:', error);
+        }
+    }
+    
+    // Handle report selection
+    document.getElementById('reportSelect').addEventListener('change', async function() {
+        const reportId = this.value;
+        const deleteReportBtn = document.getElementById('deleteReportBtn');
+        
+        if (!reportId) {
+            document.getElementById('insightsContent').classList.add('d-none');
+            deleteReportBtn.classList.add('d-none');
+            return;
+        }
+        
+        // Show delete button when a report is selected
+        deleteReportBtn.classList.remove('d-none');
+        
+        try {
+            const response = await fetch(`/analyze/load-report/${reportId}/`);
+            const data = await response.json();
+            
+            if (data.success) {
+                currentReportText = data.report_text;
+                isViewingSavedReport = true;
+                document.getElementById('insightsText').innerHTML = marked.parse(data.report_text);
+                document.getElementById('insightsContent').classList.remove('d-none');
+                document.getElementById('saveReportSection').style.display = 'none';
+            } else {
+                alert('Error loading report: ' + data.error);
+            }
+        } catch (error) {
+            alert('Error loading report: ' + error.message);
+        }
+    });
+    
     // Generate report
     document.getElementById('generateInsightsBtn').addEventListener('click', async function() {
         if (!currentContentSet) return;
@@ -226,8 +305,15 @@
             const data = await response.json();
             
             if (data.success) {
+                currentReportText = data.insights;
+                isViewingSavedReport = false;
                 document.getElementById('insightsText').innerHTML = marked.parse(data.insights);
                 document.getElementById('insightsContent').classList.remove('d-none');
+                document.getElementById('saveReportSection').style.display = 'block';
+                document.getElementById('report_name').value = '';
+                
+                // Reset the report select dropdown
+                document.getElementById('reportSelect').value = '';
             } else {
                 alert('Error generating insights: ' + data.error);
             }
@@ -476,10 +562,89 @@
         }
     });
     
-    // Save report (placeholder functionality)
-    document.getElementById('saveReportBtn').addEventListener('click', function() {
-        // Placeholder - no action for now
-        console.log('Save Report clicked - functionality to be implemented');
+    // Save report
+    document.getElementById('saveReportBtn').addEventListener('click', async function() {
+        const reportName = document.getElementById('report_name').value.trim();
+        
+        if (!reportName) {
+            alert('Please enter a report name.');
+            return;
+        }
+        
+        if (!currentContentSet || !currentReportText) {
+            alert('No report to save.');
+            return;
+        }
+        
+        try {
+            const formData = new FormData();
+            formData.append('report_name', reportName);
+            formData.append('report_text', currentReportText);
+            formData.append('set_name', currentContentSet);
+            formData.append('csrfmiddlewaretoken', '{{ csrf_token }}');
+            
+            const response = await fetch('/analyze/save-report/', {
+                method: 'POST',
+                body: formData
+            });
+            
+            const data = await response.json();
+            
+            if (data.success) {
+                alert(data.message);
+                // Reload reports dropdown
+                loadReportsForContentSet(currentContentSet);
+                // Clear the report name input
+                document.getElementById('report_name').value = '';
+            } else {
+                alert('Error saving report: ' + data.error);
+            }
+        } catch (error) {
+            alert('Error saving report: ' + error.message);
+        }
+    });
+    
+    // Delete report
+    document.getElementById('deleteReportBtn').addEventListener('click', async function() {
+        const reportSelect = document.getElementById('reportSelect');
+        const reportId = reportSelect.value;
+        
+        if (!reportId) {
+            return;
+        }
+        
+        // Get the report name from the selected option
+        const selectedOption = reportSelect.options[reportSelect.selectedIndex];
+        const reportName = selectedOption.textContent.split(' (')[0]; // Extract name without date
+        
+        if (!confirm(`Delete "${reportName}"?\n\nThis action cannot be undone and will permanently delete the report.`)) {
+            return;
+        }
+        
+        try {
+            const formData = new FormData();
+            formData.append('csrfmiddlewaretoken', '{{ csrf_token }}');
+            
+            const response = await fetch(`/analyze/delete-report/${reportId}/`, {
+                method: 'POST',
+                body: formData
+            });
+            
+            const data = await response.json();
+            
+            if (data.success) {
+                alert('Report deleted successfully!');
+                // Hide insights content and delete button
+                document.getElementById('insightsContent').classList.add('d-none');
+                document.getElementById('deleteReportBtn').classList.add('d-none');
+                // Reload reports dropdown
+                loadReportsForContentSet(currentContentSet);
+            } else {
+                alert('Error deleting report: ' + data.error);
+            }
+        } catch (error) {
+            alert('Error deleting report: ' + error.message);
+        }
     });
 </script>
 {% endblock %}
