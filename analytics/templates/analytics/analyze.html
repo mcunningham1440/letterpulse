@@ -145,6 +145,32 @@
     let currentReportText = null;
     let isViewingSavedReport = false;
     
+    // Load all reports on page load
+    async function loadAllReports() {
+        try {
+            const response = await fetch('/analyze/get-all-reports/');
+            const data = await response.json();
+            
+            if (data.success) {
+                const reportSelect = document.getElementById('reportSelect');
+                reportSelect.innerHTML = '<option value="">-- Select a saved report --</option>';
+                
+                data.reports.forEach(report => {
+                    const option = document.createElement('option');
+                    option.value = report.id;
+                    option.dataset.contentSetName = report.content_set_name;
+                    option.textContent = `${report.name} (${report.created_at})`;
+                    reportSelect.appendChild(option);
+                });
+            }
+        } catch (error) {
+            console.error('Error loading reports:', error);
+        }
+    }
+    
+    // Call on page load
+    loadAllReports();
+    
     // Handle content set selection
     document.getElementById('contentSetSelect').addEventListener('change', async function() {
         const setName = this.value;
@@ -154,7 +180,6 @@
             currentContentSet = null;
             document.getElementById('generateInsightsBtn').disabled = true;
             document.getElementById('generateSubtext').textContent = 'Select a content set to generate insights';
-            document.getElementById('reportSelect').innerHTML = '<option value="">-- Select a saved report --</option>';
             document.getElementById('insightsContent').classList.add('d-none');
             return;
         }
@@ -171,9 +196,6 @@
                 document.getElementById('insightsContent').classList.add('d-none');
                 document.getElementById('generateInsightsBtn').disabled = false;
                 document.getElementById('generateSubtext').textContent = `Generate content insights from ${setName}`;
-                
-                // Load available reports for this content set
-                loadReportsForContentSet(setName);
             } else {
                 alert('Error loading content set: ' + data.error);
             }
@@ -228,28 +250,6 @@
         return text.substring(0, maxLength) + '...';
     }
     
-    // Load reports for content set
-    async function loadReportsForContentSet(setName) {
-        try {
-            const response = await fetch(`/analyze/get-reports/${encodeURIComponent(setName)}/`);
-            const data = await response.json();
-            
-            if (data.success) {
-                const reportSelect = document.getElementById('reportSelect');
-                reportSelect.innerHTML = '<option value="">-- Select a saved report --</option>';
-                
-                data.reports.forEach(report => {
-                    const option = document.createElement('option');
-                    option.value = report.id;
-                    option.textContent = `${report.name} (${report.created_at})`;
-                    reportSelect.appendChild(option);
-                });
-            }
-        } catch (error) {
-            console.error('Error loading reports:', error);
-        }
-    }
-    
     // Handle report selection
     document.getElementById('reportSelect').addEventListener('change', async function() {
         const reportId = this.value;
@@ -269,6 +269,28 @@
             const data = await response.json();
             
             if (data.success) {
+                // Auto-select the content set for this report
+                const contentSetSelect = document.getElementById('contentSetSelect');
+                const contentSetName = data.content_set_name;
+                
+                // Set the content set dropdown value
+                contentSetSelect.value = contentSetName;
+                
+                // Trigger content set loading if not already loaded or different
+                if (currentContentSet !== contentSetName) {
+                    currentContentSet = contentSetName;
+                    const setResponse = await fetch(`/analyze/load-content-set/${encodeURIComponent(contentSetName)}/`);
+                    const setData = await setResponse.json();
+                    
+                    if (setData.success) {
+                        displayContentSet(setData);
+                        document.getElementById('contentSetCard').classList.remove('d-none');
+                        document.getElementById('generateInsightsBtn').disabled = false;
+                        document.getElementById('generateSubtext').textContent = `Generate content insights from ${contentSetName}`;
+                    }
+                }
+                
+                // Display the report
                 currentReportText = data.report_text;
                 isViewingSavedReport = true;
                 document.getElementById('insightsText').innerHTML = marked.parse(data.report_text);
@@ -592,8 +614,8 @@
             
             if (data.success) {
                 alert(data.message);
-                // Reload reports dropdown
-                loadReportsForContentSet(currentContentSet);
+                // Reload all reports dropdown
+                loadAllReports();
                 // Clear the report name input
                 document.getElementById('report_name').value = '';
             } else {
@@ -637,8 +659,8 @@
                 // Hide insights content and delete button
                 document.getElementById('insightsContent').classList.add('d-none');
                 document.getElementById('deleteReportBtn').classList.add('d-none');
-                // Reload reports dropdown
-                loadReportsForContentSet(currentContentSet);
+                // Reload all reports dropdown
+                loadAllReports();
             } else {
                 alert('Error deleting report: ' + data.error);
             }

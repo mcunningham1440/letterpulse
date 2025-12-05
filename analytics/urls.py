@@ -22,6 +22,6 @@ urlpatterns = [
     path('analyze/delete-set/', views.delete_set, name='delete_set'),
     path('analyze/save-report/', views.save_report, name='save_report'),
     path('analyze/load-report/<int:report_id>/', views.load_report, name='load_report'),
-    path('analyze/get-reports/<str:set_name>/', views.get_reports_for_content_set, name='get_reports_for_content_set'),
+    path('analyze/get-all-reports/', views.get_all_reports, name='get_all_reports'),
     path('analyze/delete-report/<int:report_id>/', views.delete_report, name='delete_report'),
 ]

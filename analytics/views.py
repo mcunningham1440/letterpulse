@@ -4,12 +4,11 @@ Views for the analytics app.
 
 from django.shortcuts import render, redirect
 from django.http import JsonResponse, HttpResponse
-from django.views.decorators.http import require_http_methods, require_POST
+from django.views.decorators.http import require_POST
 from django.contrib import messages
 from django.conf import settings
 import pandas as pd
 import json
-import asyncio
 import ast
 from asgiref.sync import async_to_sync
 
@@ -380,10 +379,6 @@ def generate_insights(request):
         # Generate insights using async function
         response = async_to_sync(generate_content_insights)(df)
         insights = response.output[-1].content[0].text
-
-        ###
-        # insights = response
-        ###
                 
         return JsonResponse({
             'success': True,
@@ -896,18 +891,18 @@ def load_report(request, report_id):
         }, status=500)
 
 
-def get_reports_for_content_set(request, set_name):
+def get_all_reports(request):
     """
-    Get all reports for a specific content set.
+    Get all reports across all content sets.
     """
     try:
-        content_set = ContentSet.objects.get(name=set_name)
-        reports = Report.objects.filter(content_set=content_set).order_by('-created_at')
+        reports = Report.objects.all().order_by('-created_at')
         
         reports_data = [
             {
                 'id': report.id,
                 'name': report.name,
+                'content_set_name': report.content_set.name,
                 'created_at': report.created_at.strftime('created %b %-d, %Y')
             }
             for report in reports
@@ -918,11 +913,6 @@ def get_reports_for_content_set(request, set_name):
             'reports': reports_data
         })
         
-    except ContentSet.DoesNotExist:
-        return JsonResponse({
-            'success': False,
-            'error': f"Content set '{set_name}' not found."
-        }, status=404)
     except Exception as e:
         return JsonResponse({
             'success': False,

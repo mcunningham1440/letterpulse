@@ -409,10 +409,6 @@ async def generate_content_insights(items_display):
     Returns:
         OpenAI response object containing structured insights with 3 tags
     """
-    ###
-    # return "Test insights response"
-    ###
-
     analysis_prompt = """
 <instructions>
 You are an expert data analyst.
@@ -562,11 +558,13 @@ If you’re optimizing for engagement, skew your programming and naming toward t
     # Use the items with clicks formatted as string
     items_display["max_click_rate"] = items_display["click_rate"].apply(max)
     items_display["max_click_rate_percentile"] = items_display["max_click_rate"].rank(pct=True)
+
+    items_display = items_display.sort_values(by="max_click_rate", ascending=False).reset_index(drop=True)
     
     newsletter_items = ""
     for i, row in items_display.iterrows():
         newsletter_items += f"ID {i}. " + row["text"] + "\n"
-        newsletter_items += f"CTR: {row['max_click_rate'] * 100}% (percentile {row['max_click_rate_percentile']:.0%})\n\n"
+        newsletter_items += f"CTR: {round(row['max_click_rate'] * 100, 2)}% (percentile {row['max_click_rate_percentile']:.0%})\n\n"
         
     messages = [
         {"role": "user", "content": analysis_prompt},
@@ -576,50 +574,6 @@ If you’re optimizing for engagement, skew your programming and naming toward t
     response = await llm_call("generate_content_insights", messages, "gpt-5.1", "medium")
     
     return response
-
-
-def get_items_with_clicks_as_str(items, mode="top_k", max_items=None, use_id=False):
-    """
-    Format items DataFrame as a string for AI analysis.
-    
-    Args:
-        items: DataFrame of items
-        mode: 'top_k' for top items by clicks, 'sampled' for random items sorted by clicks, 
-              'shuffled' for random items in random order
-        max_items: Maximum number of items to include
-        use_id: Whether to use item index as ID in output
-    
-    Returns:
-        Formatted string representation
-    """
-    if mode == "top_k":
-        # Sort by clicks in descending order and take top max_items
-        items_transformed = items.iloc[items["clicks"].apply(max).sort_values(ascending=False).index]
-        if max_items is not None:
-            items_transformed = items_transformed.head(max_items)
-    elif mode == "sampled":
-        # Take random sample, then sort by clicks in descending order
-        if max_items is not None:
-            items_transformed = items.sample(n=min(max_items, len(items))).reset_index(drop=True)
-        else:
-            items_transformed = items.copy()
-        items_transformed = items_transformed.iloc[items_transformed["clicks"].apply(max).sort_values(ascending=False).index]
-    elif mode == "shuffled":
-        # Take random sample in random order
-        if max_items is not None:
-            items_transformed = items.sample(n=min(max_items, len(items))).reset_index(drop=True)
-        else:
-            items_transformed = items.sample(frac=1).reset_index(drop=True)
-    else:
-        raise ValueError("mode must be 'top_k', 'sampled', or 'shuffled'")
-    
-    item_str = ""
-    for i, row in items_transformed.iterrows():
-        max_clicks = max(row["clicks"])
-        item_str += f"Text: {row['text']}\n" if not use_id else f"ID {i}. {row['text']}\n"
-        item_str += f"Max Clicks: {max_clicks}\n\n"
-    
-    return item_str
 
 
 def load_posts_from_db():
