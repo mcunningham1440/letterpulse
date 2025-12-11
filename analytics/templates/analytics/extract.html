@@ -1,6 +1,6 @@
 {% extends 'analytics/base.html' %}
 
-{% block title %}Extract Content - Beehiiv Analytics{% endblock %}
+{% block title %}Extract Content - LetterPulse{% endblock %}
 
 {% block content %}
 <div class="row">
@@ -75,12 +75,12 @@
                     
                     <hr class="my-4">
                     
-                    <!-- Download Annotated Posts Section -->
+                    <!-- Get Improvement Tips Section -->
                     <div class="row mb-4">
                         <div class="col-12">
                             <div class="d-flex align-items-center gap-3">
                                 <button type="button" class="btn btn-warning" id="downloadAnnotatedBtn">
-                                    <i class="bi bi-download"></i> Download Annotated Posts
+                                    <i class="bi bi-download"></i> Download Improvement Tips
                                 </button>
                                 <div class="dropdown">
                                     <button class="btn btn-outline-secondary dropdown-toggle" type="button" id="reportsDropdown" data-bs-toggle="dropdown" aria-expanded="false" data-bs-auto-close="outside">
@@ -132,15 +132,16 @@
                     <div class="row">
                         <div class="col-md-9">
                             <label for="content_desc" class="form-label fw-bold">Content Description</label>
-                            <input type="text" 
-                                   class="form-control" 
-                                   id="content_desc" 
-                                   name="content_desc" 
+                            <input type="text"
+                                   class="form-control"
+                                   id="content_desc"
+                                   name="content_desc"
                                    placeholder="e.g., 'Items in the quick links section'"
                                    required>
                             <div class="form-text">Describe the content you want to extract from the selected posts</div>
                         </div>
-                        <div class="col-md-3 d-flex align-items-end">
+                        <div class="col-md-3">
+                            <label class="form-label fw-bold invisible">Action</label>
                             <button type="submit" class="btn btn-primary w-100">
                                 <span class="spinner-border spinner-border-sm d-none" id="extractSpinner"></span>
                                 Extract Content

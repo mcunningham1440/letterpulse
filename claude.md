@@ -1,4 +1,4 @@
-# Beehiiv Analytics Django
+# LetterPulse
 
 A Django web application for analyzing newsletter engagement data from the Beehiiv platform. The app extracts content from newsletter posts, tracks click-through rates (CTR), generates AI-powered insights, and provides annotated HTML exports with improvement tips.
 
@@ -82,7 +82,7 @@ AI-generated content insights:
   - Extracts text and links from each section
   - Matches links with click data using Levenshtein fuzzy matching
 - **Download Click Visualization**: ZIP of HTML files with click counts overlaid on links
-- **Download Annotated Posts**: ZIP of HTML files with AI-generated improvement tips
+- **Download Improvement Tips**: ZIP of HTML files with AI-generated improvement tips
 - **Save Content Sets**: Create new or add to existing sets
 
 ### 2. Analyze Page (`/analyze/`)
@@ -129,8 +129,8 @@ BEEHIIV_TOKEN=your-beehiiv-token
 BEEHIIV_PUB_ID=your-publication-id
 
 # Database
-DB_NAME=beehiiv_analytics
-DB_USER=beehiiv_user
+DB_NAME=letterpulse
+DB_USER=letterpulse_user
 DB_PASSWORD=local_dev_password
 DB_HOST=localhost
 DB_PORT=5432

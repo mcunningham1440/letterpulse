@@ -1,10 +1,10 @@
 services:
   postgres:
     image: postgres:17.6-bookworm
-    container_name: beehiiv_postgres
+    container_name: letterpulse_postgres
     environment:
-      POSTGRES_DB: beehiiv_analytics
-      POSTGRES_USER: beehiiv_user
+      POSTGRES_DB: letterpulse
+      POSTGRES_USER: letterpulse_user
       POSTGRES_PASSWORD: local_dev_password
     ports:
       - "5432:5432"
