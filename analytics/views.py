@@ -18,7 +18,8 @@ from .utils import (
     fetch_posts_html_and_clicks_parallel,
     extract_items_parallel,
     generate_content_insights,
-    refresh_posts_data
+    refresh_posts_data,
+    annotate_posts_parallel
 )
 
 
@@ -69,10 +70,14 @@ def extract_view(request):
     # Get all content sets for the dropdown
     all_content_sets = ContentSet.objects.all().order_by('name')
     
+    # Get all reports for the annotation dropdown
+    all_reports = Report.objects.all().order_by('name')
+    
     context = {
         'posts': posts_data,
         'extracted_items': extracted_items_data,
         'all_content_sets': all_content_sets,
+        'all_reports': all_reports,
     }
     
     return render(request, 'analytics/extract.html', context)
@@ -682,12 +687,19 @@ def refresh_posts(request):
         updated_count = 0
         
         for _, row in posts_df.iterrows():
+            # Handle null publish_date_cst for drafts
+            publish_date = row['publish_date_cst']
+            if pd.isna(publish_date):
+                publish_date = None
+
             post, created = Post.objects.update_or_create(
                 post_id=row['id'],
                 defaults={
                     'title': row['title'],
                     'subtitle': row.get('subtitle', ''),
-                    'publish_date_cst': row['publish_date_cst'],
+                    'status': row.get('status', 'Published'),
+                    'creation_date': row.get('creation_date'),
+                    'publish_date_cst': publish_date,
                     'recipients': row.get('recipients', 0),
                     'delivered': row.get('delivered', 0),
                     'email_opens': row.get('email_opens', 0),
@@ -798,6 +810,90 @@ def download_click_visualization(request):
         
     except Exception as e:
         messages.error(request, f"Error generating click visualizations: {str(e)}")
+        return redirect('analytics:extract')
+
+
+@require_POST
+def download_annotated_posts(request):
+    """
+    Generate and download annotated HTML files for selected posts using selected reports.
+    Returns a ZIP file containing annotated HTML files with tips inserted.
+    """
+    import zipfile
+    import io
+    
+    try:
+        # Get selected post indices
+        selected_indices = request.POST.getlist('selected_posts')
+        # Get selected report IDs
+        selected_report_ids = request.POST.getlist('selected_reports')
+        
+        if not selected_indices:
+            messages.error(request, "Please select at least one post.")
+            return redirect('analytics:extract')
+        
+        if not selected_report_ids:
+            messages.error(request, "Please select at least one report.")
+            return redirect('analytics:extract')
+        
+        # Convert indices to integers
+        selected_indices = [int(idx) for idx in selected_indices]
+        selected_report_ids = [int(rid) for rid in selected_report_ids]
+        
+        # Load posts from database
+        posts_df = load_posts_from_db()
+        posts_df = posts_df.iloc[::-1].reset_index(drop=True)  # Reverse to match display
+        
+        # Get selected posts
+        posts_of_interest = posts_df.iloc[selected_indices]
+        
+        # Get report texts for selected reports
+        reports = Report.objects.filter(id__in=selected_report_ids)
+        content_perf_evals = [report.report_text for report in reports]
+        
+        if not content_perf_evals:
+            messages.error(request, "No valid reports found.")
+            return redirect('analytics:extract')
+        
+        # Get post IDs (beehiiv post_id, not Django id)
+        post_ids = posts_of_interest['id'].tolist()
+        
+        # Run parallel annotation
+        annotated_htmls = async_to_sync(annotate_posts_parallel)(post_ids, content_perf_evals)
+        
+        if not annotated_htmls:
+            messages.error(request, "Failed to generate any annotated posts.")
+            return redirect('analytics:extract')
+        
+        # Create in-memory ZIP file
+        zip_buffer = io.BytesIO()
+        
+        with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+            for _, row in posts_of_interest.iterrows():
+                post_id = row['id']
+                
+                if post_id not in annotated_htmls:
+                    continue
+                
+                annotated_html = annotated_htmls[post_id]
+                
+                # Create a safe filename from the post title
+                safe_title = "".join(c if c.isalnum() or c in (' ', '-', '_') else '_' for c in row['title'])
+                safe_title = safe_title[:50]  # Limit length
+                
+                # Add to ZIP with a descriptive filename
+                zip_filename = f"{safe_title}_{post_id}_annotated.html"
+                zip_file.writestr(zip_filename, annotated_html)
+        
+        # Prepare the response
+        zip_buffer.seek(0)
+        response = HttpResponse(zip_buffer.getvalue(), content_type='application/zip')
+        response['Content-Disposition'] = 'attachment; filename="annotated_posts.zip"'
+        
+        return response
+        
+    except Exception as e:
+        messages.error(request, f"Error generating annotated posts: {str(e)}")
         return redirect('analytics:extract')
 
 

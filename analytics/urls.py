@@ -11,6 +11,7 @@ urlpatterns = [
     path('extract/delete-items/', views.delete_items, name='delete_items'),
     path('extract/refresh-posts/', views.refresh_posts, name='refresh_posts'),
     path('extract/download-click-viz/', views.download_click_visualization, name='download_click_visualization'),
+    path('extract/download-annotated/', views.download_annotated_posts, name='download_annotated_posts'),
     path('analyze/', views.analyze_view, name='analyze'),
     path('analyze/load-content-set/<str:set_name>/', views.load_content_set, name='load_content_set'),
     path('analyze/generate-insights/', views.generate_insights, name='generate_insights'),

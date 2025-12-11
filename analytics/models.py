@@ -6,11 +6,13 @@ import json
 
 class Post(models.Model):
     """Model representing a Beehiiv newsletter post"""
-    
+
     post_id = models.CharField(max_length=255, unique=True, help_text="Beehiiv post ID")
     title = models.CharField(max_length=500)
     subtitle = models.TextField(blank=True, null=True)
-    publish_date_cst = models.DateField()
+    status = models.CharField(max_length=20, default='Published', help_text="Draft or Published")
+    creation_date = models.DateTimeField(blank=True, null=True, help_text="When the post was first created in Beehiiv")
+    publish_date_cst = models.DateField(blank=True, null=True)
     recipients = models.IntegerField(default=0)
     delivered = models.IntegerField(default=0)
     email_opens = models.IntegerField(default=0)

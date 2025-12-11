@@ -36,6 +36,8 @@
                                     <th style="width: 40px;">
                                         <input type="checkbox" id="selectAll" class="form-check-input">
                                     </th>
+                                    <th>Created</th>
+                                    <th>Status</th>
                                     <th>Publish Date</th>
                                     <th>Title</th>
                                     <th>Subtitle</th>
@@ -48,10 +50,18 @@
                                 {% for post in posts %}
                                 <tr>
                                     <td>
-                                        <input type="checkbox" name="selected_posts" value="{{ forloop.counter0 }}" 
+                                        <input type="checkbox" name="selected_posts" value="{{ forloop.counter0 }}"
                                                class="form-check-input post-checkbox">
                                     </td>
-                                    <td>{{ post.publish_date_cst|date:"Y-m-d" }}</td>
+                                    <td>{{ post.creation_date|date:"Y-m-d"|default:"-" }}</td>
+                                    <td>
+                                        {% if post.status == "Draft" %}
+                                            <span class="badge bg-warning text-dark">Draft</span>
+                                        {% else %}
+                                            <span class="badge bg-success">Published</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>{{ post.publish_date_cst|date:"Y-m-d"|default:"-" }}</td>
                                     <td>{{ post.title }}</td>
                                     <td>{{ post.subtitle|default:"-" }}</td>
                                     <td class="text-end">{{ post.recipients|default:0 }}</td>
@@ -65,13 +75,54 @@
                     
                     <hr class="my-4">
                     
+                    <!-- Download Annotated Posts Section -->
+                    <div class="row mb-4">
+                        <div class="col-12">
+                            <div class="d-flex align-items-center gap-3">
+                                <button type="button" class="btn btn-warning" id="downloadAnnotatedBtn">
+                                    <i class="bi bi-download"></i> Download Annotated Posts
+                                </button>
+                                <div class="dropdown">
+                                    <button class="btn btn-outline-secondary dropdown-toggle" type="button" id="reportsDropdown" data-bs-toggle="dropdown" aria-expanded="false" data-bs-auto-close="outside">
+                                        Select Reports
+                                    </button>
+                                    <ul class="dropdown-menu p-3" aria-labelledby="reportsDropdown" style="min-width: 300px;">
+                                        {% if all_reports %}
+                                            <li class="mb-2">
+                                                <div class="form-check">
+                                                    <input class="form-check-input" type="checkbox" id="selectAllReports">
+                                                    <label class="form-check-label fw-bold" for="selectAllReports">Select All</label>
+                                                </div>
+                                            </li>
+                                            <li><hr class="dropdown-divider"></li>
+                                            {% for report in all_reports %}
+                                            <li>
+                                                <div class="form-check">
+                                                    <input class="form-check-input report-checkbox" type="checkbox" name="selected_reports" value="{{ report.id }}" id="report_{{ report.id }}">
+                                                    <label class="form-check-label" for="report_{{ report.id }}">
+                                                        {{ report.name }}
+                                                        <small class="text-muted d-block">{{ report.content_set.name }}</small>
+                                                    </label>
+                                                </div>
+                                            </li>
+                                            {% endfor %}
+                                        {% else %}
+                                            <li class="text-muted">No reports available</li>
+                                        {% endif %}
+                                    </ul>
+                                </div>
+                            </div>
+                            <div class="form-text">Select reports and posts, then download annotated HTML files with improvement tips</div>
+                        </div>
+                    </div>
+                    
                     <!-- Download Click Visualization Button -->
                     <div class="row mb-4">
                         <div class="col-12">
                             <button type="button" class="btn btn-info" id="downloadClickVizBtn">
                                 <i class="bi bi-download"></i> Download Click Visualization
                             </button>
-                            <div class="form-text">Downloads HTML files showing click counts next to each link in the selected posts</div>
+                            <div class="form-text">Download HTML files showing click counts next to each link in the selected posts</div>
                         </div>
                     </div>
                     
@@ -229,7 +280,7 @@
     // Initialize DataTables for posts table
     $(document).ready(function() {
         $('#postsTable').DataTable({
-            order: [[1, 'desc']], // Sort by Publish Date descending by default
+            order: [[1, 'desc']], // Sort by Created date descending by default
             paging: false,
             scrollY: '400px',
             scrollCollapse: true,
@@ -331,6 +382,84 @@
                 downloadClickVizBtn.innerHTML = originalHtml;
                 document.body.removeChild(form);
             }, 3000);
+        });
+    }
+    
+    // Handle select all reports checkbox
+    const selectAllReports = document.getElementById('selectAllReports');
+    if (selectAllReports) {
+        selectAllReports.addEventListener('change', function() {
+            const checkboxes = document.querySelectorAll('.report-checkbox');
+            checkboxes.forEach(cb => cb.checked = this.checked);
+        });
+    }
+    
+    // Handle download annotated posts button
+    const downloadAnnotatedBtn = document.getElementById('downloadAnnotatedBtn');
+    if (downloadAnnotatedBtn) {
+        downloadAnnotatedBtn.addEventListener('click', function() {
+            // Check if any posts are selected
+            const selectedPostCheckboxes = document.querySelectorAll('.post-checkbox:checked');
+            
+            if (selectedPostCheckboxes.length === 0) {
+                alert('Please select at least one post.');
+                return;
+            }
+            
+            // Check if any reports are selected
+            const selectedReportCheckboxes = document.querySelectorAll('.report-checkbox:checked');
+            
+            if (selectedReportCheckboxes.length === 0) {
+                alert('Please select at least one report.');
+                return;
+            }
+            
+            // Create a form to submit the selected posts and reports
+            const form = document.createElement('form');
+            form.method = 'POST';
+            form.action = "{% url 'analytics:download_annotated_posts' %}";
+            
+            // Add CSRF token
+            const csrfInput = document.createElement('input');
+            csrfInput.type = 'hidden';
+            csrfInput.name = 'csrfmiddlewaretoken';
+            csrfInput.value = '{{ csrf_token }}';
+            form.appendChild(csrfInput);
+            
+            // Add selected post indices
+            selectedPostCheckboxes.forEach(checkbox => {
+                const input = document.createElement('input');
+                input.type = 'hidden';
+                input.name = 'selected_posts';
+                input.value = checkbox.value;
+                form.appendChild(input);
+            });
+            
+            // Add selected report IDs
+            selectedReportCheckboxes.forEach(checkbox => {
+                const input = document.createElement('input');
+                input.type = 'hidden';
+                input.name = 'selected_reports';
+                input.value = checkbox.value;
+                form.appendChild(input);
+            });
+            
+            // Submit the form
+            document.body.appendChild(form);
+            
+            // Disable button and show loading state
+            downloadAnnotatedBtn.disabled = true;
+            const originalHtml = downloadAnnotatedBtn.innerHTML;
+            downloadAnnotatedBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Generating...';
+            
+            form.submit();
+            
+            // Re-enable button after a delay (form submission will navigate away or download will start)
+            setTimeout(function() {
+                downloadAnnotatedBtn.disabled = false;
+                downloadAnnotatedBtn.innerHTML = originalHtml;
+                document.body.removeChild(form);
+            }, 10000);  // Longer timeout since annotation takes more time
         });
     }
     

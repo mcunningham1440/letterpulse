@@ -5,7 +5,7 @@ Adapted from the original utils.py for Streamlit.
 
 from openai import AsyncOpenAI, OpenAI
 from pydantic import BaseModel
-from typing import List, Dict
+from typing import List, Dict, Literal
 import pandas as pd
 import asyncio
 import aiohttp
@@ -581,7 +581,7 @@ def load_posts_from_db():
     from .models import Post
     
     posts = Post.objects.all().values(
-        'post_id', 'title', 'subtitle', 'publish_date_cst',
+        'post_id', 'title', 'subtitle', 'status', 'creation_date', 'publish_date_cst',
         'recipients', 'delivered', 'email_opens', 'unique_email_opens',
         'email_clicks', 'unique_email_clicks', 'unsubscribes', 'spam_reports'
     )
@@ -610,7 +610,7 @@ async def fetch_posts_page(session, page, pagination_size, semaphore):
     beehiiv_token = os.environ.get('BEEHIIV_TOKEN')
     beehiiv_pub_id = os.environ.get('BEEHIIV_PUB_ID')
     
-    url = f"https://api.beehiiv.com/v2/publications/{beehiiv_pub_id}/posts?expand=stats&limit={pagination_size}&page={page}"
+    url = f"https://api.beehiiv.com/v2/publications/{beehiiv_pub_id}/posts?expand=stats&status=all&limit={pagination_size}&page={page}"
     headers = {"Authorization": beehiiv_token}
     
     async with semaphore:
@@ -654,17 +654,19 @@ async def fetch_all_posts():
 def process_posts_data(posts_list):
     """
     Process raw posts data from API into DataFrame.
-    
+
     Args:
         posts_list: List of post dictionaries from API
-    
+
     Returns:
         pandas DataFrame of post data
     """
     posts = {
-        'id': [], 
-        'title': [], 
-        'subtitle': [], 
+        'id': [],
+        'title': [],
+        'subtitle': [],
+        'status': [],
+        'created': [],
         'publish_date': [],
         'web_url': [],
         'platform': [],
@@ -677,48 +679,52 @@ def process_posts_data(posts_list):
         'unsubscribes': [],
         'spam_reports': [],
     }
-    
+
     email_keys = {
-        'recipients': 'recipients', 
+        'recipients': 'recipients',
         'delivered': 'delivered',
         'email_opens': 'opens',
-        'unique_email_opens': 'unique_opens', 
+        'unique_email_opens': 'unique_opens',
         'email_clicks': 'clicks',
-        'unique_email_clicks': 'unique_clicks', 
-        'unsubscribes': 'unsubscribes', 
+        'unique_email_clicks': 'unique_clicks',
+        'unsubscribes': 'unsubscribes',
         'spam_reports': 'spam_reports'
     }
-    
+
     clicks = {}
-    
+
     for post in posts_list:
         for key in posts.keys():
             if key not in email_keys:
-                posts[key].append(post[key])
+                posts[key].append(post.get(key))
             else:
-                posts[key].append(post['stats']['email'][email_keys[key]])
-        
-        clicks[post['title']] = post['stats']['clicks']
-    
+                posts[key].append(post.get('stats', {}).get('email', {}).get(email_keys[key], 0))
+
+        clicks[post['title']] = post.get('stats', {}).get('clicks', [])
+
     posts_df = pd.DataFrame(posts)
-    
-    # Add derived columns
-    posts_df['publish_date_cst'] = pd.to_datetime(posts_df['publish_date'], unit='s', utc=True).dt.tz_convert('America/Chicago')
+
+    # Convert API status to simplified status: "Draft" or "Published"
+    posts_df['status'] = posts_df['status'].apply(
+        lambda s: "Draft" if s == 'draft' else "Published"
+    )
+
+    # Convert creation date (always present)
+    posts_df['creation_date'] = pd.to_datetime(posts_df['created'], unit='s', utc=True)
+    posts_df['creation_date'] = posts_df['creation_date'].dt.tz_convert('America/Chicago')
+
+    # Add derived columns - handle drafts which have no publish_date
+    posts_df['publish_date_cst'] = pd.to_datetime(posts_df['publish_date'], unit='s', utc=True, errors='coerce')
+    # Convert to Chicago timezone where not null
+    mask = posts_df['publish_date_cst'].notna()
+    posts_df.loc[mask, 'publish_date_cst'] = posts_df.loc[mask, 'publish_date_cst'].dt.tz_convert('America/Chicago')
+
     posts_df['publish_dow'] = posts_df['publish_date_cst'].dt.strftime('%A')
-    posts_df['email_open_rate'] = posts_df['unique_email_opens'] / posts_df['delivered']
-    posts_df['email_click_rate'] = posts_df['unique_email_clicks'] / posts_df['unique_email_opens']
-    
-    posts_df = posts_df.drop(columns=['publish_date'])
-    
-    # Filter posts
-    posts_df = posts_df[
-        (posts_df['recipients'] > 10) & 
-        (posts_df['platform'].isin(('web', 'both'))) & 
-        (posts_df['title'] != "Replit's software engineering agent stuns users")
-    ]
-    
-    posts_df = posts_df.drop(columns=['platform'])
-    
+    posts_df['email_open_rate'] = posts_df['unique_email_opens'] / posts_df['delivered'].replace(0, pd.NA)
+    posts_df['email_click_rate'] = posts_df['unique_email_clicks'] / posts_df['unique_email_opens'].replace(0, pd.NA)
+
+    posts_df = posts_df.drop(columns=['created', 'publish_date', 'platform'])
+
     return posts_df
 
 
@@ -787,3 +793,199 @@ def generate_click_visualization_html(post_html, clicks_dict, unique_email_opens
             link.insert_after(click_info)
     
     return str(soup)
+
+
+async def annotate_post_html(post_id, content_perf_evals):
+    """
+    Fetch post HTML, get LLM tips based on performance evaluations, 
+    and insert them with yellow highlighting.
+    
+    Args:
+        post_id: The Beehiiv post ID
+        content_perf_evals: List of performance evaluation texts to inform tips
+    
+    Returns:
+        Modified HTML string with tips inserted
+    """
+    # Step 1: Fetch the HTML
+    semaphore = asyncio.Semaphore(1)
+    timeout = aiohttp.ClientTimeout(total=60)
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        post_id_result, post_html = await fetch_post_html(session, post_id, semaphore)
+        
+    # Step 2: Split into numbered lines
+    soup = BeautifulSoup(post_html, 'html.parser')
+    all_lines = soup.prettify().split('\n')
+    numbered_lines = [f"{i+1}\t{line}" for i, line in enumerate(all_lines)]
+    
+    # Step 3: Define tip schema
+    class Tip(BaseModel):
+        tip_type: Literal["content", "wording"]
+        line_number: int
+        tip_text: str
+        why: str
+    
+    class AllTips(BaseModel):
+        tips: List[Tip]
+    
+    # Step 4: Prompt LLM for tips
+    tip_prompt = """
+You have been given an HTML document with line numbers and performance evaluation(s) of similar content.
+Your task is to identify pieces of the content which are most likely to have the LOWEST (worst) click rates based on the evaluations, 
+and suggest tips that could be inserted into the HTML to help the writer improve engagement based on the performance insights.
+
+First, identify up to 6 places in the HTML where the content most closely follows the negative patterns described in the performance evaluations or deviates furthest from high-performing patterns.
+Ignore content that is obviously an ad; evaluate only the main article content.
+Second, for each identified place, determine whether the content can be re-worded for clarity/engagement (Wording Tip) or if the content itself is likely to draw poor engagement (Content Tip).
+Finally, for each identified place, suggest a tip to improve it and why the tip is relevant based on the performance evaluations.
+
+There are 2 types of tips you can provide:
+1. Wording Tip: Suggested changes to the choice of words or phrasing.
+    Wording tip example:
+    tip_text: "Make this connection stronger by clearly telling readers the useful information they'll learn — for example, 'how to choose between biological controls and pesticides in real projects.'
+    why: "Advice that takes a clear stance on when and how to use biological controls almost always does better than neutral articles."
+
+2. Content Tip: Suggested changes to the information presented.
+    Content tip example:
+    tip_text: "Consider instead featuring an article that focuses on practical advice for gardeners considering pesticide use."
+    why: "Content about broad environmental impacts of pesticide use usually underperforms content about the specific risks of using it on your own garden."
+
+tip_text should be a single brief sentence suggesting an actionable change.
+why: should be a single brief sentence explaining the rationale based on performance insights.
+
+Provide the tip type, the line number where each tip should be inserted, the tip text, and the why for each tip.
+Don't cite item IDs from the report--the user won't have access to that information.
+DO NOT suggest changes to the format of the newsletter, just the type of items written about and how they are worded.
+You should NOT start the text of the tip itself with the tip type; this will be added later based on the tip type.
+
+Use language suitable for content creators, avoiding technical jargon and esoteric wording.
+
+Too advanced:
+tip_text: "Strengthen this link by foregrounding a clear mental model or framework readers will get (e.g., "how to decide between biological controls and pesticides in real projects")."
+why: "Opinionated guidance on when/how to use biological controls consistently outperforms neutral articles."
+
+Good:
+tip_text: "Make this connection stronger by clearly telling readers the useful information they'll learn — for example, 'how to choose between biological controls and pesticides in real projects.'"
+why: "Advice that takes a clear stance on when and how to use biological controls almost always does better than neutral articles."
+
+Place the tips DIRECTLY BELOW the specific content being referenced.
+An up arrow (⬆️) will be added above the tip to indicate its placement--that arrows should not be included in your tip text.
+Think carefully about what line number to assign to each tip so that it appears directly below the relevant content.
+"""
+
+    # Combine all performance evaluations with XML tags
+    combined_perf_eval = "\n\n".join([
+        f"<performance_evaluation_{i+1}>\n{eval_text}\n</performance_evaluation_{i+1}>"
+        for i, eval_text in enumerate(content_perf_evals)
+    ])
+    
+    messages = [
+        {"role": "user", "content": f"{combined_perf_eval}"},
+        {"role": "user", "content": "<html_document>\n" + '\n'.join(numbered_lines) + "\n</html_document>"},
+        {"role": "system", "content": tip_prompt},
+    ]
+    
+    response = await llm_call("annotate_post_html", messages, "gpt-5.1", "medium", response_format=AllTips)
+    tips = response.output[-1].content[0].parsed
+    
+    # Step 5: Insert tips with yellow highlighting
+    # Sort tips by line number in descending order to avoid offset issues
+    sorted_tips = sorted(tips.tips, key=lambda x: x.line_number, reverse=True)
+    tip_type_to_header = {
+        "content": "📰 Content Tip",
+        "wording": "✍️ Wording Tip"
+    }
+    
+    for tip in sorted_tips:
+        if 0 < tip.line_number <= len(all_lines):
+            # Create tip HTML with yellow highlighting
+            tip_html = f"""
+<div style="
+    background-color: yellow;
+    color: black !important;
+    padding: 10px;
+    margin: 10px 0;
+    border-left: 4px solid orange;
+    font-family: Arial, sans-serif;
+    font-size: 14px;
+    line-height: 1.6;
+    text-align: left;
+    font-style: normal !important;
+    font-weight: normal !important;
+    text-decoration: none !important;
+
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+">
+    <div style="
+        font-weight: normal !important;
+        font-style: normal !important;
+        text-decoration: none !important;
+        text-align: center;
+        line-height: 1;
+        margin-bottom: 4px;
+    ">
+        ⬆️
+    </div>
+    <div style="
+        font-weight: bold !important;
+        font-style: normal !important;
+        text-decoration: none !important;
+    ">
+        {tip_type_to_header[tip.tip_type]}
+    </div>
+    <div style="
+        font-weight: normal !important;
+        font-style: normal !important;
+        text-decoration: none !important;
+    ">
+        {tip.tip_text}
+    </div>
+    <div style="
+        font-weight: bold !important;
+        margin-top: 10px;
+        font-style: normal !important;
+        text-decoration: none !important;
+    ">
+        Why?
+    </div>
+    <div style="
+        font-weight: normal !important;
+        font-style: normal !important;
+        text-decoration: none !important;
+    ">
+        {tip.why}
+    </div>
+</div>
+"""        
+            # Insert at the specified line (converting to 0-indexed)
+            all_lines.insert(tip.line_number - 1, tip_html)
+    
+    # Step 6: Return the modified HTML
+    return '\n'.join(all_lines)
+
+
+async def annotate_posts_parallel(post_ids, content_perf_evals):
+    """
+    Annotate multiple posts in parallel using asyncio.
+    
+    Args:
+        post_ids: List of Beehiiv post IDs to annotate
+        content_perf_evals: List of performance evaluation texts to inform tips
+    
+    Returns:
+        Dictionary mapping post_ids to their annotated HTML content
+    """
+    tasks = [annotate_post_html(post_id, content_perf_evals) for post_id in post_ids]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    
+    # Build result dictionary, filtering out exceptions
+    annotated_htmls = {}
+    for post_id, result in zip(post_ids, results):
+        if isinstance(result, Exception):
+            print(f"Error annotating post {post_id}: {result}")
+        else:
+            annotated_htmls[post_id] = result
+    
+    return annotated_htmls
