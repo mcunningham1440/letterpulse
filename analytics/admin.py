@@ -1,5 +1,20 @@
 from django.contrib import admin
-from .models import Post, ContentSet, Report
+from .models import Post, ContentSet, Report, UsageAccount
+
+
+@admin.register(UsageAccount)
+class UsageAccountAdmin(admin.ModelAdmin):
+    list_display = ('user', 'used_this_period', 'monthly_quota', 'period_start')
+    list_filter = ('period_start',)
+    search_fields = ('user__email',)
+    ordering = ('-period_start',)
+    readonly_fields = ('remaining_display',)
+    fields = ('user', 'monthly_quota', 'used_this_period', 'period_start', 'remaining_display')
+
+    def remaining_display(self, obj):
+        return f"{obj.remaining} credits remaining"
+    remaining_display.short_description = 'Credits Remaining'
+
 
 @admin.register(Post)
 class PostAdmin(admin.ModelAdmin):

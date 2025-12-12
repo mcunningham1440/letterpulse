@@ -37,6 +37,81 @@
             background-color: #212529;
             padding: 1rem 0;
             z-index: 1000;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .sidebar-nav {
+            flex: 1;
+        }
+
+        .sidebar-footer {
+            padding: 1rem;
+            border-top: 1px solid #343a40;
+            margin-top: auto;
+        }
+
+        .usage-widget {
+            margin-bottom: 1rem;
+        }
+
+        .usage-label {
+            color: #adb5bd;
+            font-size: 0.75rem;
+            margin-bottom: 0.5rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .usage-bar {
+            background-color: #343a40;
+            border-radius: 0.25rem;
+            height: 6px;
+            overflow: hidden;
+            margin-bottom: 0.25rem;
+        }
+
+        .usage-bar-fill {
+            background-color: var(--primary-green);
+            height: 100%;
+            transition: width 0.3s ease;
+        }
+
+        .usage-text {
+            color: #6c757d;
+            font-size: 0.7rem;
+        }
+
+        .user-menu {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+
+        .user-email {
+            color: #adb5bd;
+            font-size: 0.8rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .logout-link {
+            color: #6c757d;
+            font-size: 0.8rem;
+            text-decoration: none;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            transition: color 0.15s ease-in-out;
+        }
+
+        .logout-link:hover {
+            color: #dc3545;
         }
 
         .sidebar-brand {
@@ -95,7 +170,8 @@
             padding: 2rem;
             min-height: 100vh;
             display: flex;
-            justify-content: center;
+            flex-direction: column;
+            align-items: center;
         }
 
         .main-content > * {
@@ -195,6 +271,38 @@
                 </a>
             </li>
         </ul>
+
+        <!-- User section at bottom of sidebar -->
+        {% if user.is_authenticated %}
+        <div class="sidebar-footer">
+            <!-- Usage Stats -->
+            {% if usage_quota %}
+            <div class="usage-widget">
+                <div class="usage-label">
+                    <i class="bi bi-cpu"></i> AI Credits
+                </div>
+                <div class="usage-bar">
+                    <div class="usage-bar-fill" style="width: {{ usage_percentage }}%"></div>
+                </div>
+                <div class="usage-text">
+                    {{ usage_used|floatformat:0 }} / {{ usage_quota|floatformat:0 }} used
+                </div>
+            </div>
+            {% endif %}
+
+            <!-- User Menu -->
+            <div class="user-menu">
+                <div class="user-email">
+                    <i class="bi bi-person-circle"></i>
+                    {{ user.email }}
+                </div>
+                <a href="{% url 'account_logout' %}" class="logout-link">
+                    <i class="bi bi-box-arrow-right"></i>
+                    Sign Out
+                </a>
+            </div>
+        </div>
+        {% endif %}
     </nav>
 
     <!-- Main Content -->

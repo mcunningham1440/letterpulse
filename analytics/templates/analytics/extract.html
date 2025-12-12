@@ -398,69 +398,106 @@
     // Handle download annotated posts button
     const downloadAnnotatedBtn = document.getElementById('downloadAnnotatedBtn');
     if (downloadAnnotatedBtn) {
-        downloadAnnotatedBtn.addEventListener('click', function() {
+        downloadAnnotatedBtn.addEventListener('click', async function() {
             // Check if any posts are selected
             const selectedPostCheckboxes = document.querySelectorAll('.post-checkbox:checked');
-            
+
             if (selectedPostCheckboxes.length === 0) {
                 alert('Please select at least one post.');
                 return;
             }
-            
+
             // Check if any reports are selected
             const selectedReportCheckboxes = document.querySelectorAll('.report-checkbox:checked');
-            
+
             if (selectedReportCheckboxes.length === 0) {
                 alert('Please select at least one report.');
                 return;
             }
-            
-            // Create a form to submit the selected posts and reports
-            const form = document.createElement('form');
-            form.method = 'POST';
-            form.action = "{% url 'analytics:download_annotated_posts' %}";
-            
-            // Add CSRF token
-            const csrfInput = document.createElement('input');
-            csrfInput.type = 'hidden';
-            csrfInput.name = 'csrfmiddlewaretoken';
-            csrfInput.value = '{{ csrf_token }}';
-            form.appendChild(csrfInput);
-            
-            // Add selected post indices
-            selectedPostCheckboxes.forEach(checkbox => {
-                const input = document.createElement('input');
-                input.type = 'hidden';
-                input.name = 'selected_posts';
-                input.value = checkbox.value;
-                form.appendChild(input);
-            });
-            
-            // Add selected report IDs
-            selectedReportCheckboxes.forEach(checkbox => {
-                const input = document.createElement('input');
-                input.type = 'hidden';
-                input.name = 'selected_reports';
-                input.value = checkbox.value;
-                form.appendChild(input);
-            });
-            
-            // Submit the form
-            document.body.appendChild(form);
-            
+
             // Disable button and show loading state
             downloadAnnotatedBtn.disabled = true;
             const originalHtml = downloadAnnotatedBtn.innerHTML;
             downloadAnnotatedBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Generating...';
-            
-            form.submit();
-            
-            // Re-enable button after a delay (form submission will navigate away or download will start)
-            setTimeout(function() {
+
+            try {
+                // Build form data
+                const formData = new FormData();
+                formData.append('csrfmiddlewaretoken', '{{ csrf_token }}');
+
+                selectedPostCheckboxes.forEach(checkbox => {
+                    formData.append('selected_posts', checkbox.value);
+                });
+
+                selectedReportCheckboxes.forEach(checkbox => {
+                    formData.append('selected_reports', checkbox.value);
+                });
+
+                // Use fetch to make the request
+                const response = await fetch("{% url 'analytics:download_annotated_posts' %}", {
+                    method: 'POST',
+                    body: formData
+                });
+
+                if (response.redirected) {
+                    // Server redirected (likely an error), reload to show messages
+                    location.reload();
+                    return;
+                }
+
+                if (!response.ok) {
+                    throw new Error('Download failed');
+                }
+
+                // Get the blob for download
+                const blob = await response.blob();
+
+                // Get filename from Content-Disposition header or use default
+                const contentDisposition = response.headers.get('Content-Disposition');
+                let filename = 'annotated_posts.zip';
+                if (contentDisposition) {
+                    const match = contentDisposition.match(/filename="?([^"]+)"?/);
+                    if (match) filename = match[1];
+                }
+
+                // Create download link and trigger it
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = filename;
+                document.body.appendChild(a);
+                a.click();
+                window.URL.revokeObjectURL(url);
+                document.body.removeChild(a);
+
+                // Update sidebar credits from response headers
+                const creditsUsed = response.headers.get('X-Credits-Used');
+                const creditsQuota = response.headers.get('X-Credits-Quota');
+
+                if (creditsUsed && creditsQuota) {
+                    const percentage = (parseFloat(creditsUsed) / parseFloat(creditsQuota)) * 100;
+
+                    // Update usage bar
+                    const usageBarFill = document.querySelector('.usage-bar-fill');
+                    if (usageBarFill) {
+                        usageBarFill.style.width = percentage + '%';
+                    }
+
+                    // Update usage text
+                    const usageText = document.querySelector('.usage-text');
+                    if (usageText) {
+                        usageText.textContent = Math.round(parseFloat(creditsUsed)) + ' / ' + Math.round(parseFloat(creditsQuota)) + ' used';
+                    }
+                }
+
+            } catch (error) {
+                console.error('Error:', error);
+                alert('Error generating annotated posts. Please try again.');
+            } finally {
+                // Re-enable button
                 downloadAnnotatedBtn.disabled = false;
                 downloadAnnotatedBtn.innerHTML = originalHtml;
-                document.body.removeChild(form);
-            }, 10000);  // Longer timeout since annotation takes more time
+            }
         });
     }
     

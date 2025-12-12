@@ -33,7 +33,18 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    'django.contrib.sites',  # Required by allauth
+    'allauth',
+    'allauth.account',
     'analytics',
+]
+
+SITE_ID = 1
+
+# Authentication backends
+AUTHENTICATION_BACKENDS = [
+    'django.contrib.auth.backends.ModelBackend',
+    'allauth.account.auth_backends.AuthenticationBackend',
 ]
 
 MIDDLEWARE = [
@@ -44,6 +55,7 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    'allauth.account.middleware.AccountMiddleware',
 ]
 
 ROOT_URLCONF = 'beehiiv_analytics.urls'
@@ -59,6 +71,7 @@ TEMPLATES = [
                 'django.template.context_processors.request',
                 'django.contrib.auth.context_processors.auth',
                 'django.contrib.messages.context_processors.messages',
+                'analytics.context_processors.usage_context',
             ],
         },
     },
@@ -123,3 +136,30 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 # Data directories
 DATA_DIR = BASE_DIR / 'data'
+
+# django-allauth settings
+LOGIN_REDIRECT_URL = 'analytics:extract'
+LOGOUT_REDIRECT_URL = 'account_login'
+ACCOUNT_EMAIL_REQUIRED = True
+ACCOUNT_EMAIL_VERIFICATION = 'optional'  # Set to 'mandatory' for production
+ACCOUNT_AUTHENTICATION_METHOD = 'email'
+ACCOUNT_USERNAME_REQUIRED = False
+ACCOUNT_USER_MODEL_USERNAME_FIELD = None
+ACCOUNT_SIGNUP_PASSWORD_ENTER_TWICE = True
+ACCOUNT_SESSION_REMEMBER = True
+ACCOUNT_UNIQUE_EMAIL = True
+
+# Email settings (use console backend for development)
+EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
+DEFAULT_FROM_EMAIL = 'LetterPulse <noreply@letterpulse.app>'
+
+# =============================================================================
+# AI Credit System Configuration
+# =============================================================================
+# Default monthly credits for new users
+DEFAULT_MONTHLY_CREDITS = 100
+
+# Credit costs per operation
+CREDITS_PER_EXTRACTION = 1      # Per post extracted from
+CREDITS_PER_REPORT = 1          # Flat cost for generating insights
+CREDITS_PER_ANNOTATION = 1      # Per post annotated with improvement tips

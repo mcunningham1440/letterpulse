@@ -333,9 +333,20 @@
                 document.getElementById('insightsContent').classList.remove('d-none');
                 document.getElementById('saveReportSection').style.display = 'block';
                 document.getElementById('report_name').value = '';
-                
+
                 // Reset the report select dropdown
                 document.getElementById('reportSelect').value = '';
+
+                // Update sidebar credits display
+                if (data.credits_used !== undefined && data.credits_quota !== undefined) {
+                    const usagePercentage = Math.round((data.credits_used / data.credits_quota) * 100);
+                    const usageBar = document.querySelector('.usage-bar-fill');
+                    const usageText = document.querySelector('.usage-text');
+                    if (usageBar && usageText) {
+                        usageBar.style.width = usagePercentage + '%';
+                        usageText.textContent = Math.round(data.credits_used) + ' / ' + Math.round(data.credits_quota) + ' used';
+                    }
+                }
             } else {
                 alert('Error generating insights: ' + data.error);
             }

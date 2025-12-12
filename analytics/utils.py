@@ -15,12 +15,64 @@ from datetime import datetime
 import time
 from bs4 import BeautifulSoup
 from django.conf import settings
+from django.db import transaction
+from django.db.models import F
 import numpy as np
 from Levenshtein import distance as levenshtein_distance
 
 
-async def llm_call(function_name, messages, model, reasoning_level, response_format=None, tools=None):
-    """Make an async call to OpenAI API and log the request"""
+class NotEnoughCredits(Exception):
+    """Raised when a user doesn't have enough credits for an operation."""
+    pass
+
+
+def charge_credits(user, credits_to_charge: int):
+    """
+    Atomically charge credits for a user, enforcing their monthly quota.
+
+    Args:
+        user: The Django user object
+        credits_to_charge: Number of credits to charge
+
+    Raises:
+        NotEnoughCredits: If user doesn't have enough credits
+    """
+    from .models import UsageAccount
+
+    if user is None or not user.is_authenticated:
+        raise NotEnoughCredits("You must be logged in to use AI features.")
+
+    with transaction.atomic():
+        usage = UsageAccount.objects.select_for_update().get(user=user)
+        usage.ensure_current_period()
+
+        if usage.used_this_period + credits_to_charge > usage.monthly_quota:
+            raise NotEnoughCredits(
+                f"Not enough credits. "
+                f"You have {usage.monthly_quota - usage.used_this_period} credits remaining, "
+                f"but this operation requires {credits_to_charge}."
+            )
+
+        usage.used_this_period = F("used_this_period") + credits_to_charge
+        usage.save(update_fields=['used_this_period', 'period_start'])
+
+
+async def llm_call(function_name, messages, model, reasoning_level, response_format=None, tools=None, user=None):
+    """
+    Make an async call to OpenAI API and log the request.
+
+    Args:
+        function_name: Name of the function making the call (for logging)
+        messages: List of message dicts for the API
+        model: Model name (e.g., "gpt-5.1")
+        reasoning_level: Reasoning effort level ("low", "medium", "high")
+        response_format: Optional Pydantic model for structured output
+        tools: Optional list of tools
+        user: Django user object for logging (optional)
+
+    Returns:
+        OpenAI API response object
+    """
     start_datetime = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     start_time = time.time()
 
@@ -34,7 +86,7 @@ async def llm_call(function_name, messages, model, reasoning_level, response_for
 
     if asyncio.get_event_loop().is_running():
         client = AsyncOpenAI(api_key=os.environ.get('OPENAI_API_KEY'))
-        try:            
+        try:
             if response_format is not None:
                 kwargs["text_format"] = response_format
 
@@ -56,15 +108,28 @@ async def llm_call(function_name, messages, model, reasoning_level, response_for
             client.close()
     duration = time.time() - start_time
 
+    # Log the call
     log_file = settings.DATA_DIR / "llm_call_logs.csv"
     file_exists = os.path.exists(log_file)
-    
+
+    user_email = user.email if user and user.is_authenticated else "anonymous"
+
     with open(log_file, 'a', newline='', encoding='utf-8') as f:
         writer = csv.writer(f)
         if not file_exists:
-            writer.writerow(['function_name', 'run_datetime', 'run_time_s', 'model', 'input_tokens', 'cached_tokens', 'output_tokens', 'reasoning_tokens'])
-        writer.writerow([function_name, start_datetime, f"{duration:.4f}", model, response.usage.input_tokens, response.usage.input_tokens_details.cached_tokens, response.usage.output_tokens, response.usage.output_tokens_details.reasoning_tokens])
-    
+            writer.writerow(['function_name', 'run_datetime', 'run_time_s', 'model', 'input_tokens', 'cached_tokens', 'output_tokens', 'reasoning_tokens', 'user'])
+        writer.writerow([
+            function_name,
+            start_datetime,
+            f"{duration:.4f}",
+            model,
+            response.usage.input_tokens,
+            response.usage.input_tokens_details.cached_tokens,
+            response.usage.output_tokens,
+            response.usage.output_tokens_details.reasoning_tokens,
+            user_email
+        ])
+
     return response
 
 
@@ -254,10 +319,10 @@ def match_links_with_clicks(html_links_raw, clicks_dict, relative_distance_cutof
     return link_to_clicks
 
 
-async def extract_items(post_html, content_desc, clicks_dict, title, post_date, unique_email_opens):
+async def extract_items(post_html, content_desc, clicks_dict, title, post_date, unique_email_opens, user=None):
     """
     Extract items from a single post HTML using AI.
-    
+
     Args:
         post_html: HTML content of the post
         content_desc: Description of the content to extract
@@ -265,7 +330,8 @@ async def extract_items(post_html, content_desc, clicks_dict, title, post_date, 
         title: Post title
         post_date: Date the post was published
         unique_email_opens: Number of unique email opens
-    
+        user: Django user object for credit charging (optional)
+
     Returns:
         DataFrame containing extracted items
     """
@@ -326,7 +392,7 @@ Use your judgement and the content description to determine whether to extract m
 
     # 5.1: 'none', 'low', 'medium', and 'high'
     # 5-mini: 'minimal', 'low', 'medium', and 'high'
-    response = await llm_call("extract_items", messages, "gpt-5.1", "low", response_format=AllItems)
+    response = await llm_call("extract_items", messages, "gpt-5.1", "low", response_format=AllItems, user=user)
     output = response.output[-1].content[0].parsed
 
     # Step 2: Extract text and links from each section
@@ -362,16 +428,17 @@ Use your judgement and the content description to determine whether to extract m
     return items
 
 
-async def extract_items_parallel(posts_data, content_desc, htmls, clicks_by_id):
+async def extract_items_parallel(posts_data, content_desc, htmls, clicks_by_id, user=None):
     """
     Extract items from multiple posts in parallel using asyncio.
-    
+
     Args:
         posts_data: List of tuples containing (post_id, title, html_filename, post_date, unique_email_opens)
         content_desc: Description of content to extract
         htmls: Dictionary of HTML content keyed by filename
         clicks_by_id: Dictionary mapping post IDs to their clicks dictionaries
-    
+        user: Django user object for credit charging (optional)
+
     Returns:
         List of DataFrames containing extracted items
     """
@@ -380,7 +447,7 @@ async def extract_items_parallel(posts_data, content_desc, htmls, clicks_by_id):
         if html_filename in htmls and post_id in clicks_by_id:
             current_html = htmls[html_filename]
             clicks_dict = clicks_by_id[post_id]
-            task = extract_items(current_html, content_desc, clicks_dict, title, post_date, unique_email_opens)
+            task = extract_items(current_html, content_desc, clicks_dict, title, post_date, unique_email_opens, user=user)
             tasks.append(task)
     
     # Run all extractions concurrently
@@ -399,13 +466,14 @@ async def extract_items_parallel(posts_data, content_desc, htmls, clicks_by_id):
     return items_list[::-1]
 
 
-async def generate_content_insights(items_display):
+async def generate_content_insights(items_display, user=None):
     """
     Generate AI insights from content items using OpenAI API.
-    
+
     Args:
         items_display: DataFrame containing the content items with clicks
-    
+        user: Django user object for credit charging (optional)
+
     Returns:
         OpenAI response object containing structured insights with 3 tags
     """
@@ -570,9 +638,9 @@ If you’re optimizing for engagement, skew your programming and naming toward t
         {"role": "user", "content": analysis_prompt},
         {"role": "user", "content": newsletter_items}
     ]
-    
-    response = await llm_call("generate_content_insights", messages, "gpt-5.1", "medium")
-    
+
+    response = await llm_call("generate_content_insights", messages, "gpt-5.1", "medium", user=user)
+
     return response
 
 
@@ -795,15 +863,16 @@ def generate_click_visualization_html(post_html, clicks_dict, unique_email_opens
     return str(soup)
 
 
-async def annotate_post_html(post_id, content_perf_evals):
+async def annotate_post_html(post_id, content_perf_evals, user=None):
     """
-    Fetch post HTML, get LLM tips based on performance evaluations, 
+    Fetch post HTML, get LLM tips based on performance evaluations,
     and insert them with yellow highlighting.
-    
+
     Args:
         post_id: The Beehiiv post ID
         content_perf_evals: List of performance evaluation texts to inform tips
-    
+        user: Django user object for credit charging (optional)
+
     Returns:
         Modified HTML string with tips inserted
     """
@@ -884,8 +953,8 @@ Think carefully about what line number to assign to each tip so that it appears 
         {"role": "user", "content": "<html_document>\n" + '\n'.join(numbered_lines) + "\n</html_document>"},
         {"role": "system", "content": tip_prompt},
     ]
-    
-    response = await llm_call("annotate_post_html", messages, "gpt-5.1", "medium", response_format=AllTips)
+
+    response = await llm_call("annotate_post_html", messages, "gpt-5.1", "medium", response_format=AllTips, user=user)
     tips = response.output[-1].content[0].parsed
     
     # Step 5: Insert tips with yellow highlighting
@@ -966,18 +1035,19 @@ Think carefully about what line number to assign to each tip so that it appears 
     return '\n'.join(all_lines)
 
 
-async def annotate_posts_parallel(post_ids, content_perf_evals):
+async def annotate_posts_parallel(post_ids, content_perf_evals, user=None):
     """
     Annotate multiple posts in parallel using asyncio.
-    
+
     Args:
         post_ids: List of Beehiiv post IDs to annotate
         content_perf_evals: List of performance evaluation texts to inform tips
-    
+        user: Django user object for credit charging (optional)
+
     Returns:
         Dictionary mapping post_ids to their annotated HTML content
     """
-    tasks = [annotate_post_html(post_id, content_perf_evals) for post_id in post_ids]
+    tasks = [annotate_post_html(post_id, content_perf_evals, user=user) for post_id in post_ids]
     results = await asyncio.gather(*tasks, return_exceptions=True)
     
     # Build result dictionary, filtering out exceptions

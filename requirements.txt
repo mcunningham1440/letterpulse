@@ -6,3 +6,6 @@ pydantic>=2.0
 asgiref>=3.7
 psycopg2-binary>=2.9  # PostgreSQL driver
 python-dotenv>=1.0     # For .env file support
+django-allauth>=0.61    # Authentication with email verification
+aiohttp>=3.9           # Async HTTP client
+Levenshtein>=0.25      # String matching

@@ -1,7 +1,66 @@
 from django.db import models
+from django.conf import settings
 from django.contrib.postgres.fields import ArrayField
 from django.core.serializers.json import DjangoJSONEncoder
+from django.utils import timezone
 import json
+
+
+def get_default_monthly_credits():
+    """Get default monthly credits from settings"""
+    return getattr(settings, 'DEFAULT_MONTHLY_CREDITS', 100)
+
+
+class UsageAccount(models.Model):
+    """Track AI usage credits for each user"""
+
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='usage_account'
+    )
+    monthly_quota = models.PositiveIntegerField(
+        default=get_default_monthly_credits,
+        help_text="Credits available per month"
+    )
+    used_this_period = models.PositiveIntegerField(
+        default=0,
+        help_text="Credits used in current billing period"
+    )
+    period_start = models.DateField(help_text="Start of current billing period")
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Usage Account"
+        verbose_name_plural = "Usage Accounts"
+
+    def __str__(self):
+        return f"{self.user.email} - {self.used_this_period}/{self.monthly_quota} credits"
+
+    @property
+    def remaining(self):
+        """Return remaining credits for this period"""
+        return max(0, self.monthly_quota - self.used_this_period)
+
+    @property
+    def usage_percentage(self):
+        """Return usage as a percentage"""
+        if self.monthly_quota == 0:
+            return 100
+        return min(100, round((self.used_this_period / self.monthly_quota) * 100, 1))
+
+    def ensure_current_period(self):
+        """
+        Lazy reset when a new month starts.
+        Call this before checking or charging credits.
+        """
+        today = timezone.now().date()
+        current_period_start = today.replace(day=1)
+        if self.period_start != current_period_start:
+            self.period_start = current_period_start
+            self.used_this_period = 0
 
 
 class Post(models.Model):

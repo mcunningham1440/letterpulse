@@ -6,6 +6,7 @@ from django.shortcuts import render, redirect
 from django.http import JsonResponse, HttpResponse
 from django.views.decorators.http import require_POST
 from django.contrib import messages
+from django.contrib.auth.decorators import login_required
 from django.conf import settings
 import pandas as pd
 import json
@@ -19,15 +20,19 @@ from .utils import (
     extract_items_parallel,
     generate_content_insights,
     refresh_posts_data,
-    annotate_posts_parallel
+    annotate_posts_parallel,
+    NotEnoughCredits,
+    charge_credits,
 )
 
 
+@login_required
 def index(request):
     """Redirect to extract page"""
     return redirect('analytics:extract')
 
 
+@login_required
 def extract_view(request):
     """
     Display the extract page with posts table.
@@ -83,6 +88,7 @@ def extract_view(request):
     return render(request, 'analytics/extract.html', context)
 
 
+@login_required
 @require_POST
 def run_extraction(request):
     """
@@ -144,13 +150,19 @@ def run_extraction(request):
         if missing_clicks:
             for title in missing_clicks:
                 messages.warning(request, f"Failed to fetch click data for post: {title}")
-        
+
+        # Charge credits before extraction (1 credit per post)
+        num_posts = len([p for p in posts_data if p[2] in htmls and p[0] in clicks_by_id])
+        credits_needed = num_posts * settings.CREDITS_PER_EXTRACTION
+        charge_credits(request.user, credits_needed)
+
         # Run async extraction
         items_list = async_to_sync(extract_items_parallel)(
-            posts_data, 
-            content_desc, 
-            htmls, 
-            clicks_by_id
+            posts_data,
+            content_desc,
+            htmls,
+            clicks_by_id,
+            user=request.user
         )
         
         if items_list:
@@ -165,13 +177,16 @@ def run_extraction(request):
             messages.success(request, f"Successfully extracted {len(extracted_df)} items from {len(items_list)} posts!")
         else:
             messages.warning(request, "No items were extracted.")
-        
+
+    except NotEnoughCredits as e:
+        messages.error(request, str(e))
     except Exception as e:
         messages.error(request, f"Error during extraction: {str(e)}")
-    
+
     return redirect('analytics:extract')
 
 
+@login_required
 @require_POST
 def delete_items(request):
     """
@@ -210,6 +225,7 @@ def delete_items(request):
     return redirect('analytics:extract')
 
 
+@login_required
 @require_POST
 def save_content_set(request):
     """
@@ -301,6 +317,7 @@ def save_content_set(request):
     return redirect('analytics:extract')
 
 
+@login_required
 def analyze_view(request):
     """
     Display the analyze page with content sets.
@@ -315,6 +332,7 @@ def analyze_view(request):
     return render(request, 'analytics/analyze.html', context)
 
 
+@login_required
 def load_content_set(request, set_name):
     """
     Load a specific content set and return as JSON.
@@ -358,6 +376,7 @@ def load_content_set(request, set_name):
         }, status=500)
 
 
+@login_required
 @require_POST
 def generate_insights(request):
     """
@@ -365,36 +384,51 @@ def generate_insights(request):
     """
     try:
         set_name = request.POST.get('set_name')
-        
+
         if not set_name:
             return JsonResponse({
                 'success': False,
                 'error': 'Content set name is required.'
             }, status=400)
-        
+
         content_set = ContentSet.objects.get(name=set_name)
         df = content_set.to_dataframe()
-        
+
         if df.empty:
             return JsonResponse({
                 'success': False,
                 'error': 'Content set is empty.'
             }, status=400)
-        
+
+        # Charge credits before generating report (flat cost)
+        charge_credits(request.user, settings.CREDITS_PER_REPORT)
+
         # Generate insights using async function
-        response = async_to_sync(generate_content_insights)(df)
+        response = async_to_sync(generate_content_insights)(df, user=request.user)
         insights = response.output[-1].content[0].text
-                
+
+        # Get updated usage for sidebar
+        from .models import UsageAccount
+        usage = UsageAccount.objects.get(user=request.user)
+        usage.ensure_current_period()
+
         return JsonResponse({
             'success': True,
             'insights': insights,
+            'credits_used': usage.used_this_period,
+            'credits_quota': usage.monthly_quota,
         })
-        
+
     except ContentSet.DoesNotExist:
         return JsonResponse({
             'success': False,
             'error': f"Content set '{set_name}' not found."
         }, status=404)
+    except NotEnoughCredits as e:
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        }, status=402)  # Payment Required
     except Exception as e:
         return JsonResponse({
             'success': False,
@@ -402,6 +436,7 @@ def generate_insights(request):
         }, status=500)
 
 
+@login_required
 @require_POST
 def rename_set(request):
     """
@@ -445,6 +480,7 @@ def rename_set(request):
         }, status=500)
 
 
+@login_required
 @require_POST
 def copy_set(request):
     """
@@ -494,6 +530,7 @@ def copy_set(request):
         }, status=500)
 
 
+@login_required
 @require_POST
 def merge_sets(request):
     """
@@ -541,6 +578,7 @@ def merge_sets(request):
         }, status=500)
 
 
+@login_required
 @require_POST
 def delete_items_from_set(request):
     """
@@ -598,6 +636,7 @@ def delete_items_from_set(request):
         }, status=500)
 
 
+@login_required
 @require_POST
 def delete_set(request):
     """
@@ -632,6 +671,7 @@ def delete_set(request):
         }, status=500)
 
 
+@login_required
 def download_csv(request, set_name):
     """
     Download a content set as CSV.
@@ -667,6 +707,7 @@ def download_csv(request, set_name):
         return redirect('analytics:analyze')
 
 
+@login_required
 @require_POST
 def refresh_posts(request):
     """
@@ -727,6 +768,7 @@ def refresh_posts(request):
     return redirect('analytics:extract')
 
 
+@login_required
 @require_POST
 def download_click_visualization(request):
     """
@@ -813,6 +855,7 @@ def download_click_visualization(request):
         return redirect('analytics:extract')
 
 
+@login_required
 @require_POST
 def download_annotated_posts(request):
     """
@@ -857,10 +900,14 @@ def download_annotated_posts(request):
         
         # Get post IDs (beehiiv post_id, not Django id)
         post_ids = posts_of_interest['id'].tolist()
-        
+
+        # Charge credits before annotation (1 credit per post)
+        credits_needed = len(post_ids) * settings.CREDITS_PER_ANNOTATION
+        charge_credits(request.user, credits_needed)
+
         # Run parallel annotation
-        annotated_htmls = async_to_sync(annotate_posts_parallel)(post_ids, content_perf_evals)
-        
+        annotated_htmls = async_to_sync(annotate_posts_parallel)(post_ids, content_perf_evals, user=request.user)
+
         if not annotated_htmls:
             messages.error(request, "Failed to generate any annotated posts.")
             return redirect('analytics:extract')
@@ -889,14 +936,29 @@ def download_annotated_posts(request):
         zip_buffer.seek(0)
         response = HttpResponse(zip_buffer.getvalue(), content_type='application/zip')
         response['Content-Disposition'] = 'attachment; filename="annotated_posts.zip"'
-        
+
+        # Add credit info headers for frontend to update sidebar
+        from .models import UsageAccount
+        try:
+            usage = UsageAccount.objects.get(user=request.user)
+            usage.ensure_current_period()
+            response['X-Credits-Used'] = str(usage.used_this_period)
+            response['X-Credits-Quota'] = str(usage.monthly_quota)
+            response['Access-Control-Expose-Headers'] = 'X-Credits-Used, X-Credits-Quota'
+        except UsageAccount.DoesNotExist:
+            pass
+
         return response
-        
+
+    except NotEnoughCredits as e:
+        messages.error(request, str(e))
+        return redirect('analytics:extract')
     except Exception as e:
         messages.error(request, f"Error generating annotated posts: {str(e)}")
         return redirect('analytics:extract')
 
 
+@login_required
 @require_POST
 def save_report(request):
     """
@@ -960,6 +1022,7 @@ def save_report(request):
         }, status=500)
 
 
+@login_required
 def load_report(request, report_id):
     """
     Load a saved report and return as JSON.
@@ -987,6 +1050,7 @@ def load_report(request, report_id):
         }, status=500)
 
 
+@login_required
 def get_all_reports(request):
     """
     Get all reports across all content sets.
@@ -1016,6 +1080,7 @@ def get_all_reports(request):
         }, status=500)
 
 
+@login_required
 @require_POST
 def delete_report(request, report_id):
     """

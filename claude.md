@@ -20,6 +20,7 @@ This application helps newsletter creators understand which content resonates wi
 - **Backend**: Django 5.0+, Python
 - **Database**: PostgreSQL (via Docker)
 - **AI**: OpenAI API (GPT-5.1 with reasoning)
+- **Authentication**: django-allauth (email-based auth)
 - **Frontend**: Bootstrap 5, DataTables, jQuery, Marked.js (markdown rendering)
 - **Async**: aiohttp, asyncio for parallel API calls
 
@@ -33,13 +34,15 @@ beehiiv_analytics_django/
 │   ├── wsgi.py / asgi.py       # WSGI/ASGI entry points
 │   └── __init__.py
 ├── analytics/                  # Main Django app
-│   ├── models.py               # Post, ContentSet, Report models
-│   ├── views.py                # All view logic (~1000 lines)
+│   ├── models.py               # Post, ContentSet, Report, UsageAccount models
+│   ├── views.py                # All view logic (login-protected)
 │   ├── urls.py                 # App URL patterns (analytics namespace)
-│   ├── utils.py                # Core utility functions (API calls, AI extraction)
+│   ├── utils.py                # Core utility functions (API calls, AI extraction, credit charging)
 │   ├── admin.py                # Django admin configuration
+│   ├── signals.py              # User signals (auto-create UsageAccount)
+│   ├── context_processors.py   # Usage stats for templates
 │   ├── templates/analytics/    # HTML templates
-│   │   ├── base.html           # Base template with Bootstrap/DataTables
+│   │   ├── base.html           # Base template with Bootstrap/DataTables and user sidebar
 │   │   ├── extract.html        # Content extraction page
 │   │   └── analyze.html        # Analysis and reporting page
 │   └── migrations/             # Database migrations
@@ -71,6 +74,23 @@ AI-generated content insights:
 - `name`: Report name
 - `content_set`: ForeignKey to ContentSet
 - `report_text`: Markdown-formatted analysis
+
+### UsageAccount
+Tracks AI usage credits per user:
+- `user`: OneToOneField to User
+- `monthly_quota`: Credits available per month (default from `settings.DEFAULT_MONTHLY_CREDITS`)
+- `used_this_period`: Credits consumed this period
+- `period_start`: Start of current billing period (auto-resets monthly)
+
+## Authentication
+
+Uses django-allauth for email-based authentication:
+- Email as primary identifier (no username required)
+- Password-based login at `/accounts/login/`
+- Registration at `/accounts/signup/`
+- Password reset via email
+- All views are protected with `@login_required`
+- UsageAccount is auto-created for new users via signals
 
 ## Key Features & Workflows
 
@@ -146,10 +166,28 @@ DB_PORT=5432
 - `process_posts_data()`: Converts raw API data to DataFrame. Drafts have `publish_date_cst` set to "Draft"
 
 ### AI Functions
-- `llm_call()`: Wrapper for OpenAI API with logging to CSV
+- `llm_call(user=None)`: Wrapper for OpenAI API with logging to CSV
+- `charge_credits(user, credits)`: Atomically charge credits against user quota
+- `NotEnoughCredits`: Exception raised when quota exceeded
 - `extract_items()`: AI-powered content extraction from HTML
 - `generate_content_insights()`: Generate performance analysis report
 - `annotate_post_html()`: Insert improvement tips into HTML
+
+## Credit System Configuration
+
+Credit costs are configured in `settings.py`:
+
+```python
+# Default monthly credits for new users
+DEFAULT_MONTHLY_CREDITS = 100
+
+# Credit costs per operation
+CREDITS_PER_EXTRACTION = 1      # Per post extracted from
+CREDITS_PER_REPORT = 1          # Flat cost for generating insights
+CREDITS_PER_ANNOTATION = 1      # Per post annotated with improvement tips
+```
+
+Credits are charged at the view level before each AI operation runs.
 
 ### Link Matching
 - `match_links_with_clicks()`: Uses exact matching first, then Levenshtein distance (40% threshold) for fuzzy matching
