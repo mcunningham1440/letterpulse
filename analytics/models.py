@@ -43,6 +43,15 @@ class UsageAccount(models.Model):
         default='',
         help_text="Beehiiv publication ID"
     )
+    api_key_valid = models.BooleanField(
+        default=False,
+        help_text="Whether the API key has been validated against Beehiiv"
+    )
+    available_publications = models.JSONField(
+        default=list,
+        blank=True,
+        help_text="Cached list of publications from Beehiiv API"
+    )
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -143,10 +152,35 @@ class UsageAccount(models.Model):
         return self.beehiiv_token[:4] + '****' + self.beehiiv_token[-4:]
 
 
+class Publication(models.Model):
+    """Model representing a Beehiiv publication"""
+
+    pub_id = models.CharField(max_length=255, unique=True, help_text="Beehiiv publication ID")
+    name = models.CharField(max_length=255)
+    organization_name = models.CharField(max_length=255, blank=True, default='')
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['name']
+
+    def __str__(self):
+        return f"{self.name} ({self.pub_id[:20]}...)"
+
+
 class Post(models.Model):
     """Model representing a Beehiiv newsletter post"""
 
     post_id = models.CharField(max_length=255, unique=True, help_text="Beehiiv post ID")
+    publication = models.ForeignKey(
+        Publication,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='posts',
+        help_text="The publication this post belongs to"
+    )
     title = models.CharField(max_length=500)
     subtitle = models.TextField(blank=True, null=True)
     status = models.CharField(max_length=20, default='Published', help_text="Draft or Published")
@@ -182,8 +216,16 @@ class Post(models.Model):
 
 class ContentSet(models.Model):
     """Model representing a saved set of extracted content items"""
-    
-    name = models.CharField(max_length=255, unique=True)
+
+    name = models.CharField(max_length=255)
+    publication = models.ForeignKey(
+        Publication,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='content_sets',
+        help_text="The publication this content set belongs to"
+    )
     description = models.TextField(blank=True, help_text="Optional description of this content set")
     items_data = models.JSONField(help_text="JSON data containing the extracted items")
     
@@ -192,10 +234,11 @@ class ContentSet(models.Model):
     
     class Meta:
         ordering = ['-created_at']
-    
+        unique_together = [['name', 'publication']]
+
     def __str__(self):
         return self.name
-    
+
     def get_items_count(self):
         """Return the number of items in this content set"""
         if isinstance(self.items_data, list):

@@ -67,10 +67,15 @@
                 <i class="bi bi-key me-2"></i>Beehiiv API Credentials
             </div>
             <div class="card-body">
-                {% if usage.has_api_credentials %}
+                {% if usage.api_key_valid %}
                 <div class="alert alert-success d-flex align-items-center mb-4">
                     <i class="bi bi-check-circle-fill me-2"></i>
-                    API credentials are configured
+                    API credentials are configured and validated
+                </div>
+                {% elif usage.beehiiv_token and not usage.api_key_valid %}
+                <div class="alert alert-danger d-flex align-items-center mb-4">
+                    <i class="bi bi-x-circle-fill me-2"></i>
+                    API key is invalid. Please enter a valid key below.
                 </div>
                 {% else %}
                 <div class="alert alert-warning d-flex align-items-center mb-4">
@@ -79,22 +84,10 @@
                 </div>
                 {% endif %}
 
-                <form method="post" action="{% url 'analytics:account' %}">
+                <!-- API Token Form -->
+                <form method="post" action="{% url 'analytics:account' %}" id="credentialsForm">
                     {% csrf_token %}
                     <input type="hidden" name="action" value="update_credentials">
-
-                    <div class="mb-3">
-                        <label for="beehiiv_pub_id" class="form-label">Publication ID</label>
-                        <input type="text"
-                               class="form-control"
-                               id="beehiiv_pub_id"
-                               name="beehiiv_pub_id"
-                               value="{{ usage.beehiiv_pub_id }}"
-                               placeholder="pub_xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx">
-                        <div class="form-text">
-                            Find this in your Beehiiv dashboard under Settings &gt; Integrations.
-                        </div>
-                    </div>
 
                     <div class="mb-3">
                         <label for="beehiiv_token" class="form-label">API Token</label>
@@ -118,17 +111,37 @@
                         </div>
                     </div>
 
+                    {% if usage.api_key_valid and usage.available_publications %}
+                    <div class="mb-3">
+                        <label for="beehiiv_pub_id" class="form-label">Publication</label>
+                        <select class="form-select" id="beehiiv_pub_id" name="beehiiv_pub_id">
+                            {% for pub in usage.available_publications %}
+                            <option value="{{ pub.id }}" {% if pub.id == usage.beehiiv_pub_id %}selected{% endif %}>
+                                {{ pub.name }}
+                            </option>
+                            {% endfor %}
+                        </select>
+                        <div class="form-text">
+                            Select the publication to analyze. Each publication has its own posts and content sets.
+                        </div>
+                    </div>
+                    {% else %}
+                    <input type="hidden" name="beehiiv_pub_id" value="">
+                    {% endif %}
+
                     <div class="d-flex gap-2">
                         <button type="submit" class="btn btn-primary">
-                            <i class="bi bi-check-lg me-1"></i>Save Credentials
+                            <i class="bi bi-check-lg me-1"></i>
+                            {% if usage.api_key_valid %}Save Changes{% else %}Validate & Save{% endif %}
                         </button>
-                        {% if usage.has_api_credentials %}
+                        {% if usage.beehiiv_token %}
                         <button type="button" class="btn btn-outline-danger" id="clearCredentials">
                             <i class="bi bi-trash me-1"></i>Clear
                         </button>
                         {% endif %}
                     </div>
                 </form>
+
             </div>
         </div>
     </div>

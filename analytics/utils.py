@@ -57,6 +57,49 @@ def charge_credits(user, credits_to_charge: int):
         usage.save(update_fields=['used_this_period', 'period_start'])
 
 
+async def validate_beehiiv_api_key(beehiiv_token: str) -> tuple[bool, list | str]:
+    """
+    Validate a Beehiiv API key by calling GET /v2/publications.
+
+    Args:
+        beehiiv_token: The API token to validate (should include 'Bearer ' prefix)
+
+    Returns:
+        Tuple of (is_valid, publications_list_or_error_message)
+        - If valid: (True, [{"id": "pub_xxx", "name": "...", "organization_name": "..."}, ...])
+        - If invalid: (False, "Error message")
+    """
+    url = "https://api.beehiiv.com/v2/publications"
+    headers = {"Authorization": beehiiv_token}
+
+    timeout = aiohttp.ClientTimeout(total=30)
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        try:
+            async with session.get(url, headers=headers) as response:
+                data = await response.json()
+
+                if response.status == 200:
+                    publications = [
+                        {
+                            "id": pub["id"],
+                            "name": pub.get("name", "Unnamed Publication"),
+                            "organization_name": pub.get("organization_name", "")
+                        }
+                        for pub in data.get("data", [])
+                    ]
+                    return (True, publications)
+                elif response.status == 401:
+                    errors = data.get("errors", [])
+                    error_msg = errors[0].get("message", "Invalid API key") if errors else "Invalid API key"
+                    return (False, error_msg)
+                else:
+                    return (False, f"API returned status {response.status}")
+        except aiohttp.ClientError as e:
+            return (False, f"Network error: {str(e)}")
+        except Exception as e:
+            return (False, f"Unexpected error: {str(e)}")
+
+
 async def llm_call(function_name, messages, model, reasoning_level, response_format=None, tools=None, user=None):
     """
     Make an async call to OpenAI API and log the request.
@@ -644,16 +687,25 @@ If you’re optimizing for engagement, skew your programming and naming toward t
     return response
 
 
-def load_posts_from_db():
-    """Load posts from database into a DataFrame"""
+def load_posts_from_db(publication_id=None):
+    """Load posts from database into a DataFrame, optionally filtered by publication.
+
+    Args:
+        publication_id: Optional Beehiiv publication ID (e.g., 'pub_xxx') to filter posts.
+                        If None, returns all posts.
+    """
     from .models import Post
-    
-    posts = Post.objects.all().values(
+
+    queryset = Post.objects.all()
+    if publication_id:
+        queryset = queryset.filter(publication__pub_id=publication_id)
+
+    posts = queryset.values(
         'post_id', 'title', 'subtitle', 'status', 'creation_date', 'publish_date_cst',
         'recipients', 'delivered', 'email_opens', 'unique_email_opens',
         'email_clicks', 'unique_email_clicks', 'unsubscribes', 'spam_reports'
     )
-    
+
     if posts:
         df = pd.DataFrame(list(posts))
         # Rename post_id to id to match the expected format

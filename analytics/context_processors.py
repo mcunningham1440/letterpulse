@@ -17,6 +17,7 @@ def usage_context(request):
             if usage.used_this_period == 0 and usage.pk:
                 usage.save(update_fields=['period_start', 'used_this_period'])
             return {
+                'usage': usage,  # Full object for API status checks
                 'usage_used': usage.used_this_period,
                 'usage_quota': usage.monthly_quota,
                 'usage_remaining': usage.remaining,

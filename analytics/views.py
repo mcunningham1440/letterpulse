@@ -23,21 +23,47 @@ from .utils import (
     annotate_posts_parallel,
     NotEnoughCredits,
     charge_credits,
+    validate_beehiiv_api_key,
 )
+
+
+import functools
 
 
 def get_user_api_credentials(user):
     """
     Get the Beehiiv API credentials for a user.
-    Returns (token, pub_id) tuple or (None, None) if not configured.
+    Returns (token, pub_id, is_valid) tuple.
     """
     try:
         usage = UsageAccount.objects.get(user=user)
         if usage.has_api_credentials:
-            return usage.beehiiv_token, usage.beehiiv_pub_id
+            return usage.beehiiv_token, usage.beehiiv_pub_id, usage.api_key_valid
     except UsageAccount.DoesNotExist:
         pass
-    return None, None
+    return None, None, False
+
+
+def require_valid_api_credentials(view_func):
+    """
+    Decorator that checks for valid API credentials before allowing access.
+    Redirects to account page with error message if credentials are missing or invalid.
+    """
+    @functools.wraps(view_func)
+    def wrapper(request, *args, **kwargs):
+        token, pub_id, is_valid = get_user_api_credentials(request.user)
+
+        if not token or not pub_id:
+            messages.error(request, "Please configure your Beehiiv API credentials in your Account settings.")
+            return redirect('analytics:account')
+
+        if not is_valid:
+            messages.error(request, "Your API key is invalid. Please update it in your Account settings.")
+            return redirect('analytics:account')
+
+        return view_func(request, *args, **kwargs)
+
+    return wrapper
 
 
 @login_required
@@ -51,6 +77,8 @@ def account_view(request):
     """
     Display and manage user account settings including API credentials and usage.
     """
+    from .models import Publication
+
     # Get or create usage account
     usage, created = UsageAccount.objects.get_or_create(
         user=request.user,
@@ -60,20 +88,98 @@ def account_view(request):
 
     if request.method == 'POST':
         action = request.POST.get('action')
+        old_pub_id = usage.beehiiv_pub_id  # Track for clearing session data on change
 
         if action == 'update_credentials':
             beehiiv_token = request.POST.get('beehiiv_token', '').strip()
             beehiiv_pub_id = request.POST.get('beehiiv_pub_id', '').strip()
 
-            # Update credentials
-            usage.beehiiv_token = beehiiv_token
-            usage.beehiiv_pub_id = beehiiv_pub_id
-            usage.save()
+            if beehiiv_token:
+                # Validate the API key against Beehiiv
+                is_valid, result = async_to_sync(validate_beehiiv_api_key)(beehiiv_token)
 
-            if beehiiv_token and beehiiv_pub_id:
-                messages.success(request, "API credentials saved successfully!")
+                if is_valid:
+                    # Store token and publications list
+                    usage.beehiiv_token = beehiiv_token
+                    usage.api_key_valid = True
+                    usage.available_publications = result  # List of publication dicts
+
+                    # Validate selected publication is in list
+                    valid_pub_ids = [p["id"] for p in result]
+                    if beehiiv_pub_id and beehiiv_pub_id in valid_pub_ids:
+                        usage.beehiiv_pub_id = beehiiv_pub_id
+                    elif result:
+                        # Default to first publication if none selected or invalid
+                        usage.beehiiv_pub_id = result[0]["id"]
+                    else:
+                        usage.beehiiv_pub_id = ''
+
+                    usage.save()
+
+                    # Ensure Publication record exists for the selected pub
+                    if usage.beehiiv_pub_id:
+                        pub_data = next((p for p in result if p["id"] == usage.beehiiv_pub_id), None)
+                        if pub_data:
+                            Publication.objects.update_or_create(
+                                pub_id=usage.beehiiv_pub_id,
+                                defaults={
+                                    'name': pub_data.get('name', 'Unknown'),
+                                    'organization_name': pub_data.get('organization_name', '')
+                                }
+                            )
+
+                    # Clear extracted items if publication changed
+                    if usage.beehiiv_pub_id != old_pub_id:
+                        request.session.pop('extracted_items', None)
+
+                    messages.success(request, "API credentials validated and saved!")
+                else:
+                    # Invalid key
+                    usage.beehiiv_token = beehiiv_token  # Keep token so user can see it
+                    usage.api_key_valid = False
+                    usage.available_publications = []
+                    usage.save()
+                    messages.error(request, f"API key validation failed: {result}")
             else:
+                # Clear credentials and extracted items
+                usage.beehiiv_token = ''
+                usage.beehiiv_pub_id = ''
+                usage.api_key_valid = False
+                usage.available_publications = []
+                usage.save()
+                request.session.pop('extracted_items', None)
                 messages.info(request, "API credentials cleared.")
+
+            return redirect('analytics:account')
+
+        elif action == 'switch_publication':
+            # Handle publication switching
+            new_pub_id = request.POST.get('beehiiv_pub_id', '').strip()
+            valid_pub_ids = [p["id"] for p in usage.available_publications]
+
+            if new_pub_id in valid_pub_ids and new_pub_id != old_pub_id:
+                usage.beehiiv_pub_id = new_pub_id
+                usage.save()
+
+                # Clear extracted items since they belong to old publication
+                request.session.pop('extracted_items', None)
+
+                # Ensure Publication record exists
+                pub_data = next((p for p in usage.available_publications if p["id"] == new_pub_id), None)
+                if pub_data:
+                    Publication.objects.update_or_create(
+                        pub_id=new_pub_id,
+                        defaults={
+                            'name': pub_data.get('name', 'Unknown'),
+                            'organization_name': pub_data.get('organization_name', '')
+                        }
+                    )
+
+                messages.success(request, "Publication switched successfully!")
+            elif new_pub_id == old_pub_id:
+                pass  # No change needed
+            else:
+                messages.error(request, "Invalid publication selected.")
 
             return redirect('analytics:account')
 
@@ -89,12 +195,16 @@ from django.utils import timezone
 
 
 @login_required
+@require_valid_api_credentials
 def extract_view(request):
     """
     Display the extract page with posts table.
     """
-    # Load posts from database
-    posts_df = load_posts_from_db()
+    # Get current publication for filtering
+    _, beehiiv_pub_id, _ = get_user_api_credentials(request.user)
+
+    # Load posts from database filtered by publication
+    posts_df = load_posts_from_db(publication_id=beehiiv_pub_id)
     
     # Reverse order so newer posts appear first
     posts_df = posts_df.iloc[::-1].reset_index(drop=True)
@@ -128,11 +238,15 @@ def extract_view(request):
         
         extracted_items_data = df.to_dict('records')
     
-    # Get all content sets for the dropdown
-    all_content_sets = ContentSet.objects.all().order_by('name')
-    
-    # Get all reports for the annotation dropdown
-    all_reports = Report.objects.all().order_by('name')
+    # Get content sets for current publication only
+    from .models import Publication
+    try:
+        publication = Publication.objects.get(pub_id=beehiiv_pub_id)
+        all_content_sets = ContentSet.objects.filter(publication=publication).order_by('name')
+        all_reports = Report.objects.filter(content_set__publication=publication).order_by('name')
+    except Publication.DoesNotExist:
+        all_content_sets = ContentSet.objects.none()
+        all_reports = Report.objects.none()
     
     context = {
         'posts': posts_data,
@@ -146,16 +260,14 @@ def extract_view(request):
 
 @login_required
 @require_POST
+@require_valid_api_credentials
 def run_extraction(request):
     """
     Run content extraction on selected posts.
     """
     try:
-        # Check for API credentials
-        beehiiv_token, beehiiv_pub_id = get_user_api_credentials(request.user)
-        if not beehiiv_token or not beehiiv_pub_id:
-            messages.error(request, "Please configure your Beehiiv API credentials in your Account settings.")
-            return redirect('analytics:account')
+        # Get API credentials (already validated by decorator)
+        beehiiv_token, beehiiv_pub_id, _ = get_user_api_credentials(request.user)
 
         # Get form data
         selected_indices = request.POST.getlist('selected_posts')
@@ -172,8 +284,8 @@ def run_extraction(request):
         # Convert indices to integers
         selected_indices = [int(idx) for idx in selected_indices]
 
-        # Load data from database
-        posts_df = load_posts_from_db()
+        # Load data from database filtered by publication
+        posts_df = load_posts_from_db(publication_id=beehiiv_pub_id)
         posts_df = posts_df.iloc[::-1].reset_index(drop=True)  # Reverse to match display
 
         # Get selected posts
@@ -289,36 +401,48 @@ def delete_items(request):
 
 @login_required
 @require_POST
+@require_valid_api_credentials
 def save_content_set(request):
     """
     Save extracted items as a named content set or add to existing set.
     """
+    from .models import Publication
+
     try:
         set_mode = request.POST.get('set_mode', 'create')
-        
+
+        # Get current publication
+        _, beehiiv_pub_id, _ = get_user_api_credentials(request.user)
+        try:
+            publication = Publication.objects.get(pub_id=beehiiv_pub_id)
+        except Publication.DoesNotExist:
+            messages.error(request, "Publication not found. Please refresh your posts first.")
+            return redirect('analytics:extract')
+
         # Get extracted items from session
         extracted_items = request.session.get('extracted_items', [])
-        
+
         if not extracted_items:
             messages.error(request, "No extracted items to save.")
             return redirect('analytics:extract')
-        
+
         if set_mode == 'create':
             # Create new content set
             content_set_name = request.POST.get('content_set_name', '').strip()
-            
+
             if not content_set_name:
                 messages.error(request, "Please provide a name for the content set.")
                 return redirect('analytics:extract')
-            
-            # Check if name already exists
-            if ContentSet.objects.filter(name=content_set_name).exists():
+
+            # Check if name already exists for this publication
+            if ContentSet.objects.filter(name=content_set_name, publication=publication).exists():
                 messages.error(request, f"A content set named '{content_set_name}' already exists. Please choose a different name.")
                 return redirect('analytics:extract')
-            
+
             # Create ContentSet
             df = pd.DataFrame(extracted_items)
             content_set = ContentSet.from_dataframe(content_set_name, df)
+            content_set.publication = publication
             content_set.save()
             
             messages.success(request, f"Content set '{content_set_name}' saved successfully!")
@@ -343,12 +467,13 @@ def save_content_set(request):
             if keep_copy:
                 import datetime
                 backup_name = f"{existing_set_name} copy"
-                
+
                 # Create a backup copy
                 backup_set = ContentSet(
                     name=backup_name,
                     description=f"Backup of '{existing_set_name}' before adding items",
-                    items_data=existing_set.items_data
+                    items_data=existing_set.items_data,
+                    publication=publication
                 )
                 backup_set.save()
                 messages.info(request, f"Backup created: '{backup_name}'")
@@ -380,17 +505,27 @@ def save_content_set(request):
 
 
 @login_required
+@require_valid_api_credentials
 def analyze_view(request):
     """
     Display the analyze page with content sets.
     """
-    # Get all available content sets
-    content_sets = ContentSet.objects.all().order_by('-created_at')
-    
+    from .models import Publication
+
+    # Get current publication for filtering
+    _, beehiiv_pub_id, _ = get_user_api_credentials(request.user)
+
+    # Get content sets for current publication only
+    try:
+        publication = Publication.objects.get(pub_id=beehiiv_pub_id)
+        content_sets = ContentSet.objects.filter(publication=publication).order_by('-created_at')
+    except Publication.DoesNotExist:
+        content_sets = ContentSet.objects.none()
+
     context = {
         'content_sets': content_sets,
     }
-    
+
     return render(request, 'analytics/analyze.html', context)
 
 
@@ -771,30 +906,41 @@ def download_csv(request, set_name):
 
 @login_required
 @require_POST
+@require_valid_api_credentials
 def refresh_posts(request):
     """
     Refresh posts data from Beehiiv API and update the database.
     """
+    from .models import Publication
+
     try:
-        # Check for API credentials
-        beehiiv_token, beehiiv_pub_id = get_user_api_credentials(request.user)
-        if not beehiiv_token or not beehiiv_pub_id:
-            messages.error(request, "Please configure your Beehiiv API credentials in your Account settings.")
-            return redirect('analytics:account')
+        # Get API credentials (already validated by decorator)
+        beehiiv_token, beehiiv_pub_id, _ = get_user_api_credentials(request.user)
 
         messages.info(request, "Fetching latest posts from Beehiiv API...")
 
+        # Get or create the Publication record
+        usage = UsageAccount.objects.get(user=request.user)
+        pub_data = next((p for p in usage.available_publications if p["id"] == beehiiv_pub_id), None)
+        publication, _ = Publication.objects.get_or_create(
+            pub_id=beehiiv_pub_id,
+            defaults={
+                'name': pub_data.get('name', 'Unknown') if pub_data else 'Unknown',
+                'organization_name': pub_data.get('organization_name', '') if pub_data else ''
+            }
+        )
+
         # Fetch and process posts data
         posts_df, result_message = async_to_sync(refresh_posts_data)(beehiiv_token, beehiiv_pub_id)
-        
+
         if posts_df is None:
             messages.error(request, result_message)
             return redirect('analytics:extract')
-        
+
         # Update database with new posts
         created_count = 0
         updated_count = 0
-        
+
         for _, row in posts_df.iterrows():
             # Handle null publish_date_cst for drafts
             publish_date = row['publish_date_cst']
@@ -804,6 +950,7 @@ def refresh_posts(request):
             post, created = Post.objects.update_or_create(
                 post_id=row['id'],
                 defaults={
+                    'publication': publication,
                     'title': row['title'],
                     'subtitle': row.get('subtitle', ''),
                     'status': row.get('status', 'Published'),
@@ -838,6 +985,7 @@ def refresh_posts(request):
 
 @login_required
 @require_POST
+@require_valid_api_credentials
 def download_click_visualization(request):
     """
     Generate and download click visualization HTML files for selected posts.
@@ -848,11 +996,8 @@ def download_click_visualization(request):
     from .utils import generate_click_visualization_html
 
     try:
-        # Check for API credentials
-        beehiiv_token, beehiiv_pub_id = get_user_api_credentials(request.user)
-        if not beehiiv_token or not beehiiv_pub_id:
-            messages.error(request, "Please configure your Beehiiv API credentials in your Account settings.")
-            return redirect('analytics:account')
+        # Get API credentials (already validated by decorator)
+        beehiiv_token, beehiiv_pub_id, _ = get_user_api_credentials(request.user)
 
         # Get selected post indices
         selected_indices = request.POST.getlist('selected_posts')
@@ -864,8 +1009,8 @@ def download_click_visualization(request):
         # Convert indices to integers
         selected_indices = [int(idx) for idx in selected_indices]
 
-        # Load posts from database
-        posts_df = load_posts_from_db()
+        # Load posts from database filtered by publication
+        posts_df = load_posts_from_db(publication_id=beehiiv_pub_id)
         posts_df = posts_df.iloc[::-1].reset_index(drop=True)  # Reverse to match display
 
         # Get selected posts
@@ -931,6 +1076,7 @@ def download_click_visualization(request):
 
 @login_required
 @require_POST
+@require_valid_api_credentials
 def download_annotated_posts(request):
     """
     Generate and download annotated HTML files for selected posts using selected reports.
@@ -940,11 +1086,8 @@ def download_annotated_posts(request):
     import io
 
     try:
-        # Check for API credentials
-        beehiiv_token, beehiiv_pub_id = get_user_api_credentials(request.user)
-        if not beehiiv_token or not beehiiv_pub_id:
-            messages.error(request, "Please configure your Beehiiv API credentials in your Account settings.")
-            return redirect('analytics:account')
+        # Get API credentials (already validated by decorator)
+        beehiiv_token, beehiiv_pub_id, _ = get_user_api_credentials(request.user)
 
         # Get selected post indices
         selected_indices = request.POST.getlist('selected_posts')
@@ -963,8 +1106,8 @@ def download_annotated_posts(request):
         selected_indices = [int(idx) for idx in selected_indices]
         selected_report_ids = [int(rid) for rid in selected_report_ids]
 
-        # Load posts from database
-        posts_df = load_posts_from_db()
+        # Load posts from database filtered by publication
+        posts_df = load_posts_from_db(publication_id=beehiiv_pub_id)
         posts_df = posts_df.iloc[::-1].reset_index(drop=True)  # Reverse to match display
 
         # Get selected posts
@@ -1133,11 +1276,23 @@ def load_report(request, report_id):
 @login_required
 def get_all_reports(request):
     """
-    Get all reports across all content sets.
+    Get all reports for the current publication's content sets.
     """
+    from .models import Publication
+
     try:
-        reports = Report.objects.all().order_by('-created_at')
-        
+        # Get current publication for filtering
+        _, beehiiv_pub_id, _ = get_user_api_credentials(request.user)
+
+        # Filter reports by publication through content_set
+        try:
+            publication = Publication.objects.get(pub_id=beehiiv_pub_id)
+            reports = Report.objects.filter(
+                content_set__publication=publication
+            ).order_by('-created_at')
+        except Publication.DoesNotExist:
+            reports = Report.objects.none()
+
         reports_data = [
             {
                 'id': report.id,
@@ -1147,12 +1302,12 @@ def get_all_reports(request):
             }
             for report in reports
         ]
-        
+
         return JsonResponse({
             'success': True,
             'reports': reports_data
         })
-        
+
     except Exception as e:
         return JsonResponse({
             'success': False,

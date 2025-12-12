@@ -56,9 +56,16 @@ beehiiv_analytics_django/
 
 ## Database Models
 
+### Publication
+Represents a Beehiiv publication (users may have access to multiple):
+- `pub_id`: Beehiiv publication ID (unique)
+- `name`: Publication name
+- `organization_name`: Organization the publication belongs to
+
 ### Post
 Stores newsletter post metadata and engagement stats from Beehiiv:
 - `post_id`: Beehiiv post ID (unique)
+- `publication`: ForeignKey to Publication (nullable)
 - `title`, `subtitle`
 - `status`: "Draft" or "Published"
 - `creation_date`: DateTime when post was created in Beehiiv (nullable)
@@ -67,7 +74,8 @@ Stores newsletter post metadata and engagement stats from Beehiiv:
 
 ### ContentSet
 Named collections of extracted content items:
-- `name`: Unique identifier for the set
+- `name`: Identifier for the set (unique per publication)
+- `publication`: ForeignKey to Publication (nullable)
 - `items_data`: JSON array of extracted items with text, links, clicks, and CTR
 
 ### Report
@@ -83,9 +91,13 @@ Tracks AI usage credits and API credentials per user:
 - `used_this_period`: Credits consumed this period
 - `period_start`: Start of current billing period (resets on user's signup anniversary each month)
 - `beehiiv_token`: User's Beehiiv API token
-- `beehiiv_pub_id`: User's Beehiiv publication ID
+- `beehiiv_pub_id`: User's currently selected Beehiiv publication ID
+- `api_key_valid`: Boolean indicating if the API key has been validated
+- `available_publications`: JSON list of publications available to the user
 
 Billing cycle: Credits reset on the same day of the month as the user's signup date (e.g., signup on the 15th means credits renew on the 15th of each month). For months with fewer days, renewal occurs on the last day of the month.
+
+API key validation: When a user enters their API token, it is immediately validated against the Beehiiv `/publications` endpoint. If valid, the list of available publications is cached and the user can select which publication to work with.
 
 ## Authentication
 
@@ -119,8 +131,11 @@ Uses django-allauth for email-based authentication:
 
 ### 3. Account Page (`/account/`)
 - **Usage Stats**: View AI credits used and remaining
-- **API Credentials**: Configure Beehiiv API token and publication ID
+- **API Credentials**: Configure Beehiiv API token (validated on save)
+- **Publication Selector**: Dropdown to switch between available publications (populated from API)
 - **Account Info**: View email and change password
+
+**Publication Switching**: Each publication has its own posts, content sets, and reports. Switching publications changes the active data context throughout the app.
 
 ## API Endpoints
 
@@ -174,6 +189,7 @@ DB_PORT=5432
 
 ### API Functions
 All Beehiiv API functions require `beehiiv_token` and `beehiiv_pub_id` parameters (obtained from user's UsageAccount):
+- `validate_beehiiv_api_key(beehiiv_token)`: Validate API key and return list of available publications
 - `fetch_post_html(session, post_id, semaphore, beehiiv_token, beehiiv_pub_id)`: Fetch individual post HTML
 - `fetch_post_clicks(session, post_id, semaphore, beehiiv_token, beehiiv_pub_id)`: Fetch individual post clicks
 - `fetch_posts_html_and_clicks_parallel(post_ids, beehiiv_token, beehiiv_pub_id)`: Batch fetch with semaphore (5 concurrent)
