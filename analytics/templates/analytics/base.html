@@ -270,26 +270,18 @@
                     Analyze
                 </a>
             </li>
+            <li class="nav-item">
+                <a class="nav-link {% if request.resolver_match.url_name == 'account' %}active{% endif %}"
+                   href="{% url 'analytics:account' %}">
+                    <i class="bi bi-person-gear"></i>
+                    Account
+                </a>
+            </li>
         </ul>
 
         <!-- User section at bottom of sidebar -->
         {% if user.is_authenticated %}
         <div class="sidebar-footer">
-            <!-- Usage Stats -->
-            {% if usage_quota %}
-            <div class="usage-widget">
-                <div class="usage-label">
-                    <i class="bi bi-cpu"></i> AI Credits
-                </div>
-                <div class="usage-bar">
-                    <div class="usage-bar-fill" style="width: {{ usage_percentage }}%"></div>
-                </div>
-                <div class="usage-text">
-                    {{ usage_used|floatformat:0 }} / {{ usage_quota|floatformat:0 }} used
-                </div>
-            </div>
-            {% endif %}
-
             <!-- User Menu -->
             <div class="user-menu">
                 <div class="user-email">

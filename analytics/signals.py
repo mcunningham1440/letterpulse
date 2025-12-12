@@ -16,9 +16,10 @@ User = get_user_model()
 def create_usage_account(sender, instance, created, **kwargs):
     """
     Automatically create a UsageAccount when a new user is created.
+    The billing period starts on their signup date.
     """
     if created:
         UsageAccount.objects.create(
             user=instance,
-            period_start=timezone.now().date().replace(day=1)
+            period_start=timezone.now().date()
         )

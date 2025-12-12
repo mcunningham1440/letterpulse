@@ -133,25 +133,24 @@ async def llm_call(function_name, messages, model, reasoning_level, response_for
     return response
 
 
-async def fetch_post_html(session, post_id, semaphore):
+async def fetch_post_html(session, post_id, semaphore, beehiiv_token, beehiiv_pub_id):
     """
     Fetch HTML content for a single post from Beehiiv API.
-    
+
     Args:
         session: aiohttp ClientSession
         post_id: The Beehiiv post ID
         semaphore: asyncio.Semaphore to limit concurrent requests
-    
+        beehiiv_token: Beehiiv API token
+        beehiiv_pub_id: Beehiiv publication ID
+
     Returns:
         Tuple of (post_id, html_content) or (post_id, None) on error
     """
-    beehiiv_token = os.environ.get('BEEHIIV_TOKEN')
-    beehiiv_pub_id = os.environ.get('BEEHIIV_PUB_ID')
-    
     if not beehiiv_token or not beehiiv_pub_id:
-        print(f"Error: Missing BEEHIIV_TOKEN or BEEHIIV_PUB_ID environment variables")
+        print(f"Error: Missing Beehiiv API credentials")
         return (post_id, None)
-    
+
     url = f"https://api.beehiiv.com/v2/publications/{beehiiv_pub_id}/posts/{post_id}?expand=free_email_content"
     headers = {"Authorization": beehiiv_token}
     
@@ -171,26 +170,25 @@ async def fetch_post_html(session, post_id, semaphore):
             return (post_id, None)
 
 
-async def fetch_post_clicks(session, post_id, semaphore):
+async def fetch_post_clicks(session, post_id, semaphore, beehiiv_token, beehiiv_pub_id):
     """
     Fetch clicks stats for a single post from Beehiiv API.
-    
+
     Args:
         session: aiohttp ClientSession
         post_id: The Beehiiv post ID
         semaphore: asyncio.Semaphore to limit concurrent requests
-    
+        beehiiv_token: Beehiiv API token
+        beehiiv_pub_id: Beehiiv publication ID
+
     Returns:
         Tuple of (post_id, clicks_dict) or (post_id, None) on error
         clicks_dict maps URLs to their unique click counts
     """
-    beehiiv_token = os.environ.get('BEEHIIV_TOKEN')
-    beehiiv_pub_id = os.environ.get('BEEHIIV_PUB_ID')
-    
     if not beehiiv_token or not beehiiv_pub_id:
-        print(f"Error: Missing BEEHIIV_TOKEN or BEEHIIV_PUB_ID environment variables")
+        print(f"Error: Missing Beehiiv API credentials")
         return (post_id, None)
-    
+
     url = f"https://api.beehiiv.com/v2/publications/{beehiiv_pub_id}/posts/{post_id}?expand=stats"
     headers = {"Authorization": beehiiv_token}
     
@@ -221,15 +219,17 @@ async def fetch_post_clicks(session, post_id, semaphore):
             return (post_id, None)
         
 
-async def fetch_posts_html_and_clicks_parallel(post_ids):
+async def fetch_posts_html_and_clicks_parallel(post_ids, beehiiv_token, beehiiv_pub_id):
     """
     Fetch HTML content and clicks stats for multiple posts in parallel.
     Since we can't use expand=free_email_content and expand=stats together,
     we make 2 requests per post.
-    
+
     Args:
         post_ids: List of Beehiiv post IDs
-    
+        beehiiv_token: Beehiiv API token
+        beehiiv_pub_id: Beehiiv publication ID
+
     Returns:
         Tuple of (htmls, clicks_by_id) where:
         - htmls: Dictionary mapping post IDs to HTML content
@@ -238,19 +238,19 @@ async def fetch_posts_html_and_clicks_parallel(post_ids):
     semaphore = asyncio.Semaphore(5)  # Limit to 5 concurrent requests
     htmls = {}
     clicks_by_id = {}
-    
+
     timeout = aiohttp.ClientTimeout(total=60)  # Increased timeout for more requests
     async with aiohttp.ClientSession(timeout=timeout) as session:
         # Fetch HTML content
-        html_tasks = [fetch_post_html(session, post_id, semaphore) for post_id in post_ids]
+        html_tasks = [fetch_post_html(session, post_id, semaphore, beehiiv_token, beehiiv_pub_id) for post_id in post_ids]
         html_results = await asyncio.gather(*html_tasks)
-        
+
         for post_id, html_content in html_results:
             if html_content is not None:
                 htmls[f"{post_id}.html"] = html_content
-        
+
         # Fetch clicks data
-        clicks_tasks = [fetch_post_clicks(session, post_id, semaphore) for post_id in post_ids]
+        clicks_tasks = [fetch_post_clicks(session, post_id, semaphore, beehiiv_token, beehiiv_pub_id) for post_id in post_ids]
         clicks_results = await asyncio.gather(*clicks_tasks)
         
         for post_id, clicks_dict in clicks_results:
@@ -662,22 +662,21 @@ def load_posts_from_db():
     return pd.DataFrame()
 
 
-async def fetch_posts_page(session, page, pagination_size, semaphore):
+async def fetch_posts_page(session, page, pagination_size, semaphore, beehiiv_token, beehiiv_pub_id):
     """
     Fetch a single page of posts from Beehiiv API.
-    
+
     Args:
         session: aiohttp ClientSession
         page: Page number to fetch
         pagination_size: Number of posts per page
         semaphore: asyncio.Semaphore to limit concurrent requests
-    
+        beehiiv_token: Beehiiv API token
+        beehiiv_pub_id: Beehiiv publication ID
+
     Returns:
         List of post data dictionaries
     """
-    beehiiv_token = os.environ.get('BEEHIIV_TOKEN')
-    beehiiv_pub_id = os.environ.get('BEEHIIV_PUB_ID')
-    
     url = f"https://api.beehiiv.com/v2/publications/{beehiiv_pub_id}/posts?expand=stats&status=all&limit={pagination_size}&page={page}"
     headers = {"Authorization": beehiiv_token}
     
@@ -688,22 +687,26 @@ async def fetch_posts_page(session, page, pagination_size, semaphore):
             return data.get('data', [])
 
 
-async def fetch_all_posts():
+async def fetch_all_posts(beehiiv_token, beehiiv_pub_id):
     """
     Fetch all posts from Beehiiv API in parallel with pagination.
-    
+
+    Args:
+        beehiiv_token: Beehiiv API token
+        beehiiv_pub_id: Beehiiv publication ID
+
     Returns:
         List of all post data dictionaries
     """
     pagination_size = 10
     posts_list = []
     semaphore = asyncio.Semaphore(10)
-    
+
     timeout = aiohttp.ClientTimeout(total=60)
     async with aiohttp.ClientSession(timeout=timeout) as session:
         page = 1
         while True:
-            tasks = [fetch_posts_page(session, p, pagination_size, semaphore) for p in range(page, page + 5)]
+            tasks = [fetch_posts_page(session, p, pagination_size, semaphore, beehiiv_token, beehiiv_pub_id) for p in range(page, page + 5)]
             results = await asyncio.gather(*tasks)
             all_empty = True
             for posts_data in results:
@@ -715,7 +718,7 @@ async def fetch_all_posts():
             if all_empty:
                 break
             page += 5
-    
+
     return posts_list
 
 
@@ -796,25 +799,29 @@ def process_posts_data(posts_list):
     return posts_df
 
 
-async def refresh_posts_data():
+async def refresh_posts_data(beehiiv_token, beehiiv_pub_id):
     """
     Fetch all posts from Beehiiv API.
-    
+
+    Args:
+        beehiiv_token: Beehiiv API token
+        beehiiv_pub_id: Beehiiv publication ID
+
     Returns:
         Tuple of (posts_df, success_message) or (None, error_message)
     """
     try:
         # Fetch posts
-        posts_list = await fetch_all_posts()
-        
+        posts_list = await fetch_all_posts(beehiiv_token, beehiiv_pub_id)
+
         if not posts_list:
             return None, "No posts were fetched from the API."
-        
+
         # Process the data
         posts_df = process_posts_data(posts_list)
-        
+
         return posts_df, f"Successfully fetched and processed {len(posts_df)} posts."
-        
+
     except Exception as e:
         return None, f"Error refreshing posts: {str(e)}"
 
@@ -863,7 +870,7 @@ def generate_click_visualization_html(post_html, clicks_dict, unique_email_opens
     return str(soup)
 
 
-async def annotate_post_html(post_id, content_perf_evals, user=None):
+async def annotate_post_html(post_id, content_perf_evals, beehiiv_token, beehiiv_pub_id, user=None):
     """
     Fetch post HTML, get LLM tips based on performance evaluations,
     and insert them with yellow highlighting.
@@ -871,6 +878,8 @@ async def annotate_post_html(post_id, content_perf_evals, user=None):
     Args:
         post_id: The Beehiiv post ID
         content_perf_evals: List of performance evaluation texts to inform tips
+        beehiiv_token: Beehiiv API token
+        beehiiv_pub_id: Beehiiv publication ID
         user: Django user object for credit charging (optional)
 
     Returns:
@@ -880,7 +889,7 @@ async def annotate_post_html(post_id, content_perf_evals, user=None):
     semaphore = asyncio.Semaphore(1)
     timeout = aiohttp.ClientTimeout(total=60)
     async with aiohttp.ClientSession(timeout=timeout) as session:
-        post_id_result, post_html = await fetch_post_html(session, post_id, semaphore)
+        post_id_result, post_html = await fetch_post_html(session, post_id, semaphore, beehiiv_token, beehiiv_pub_id)
         
     # Step 2: Split into numbered lines
     soup = BeautifulSoup(post_html, 'html.parser')
@@ -1035,19 +1044,21 @@ Think carefully about what line number to assign to each tip so that it appears 
     return '\n'.join(all_lines)
 
 
-async def annotate_posts_parallel(post_ids, content_perf_evals, user=None):
+async def annotate_posts_parallel(post_ids, content_perf_evals, beehiiv_token, beehiiv_pub_id, user=None):
     """
     Annotate multiple posts in parallel using asyncio.
 
     Args:
         post_ids: List of Beehiiv post IDs to annotate
         content_perf_evals: List of performance evaluation texts to inform tips
+        beehiiv_token: Beehiiv API token
+        beehiiv_pub_id: Beehiiv publication ID
         user: Django user object for credit charging (optional)
 
     Returns:
         Dictionary mapping post_ids to their annotated HTML content
     """
-    tasks = [annotate_post_html(post_id, content_perf_evals, user=user) for post_id in post_ids]
+    tasks = [annotate_post_html(post_id, content_perf_evals, beehiiv_token, beehiiv_pub_id, user=user) for post_id in post_ids]
     results = await asyncio.gather(*tasks, return_exceptions=True)
     
     # Build result dictionary, filtering out exceptions

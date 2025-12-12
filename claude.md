@@ -43,6 +43,7 @@ beehiiv_analytics_django/
 │   ├── context_processors.py   # Usage stats for templates
 │   ├── templates/analytics/    # HTML templates
 │   │   ├── base.html           # Base template with Bootstrap/DataTables and user sidebar
+│   │   ├── account.html        # Account settings (usage, API credentials)
 │   │   ├── extract.html        # Content extraction page
 │   │   └── analyze.html        # Analysis and reporting page
 │   └── migrations/             # Database migrations
@@ -76,11 +77,15 @@ AI-generated content insights:
 - `report_text`: Markdown-formatted analysis
 
 ### UsageAccount
-Tracks AI usage credits per user:
+Tracks AI usage credits and API credentials per user:
 - `user`: OneToOneField to User
 - `monthly_quota`: Credits available per month (default from `settings.DEFAULT_MONTHLY_CREDITS`)
 - `used_this_period`: Credits consumed this period
-- `period_start`: Start of current billing period (auto-resets monthly)
+- `period_start`: Start of current billing period (resets on user's signup anniversary each month)
+- `beehiiv_token`: User's Beehiiv API token
+- `beehiiv_pub_id`: User's Beehiiv publication ID
+
+Billing cycle: Credits reset on the same day of the month as the user's signup date (e.g., signup on the 15th means credits renew on the 15th of each month). For months with fewer days, renewal occurs on the last day of the month.
 
 ## Authentication
 
@@ -112,6 +117,11 @@ Uses django-allauth for email-based authentication:
 - **Reports**: Save, load, and delete generated reports
 - **Export**: Download as CSV
 
+### 3. Account Page (`/account/`)
+- **Usage Stats**: View AI credits used and remaining
+- **API Credentials**: Configure Beehiiv API token and publication ID
+- **Account Info**: View email and change password
+
 ## API Endpoints
 
 All routes use the `analytics:` namespace.
@@ -134,6 +144,10 @@ All routes use the `analytics:` namespace.
 - `POST /analyze/save-report/`, `GET /analyze/load-report/<id>/`, `DELETE /analyze/delete-report/<id>/`
 - `GET /analyze/get-all-reports/` - List all reports
 
+### Account Routes
+- `GET /account/` - Account settings page
+- `POST /account/` - Update API credentials
+
 ## Environment Variables
 
 Required in `.env`:
@@ -145,8 +159,6 @@ ALLOWED_HOSTS=localhost,127.0.0.1
 
 # API Keys
 OPENAI_API_KEY=your-openai-api-key
-BEEHIIV_TOKEN=your-beehiiv-token
-BEEHIIV_PUB_ID=your-publication-id
 
 # Database
 DB_NAME=letterpulse
@@ -156,14 +168,20 @@ DB_HOST=localhost
 DB_PORT=5432
 ```
 
+**Note:** Beehiiv API credentials (token and publication ID) are configured per-user in the Account settings page, not via environment variables.
+
 ## Key Utility Functions (analytics/utils.py)
 
 ### API Functions
-- `fetch_post_html()` / `fetch_post_clicks()`: Fetch individual post data
-- `fetch_posts_html_and_clicks_parallel()`: Batch fetch with semaphore (5 concurrent)
-- `fetch_all_posts()`: Paginated fetch of all posts (includes drafts, confirmed, and archived via `status=all`)
-- `refresh_posts_data()`: Full refresh from Beehiiv API
+All Beehiiv API functions require `beehiiv_token` and `beehiiv_pub_id` parameters (obtained from user's UsageAccount):
+- `fetch_post_html(session, post_id, semaphore, beehiiv_token, beehiiv_pub_id)`: Fetch individual post HTML
+- `fetch_post_clicks(session, post_id, semaphore, beehiiv_token, beehiiv_pub_id)`: Fetch individual post clicks
+- `fetch_posts_html_and_clicks_parallel(post_ids, beehiiv_token, beehiiv_pub_id)`: Batch fetch with semaphore (5 concurrent)
+- `fetch_all_posts(beehiiv_token, beehiiv_pub_id)`: Paginated fetch of all posts (includes drafts, confirmed, and archived via `status=all`)
+- `refresh_posts_data(beehiiv_token, beehiiv_pub_id)`: Full refresh from Beehiiv API
 - `process_posts_data()`: Converts raw API data to DataFrame. Drafts have `publish_date_cst` set to "Draft"
+
+Views use `get_user_api_credentials(user)` helper to retrieve credentials and redirect to Account page if not configured.
 
 ### AI Functions
 - `llm_call(user=None)`: Wrapper for OpenAI API with logging to CSV
@@ -171,7 +189,8 @@ DB_PORT=5432
 - `NotEnoughCredits`: Exception raised when quota exceeded
 - `extract_items()`: AI-powered content extraction from HTML
 - `generate_content_insights()`: Generate performance analysis report
-- `annotate_post_html()`: Insert improvement tips into HTML
+- `annotate_post_html(post_id, content_perf_evals, beehiiv_token, beehiiv_pub_id, user=None)`: Insert improvement tips into HTML
+- `annotate_posts_parallel(post_ids, content_perf_evals, beehiiv_token, beehiiv_pub_id, user=None)`: Parallel annotation of multiple posts
 
 ## Credit System Configuration
 

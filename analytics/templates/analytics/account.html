@@ -1,0 +1,168 @@
+{% extends "analytics/base.html" %}
+
+{% block title %}Account - LetterPulse{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <h1 class="mb-4">Account Settings</h1>
+    </div>
+</div>
+
+<div class="row">
+    <!-- Left Column: Usage Stats + Account Info -->
+    <div class="col-md-6">
+        <!-- Usage Stats Card -->
+        <div class="card">
+            <div class="card-header">
+                <i class="bi bi-cpu me-2"></i>AI Credits Usage
+            </div>
+            <div class="card-body">
+                <div class="d-flex justify-content-between align-items-center mb-2">
+                    <span class="text-muted">Credits Used This Month</span>
+                    <span class="fw-bold">{{ usage.used_this_period }} / {{ usage.monthly_quota }}</span>
+                </div>
+                <div class="progress" style="height: 12px;">
+                    <div class="progress-bar bg-success" role="progressbar"
+                         style="width: {{ usage.usage_percentage }}%"
+                         aria-valuenow="{{ usage.usage_percentage }}"
+                         aria-valuemin="0"
+                         aria-valuemax="100">
+                    </div>
+                </div>
+                <div class="mt-2 text-muted small">
+                    <i class="bi bi-arrow-repeat me-1"></i>
+                    Credits renew {{ usage.next_renewal_date|date:"F j, Y" }}
+                </div>
+            </div>
+        </div>
+
+        <!-- Account Info Card -->
+        <div class="card">
+            <div class="card-header">
+                <i class="bi bi-person me-2"></i>Account Information
+            </div>
+            <div class="card-body">
+                <div class="mb-3">
+                    <label class="form-label text-muted">Email</label>
+                    <div class="fw-medium">{{ user.email }}</div>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label text-muted">Member Since</label>
+                    <div class="fw-medium">{{ user.date_joined|date:"F j, Y" }}</div>
+                </div>
+                <div>
+                    <a href="{% url 'account_change_password' %}" class="btn btn-outline-secondary btn-sm">
+                        <i class="bi bi-lock me-1"></i>Change Password
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Right Column: API Credentials Card -->
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">
+                <i class="bi bi-key me-2"></i>Beehiiv API Credentials
+            </div>
+            <div class="card-body">
+                {% if usage.has_api_credentials %}
+                <div class="alert alert-success d-flex align-items-center mb-4">
+                    <i class="bi bi-check-circle-fill me-2"></i>
+                    API credentials are configured
+                </div>
+                {% else %}
+                <div class="alert alert-warning d-flex align-items-center mb-4">
+                    <i class="bi bi-exclamation-triangle-fill me-2"></i>
+                    API credentials not configured. Add them below to fetch your newsletter data.
+                </div>
+                {% endif %}
+
+                <form method="post" action="{% url 'analytics:account' %}">
+                    {% csrf_token %}
+                    <input type="hidden" name="action" value="update_credentials">
+
+                    <div class="mb-3">
+                        <label for="beehiiv_pub_id" class="form-label">Publication ID</label>
+                        <input type="text"
+                               class="form-control"
+                               id="beehiiv_pub_id"
+                               name="beehiiv_pub_id"
+                               value="{{ usage.beehiiv_pub_id }}"
+                               placeholder="pub_xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx">
+                        <div class="form-text">
+                            Find this in your Beehiiv dashboard under Settings &gt; Integrations.
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="beehiiv_token" class="form-label">API Token</label>
+                        <div class="input-group">
+                            <input type="password"
+                                   class="form-control"
+                                   id="beehiiv_token"
+                                   name="beehiiv_token"
+                                   value="{{ usage.beehiiv_token }}"
+                                   placeholder="Enter your API token">
+                            <button class="btn btn-outline-secondary" type="button" id="toggleToken">
+                                <i class="bi bi-eye"></i>
+                            </button>
+                        </div>
+                        <div class="form-text">
+                            {% if usage.beehiiv_token %}
+                            Current token: {{ usage.masked_token }}
+                            {% else %}
+                            Generate an API key in your Beehiiv dashboard under Settings &gt; Integrations &gt; API.
+                            {% endif %}
+                        </div>
+                    </div>
+
+                    <div class="d-flex gap-2">
+                        <button type="submit" class="btn btn-primary">
+                            <i class="bi bi-check-lg me-1"></i>Save Credentials
+                        </button>
+                        {% if usage.has_api_credentials %}
+                        <button type="button" class="btn btn-outline-danger" id="clearCredentials">
+                            <i class="bi bi-trash me-1"></i>Clear
+                        </button>
+                        {% endif %}
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // Toggle token visibility
+    const toggleBtn = document.getElementById('toggleToken');
+    const tokenInput = document.getElementById('beehiiv_token');
+
+    if (toggleBtn && tokenInput) {
+        toggleBtn.addEventListener('click', function() {
+            const type = tokenInput.type === 'password' ? 'text' : 'password';
+            tokenInput.type = type;
+            toggleBtn.innerHTML = type === 'password'
+                ? '<i class="bi bi-eye"></i>'
+                : '<i class="bi bi-eye-slash"></i>';
+        });
+    }
+
+    // Clear credentials
+    const clearBtn = document.getElementById('clearCredentials');
+    if (clearBtn) {
+        clearBtn.addEventListener('click', function() {
+            if (confirm('Are you sure you want to clear your API credentials?')) {
+                document.getElementById('beehiiv_token').value = '';
+                document.getElementById('beehiiv_pub_id').value = '';
+                document.querySelector('form').submit();
+            }
+        });
+    }
+});
+</script>
+{% endblock %}

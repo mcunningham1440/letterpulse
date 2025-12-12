@@ -3,6 +3,7 @@ from django.conf import settings
 from django.contrib.postgres.fields import ArrayField
 from django.core.serializers.json import DjangoJSONEncoder
 from django.utils import timezone
+from calendar import monthrange
 import json
 
 
@@ -12,7 +13,7 @@ def get_default_monthly_credits():
 
 
 class UsageAccount(models.Model):
-    """Track AI usage credits for each user"""
+    """Track AI usage credits and API credentials for each user"""
 
     user = models.OneToOneField(
         settings.AUTH_USER_MODEL,
@@ -28,6 +29,20 @@ class UsageAccount(models.Model):
         help_text="Credits used in current billing period"
     )
     period_start = models.DateField(help_text="Start of current billing period")
+
+    # Beehiiv API credentials
+    beehiiv_token = models.CharField(
+        max_length=255,
+        blank=True,
+        default='',
+        help_text="Beehiiv API token"
+    )
+    beehiiv_pub_id = models.CharField(
+        max_length=255,
+        blank=True,
+        default='',
+        help_text="Beehiiv publication ID"
+    )
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -53,14 +68,79 @@ class UsageAccount(models.Model):
 
     def ensure_current_period(self):
         """
-        Lazy reset when a new month starts.
+        Lazy reset when billing period rolls over.
+        Billing resets on the same day of month as user signup.
         Call this before checking or charging credits.
         """
         today = timezone.now().date()
-        current_period_start = today.replace(day=1)
-        if self.period_start != current_period_start:
-            self.period_start = current_period_start
+
+        # Get the billing day from user's signup date
+        billing_day = self.user.date_joined.day
+
+        # Calculate the billing day for the current month
+        # Handle months with fewer days (e.g., signup on 31st, current month has 30 days)
+        _, days_in_current_month = monthrange(today.year, today.month)
+        current_month_billing_day = min(billing_day, days_in_current_month)
+
+        # Determine the current period start date
+        if today.day >= current_month_billing_day:
+            # We're in a period that started this month
+            new_period_start = today.replace(day=current_month_billing_day)
+        else:
+            # We're in a period that started last month
+            if today.month == 1:
+                prev_year = today.year - 1
+                prev_month = 12
+            else:
+                prev_year = today.year
+                prev_month = today.month - 1
+            _, days_in_prev_month = monthrange(prev_year, prev_month)
+            prev_month_billing_day = min(billing_day, days_in_prev_month)
+            new_period_start = today.replace(year=prev_year, month=prev_month, day=prev_month_billing_day)
+
+        # Reset if we've entered a new period
+        if self.period_start != new_period_start:
+            self.period_start = new_period_start
             self.used_this_period = 0
+
+    @property
+    def next_renewal_date(self):
+        """Calculate the next credit renewal date based on user's signup day."""
+        today = timezone.now().date()
+        billing_day = self.user.date_joined.day
+
+        # Try current month first
+        _, days_in_current_month = monthrange(today.year, today.month)
+        current_month_billing_day = min(billing_day, days_in_current_month)
+
+        if today.day < current_month_billing_day:
+            # Renewal is later this month
+            return today.replace(day=current_month_billing_day)
+        else:
+            # Renewal is next month
+            if today.month == 12:
+                next_year = today.year + 1
+                next_month = 1
+            else:
+                next_year = today.year
+                next_month = today.month + 1
+            _, days_in_next_month = monthrange(next_year, next_month)
+            next_month_billing_day = min(billing_day, days_in_next_month)
+            return today.replace(year=next_year, month=next_month, day=next_month_billing_day)
+
+    @property
+    def has_api_credentials(self):
+        """Check if Beehiiv API credentials are configured"""
+        return bool(self.beehiiv_token and self.beehiiv_pub_id)
+
+    @property
+    def masked_token(self):
+        """Return masked version of the API token for display"""
+        if not self.beehiiv_token:
+            return ''
+        if len(self.beehiiv_token) <= 8:
+            return '****'
+        return self.beehiiv_token[:4] + '****' + self.beehiiv_token[-4:]
 
 
 class Post(models.Model):

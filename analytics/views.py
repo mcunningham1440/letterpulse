@@ -13,7 +13,7 @@ import json
 import ast
 from asgiref.sync import async_to_sync
 
-from .models import Post, ContentSet, Report
+from .models import Post, ContentSet, Report, UsageAccount
 from .utils import (
     load_posts_from_db,
     fetch_posts_html_and_clicks_parallel,
@@ -26,10 +26,66 @@ from .utils import (
 )
 
 
+def get_user_api_credentials(user):
+    """
+    Get the Beehiiv API credentials for a user.
+    Returns (token, pub_id) tuple or (None, None) if not configured.
+    """
+    try:
+        usage = UsageAccount.objects.get(user=user)
+        if usage.has_api_credentials:
+            return usage.beehiiv_token, usage.beehiiv_pub_id
+    except UsageAccount.DoesNotExist:
+        pass
+    return None, None
+
+
 @login_required
 def index(request):
     """Redirect to extract page"""
     return redirect('analytics:extract')
+
+
+@login_required
+def account_view(request):
+    """
+    Display and manage user account settings including API credentials and usage.
+    """
+    # Get or create usage account
+    usage, created = UsageAccount.objects.get_or_create(
+        user=request.user,
+        defaults={'period_start': timezone.now().date().replace(day=1)}
+    )
+    usage.ensure_current_period()
+
+    if request.method == 'POST':
+        action = request.POST.get('action')
+
+        if action == 'update_credentials':
+            beehiiv_token = request.POST.get('beehiiv_token', '').strip()
+            beehiiv_pub_id = request.POST.get('beehiiv_pub_id', '').strip()
+
+            # Update credentials
+            usage.beehiiv_token = beehiiv_token
+            usage.beehiiv_pub_id = beehiiv_pub_id
+            usage.save()
+
+            if beehiiv_token and beehiiv_pub_id:
+                messages.success(request, "API credentials saved successfully!")
+            else:
+                messages.info(request, "API credentials cleared.")
+
+            return redirect('analytics:account')
+
+    context = {
+        'usage': usage,
+    }
+
+    return render(request, 'analytics/account.html', context)
+
+
+# Import timezone for account_view
+from django.utils import timezone
 
 
 @login_required
@@ -95,34 +151,40 @@ def run_extraction(request):
     Run content extraction on selected posts.
     """
     try:
+        # Check for API credentials
+        beehiiv_token, beehiiv_pub_id = get_user_api_credentials(request.user)
+        if not beehiiv_token or not beehiiv_pub_id:
+            messages.error(request, "Please configure your Beehiiv API credentials in your Account settings.")
+            return redirect('analytics:account')
+
         # Get form data
         selected_indices = request.POST.getlist('selected_posts')
         content_desc = request.POST.get('content_desc', '').strip()
-        
+
         if not content_desc:
             messages.error(request, "Please provide a content description.")
             return redirect('analytics:extract')
-        
+
         if not selected_indices:
             messages.error(request, "Please select at least one post.")
             return redirect('analytics:extract')
-        
+
         # Convert indices to integers
         selected_indices = [int(idx) for idx in selected_indices]
-        
+
         # Load data from database
         posts_df = load_posts_from_db()
         posts_df = posts_df.iloc[::-1].reset_index(drop=True)  # Reverse to match display
-        
+
         # Get selected posts
         posts_of_interest = posts_df.iloc[selected_indices]
-        
+
         # Extract post IDs for fetching HTMLs and clicks
         post_ids = posts_of_interest['id'].tolist()
-        
+
         # Fetch HTMLs and clicks dynamically from API in parallel
         messages.info(request, f"Fetching HTML content and click data for {len(post_ids)} posts...")
-        htmls, clicks_by_id = async_to_sync(fetch_posts_html_and_clicks_parallel)(post_ids)
+        htmls, clicks_by_id = async_to_sync(fetch_posts_html_and_clicks_parallel)(post_ids, beehiiv_token, beehiiv_pub_id)
         
         if not htmls:
             messages.error(request, "Failed to fetch HTML content from API.")
@@ -714,10 +776,16 @@ def refresh_posts(request):
     Refresh posts data from Beehiiv API and update the database.
     """
     try:
+        # Check for API credentials
+        beehiiv_token, beehiiv_pub_id = get_user_api_credentials(request.user)
+        if not beehiiv_token or not beehiiv_pub_id:
+            messages.error(request, "Please configure your Beehiiv API credentials in your Account settings.")
+            return redirect('analytics:account')
+
         messages.info(request, "Fetching latest posts from Beehiiv API...")
-        
+
         # Fetch and process posts data
-        posts_df, result_message = async_to_sync(refresh_posts_data)()
+        posts_df, result_message = async_to_sync(refresh_posts_data)(beehiiv_token, beehiiv_pub_id)
         
         if posts_df is None:
             messages.error(request, result_message)
@@ -778,31 +846,37 @@ def download_click_visualization(request):
     import zipfile
     import io
     from .utils import generate_click_visualization_html
-    
+
     try:
+        # Check for API credentials
+        beehiiv_token, beehiiv_pub_id = get_user_api_credentials(request.user)
+        if not beehiiv_token or not beehiiv_pub_id:
+            messages.error(request, "Please configure your Beehiiv API credentials in your Account settings.")
+            return redirect('analytics:account')
+
         # Get selected post indices
         selected_indices = request.POST.getlist('selected_posts')
-        
+
         if not selected_indices:
             messages.error(request, "Please select at least one post.")
             return redirect('analytics:extract')
-        
+
         # Convert indices to integers
         selected_indices = [int(idx) for idx in selected_indices]
-        
+
         # Load posts from database
         posts_df = load_posts_from_db()
         posts_df = posts_df.iloc[::-1].reset_index(drop=True)  # Reverse to match display
-        
+
         # Get selected posts
         posts_of_interest = posts_df.iloc[selected_indices]
-        
+
         # Extract post IDs
         post_ids = posts_of_interest['id'].tolist()
-        
+
         # Fetch HTMLs and clicks from API
         messages.info(request, f"Fetching HTML content and click data for {len(post_ids)} posts...")
-        htmls, clicks_by_id = async_to_sync(fetch_posts_html_and_clicks_parallel)(post_ids)
+        htmls, clicks_by_id = async_to_sync(fetch_posts_html_and_clicks_parallel)(post_ids, beehiiv_token, beehiiv_pub_id)
         
         if not htmls:
             messages.error(request, "Failed to fetch HTML content from API.")
@@ -864,40 +938,46 @@ def download_annotated_posts(request):
     """
     import zipfile
     import io
-    
+
     try:
+        # Check for API credentials
+        beehiiv_token, beehiiv_pub_id = get_user_api_credentials(request.user)
+        if not beehiiv_token or not beehiiv_pub_id:
+            messages.error(request, "Please configure your Beehiiv API credentials in your Account settings.")
+            return redirect('analytics:account')
+
         # Get selected post indices
         selected_indices = request.POST.getlist('selected_posts')
         # Get selected report IDs
         selected_report_ids = request.POST.getlist('selected_reports')
-        
+
         if not selected_indices:
             messages.error(request, "Please select at least one post.")
             return redirect('analytics:extract')
-        
+
         if not selected_report_ids:
             messages.error(request, "Please select at least one report.")
             return redirect('analytics:extract')
-        
+
         # Convert indices to integers
         selected_indices = [int(idx) for idx in selected_indices]
         selected_report_ids = [int(rid) for rid in selected_report_ids]
-        
+
         # Load posts from database
         posts_df = load_posts_from_db()
         posts_df = posts_df.iloc[::-1].reset_index(drop=True)  # Reverse to match display
-        
+
         # Get selected posts
         posts_of_interest = posts_df.iloc[selected_indices]
-        
+
         # Get report texts for selected reports
         reports = Report.objects.filter(id__in=selected_report_ids)
         content_perf_evals = [report.report_text for report in reports]
-        
+
         if not content_perf_evals:
             messages.error(request, "No valid reports found.")
             return redirect('analytics:extract')
-        
+
         # Get post IDs (beehiiv post_id, not Django id)
         post_ids = posts_of_interest['id'].tolist()
 
@@ -906,7 +986,7 @@ def download_annotated_posts(request):
         charge_credits(request.user, credits_needed)
 
         # Run parallel annotation
-        annotated_htmls = async_to_sync(annotate_posts_parallel)(post_ids, content_perf_evals, user=request.user)
+        annotated_htmls = async_to_sync(annotate_posts_parallel)(post_ids, content_perf_evals, beehiiv_token, beehiiv_pub_id, user=request.user)
 
         if not annotated_htmls:
             messages.error(request, "Failed to generate any annotated posts.")

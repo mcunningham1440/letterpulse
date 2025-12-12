@@ -5,6 +5,7 @@ app_name = 'analytics'
 
 urlpatterns = [
     path('', views.index, name='index'),
+    path('account/', views.account_view, name='account'),
     path('extract/', views.extract_view, name='extract'),
     path('extract/run/', views.run_extraction, name='run_extraction'),
     path('extract/save/', views.save_content_set, name='save_content_set'),
