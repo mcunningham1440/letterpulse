@@ -2,6 +2,7 @@
 Django settings for beehiiv_analytics project.
 """
 
+import json
 import os
 from pathlib import Path
 from dotenv import load_dotenv
@@ -84,14 +85,15 @@ WSGI_APPLICATION = 'beehiiv_analytics.wsgi.application'
 
 # Database
 
+db = json.loads(os.environ["DATABASE_SECRET"])
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql',
-        'NAME': os.environ.get('DB_NAME', 'beehiiv_analytics'),
-        'USER': os.environ.get('DB_USER', 'beehiiv_user'),
-        'PASSWORD': os.environ.get('DB_PASSWORD', 'local_dev_password'),
-        'HOST': os.environ.get('DB_HOST', 'localhost'),
-        'PORT': os.environ.get('DB_PORT', '5432'),
+        'NAME': "letterpulse",
+        'USER': db['username'],
+        'PASSWORD': db['password'],
+        'HOST': "letterpulse-dev.cluster-cwra7ijn7kej.us-east-1.rds.amazonaws.com",
+        'PORT': "5432",
     }
 }
 

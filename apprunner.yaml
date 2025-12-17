@@ -8,6 +8,9 @@ run:
   runtime-version: 3.11
   pre-run:
     - pip3 install -r requirements.txt
+  secrets:
+    - name: DATABASE_SECRET
+      value-from: arn:aws:secretsmanager:us-east-1:093239908030:secret:rds!cluster-ce9552fb-678f-4052-abab-2eb8568db36a-OgNuAu
   command: sh startup.sh
   network:
     port: 8000
