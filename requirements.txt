@@ -9,3 +9,5 @@ python-dotenv>=1.0     # For .env file support
 django-allauth>=0.61    # Authentication with email verification
 aiohttp>=3.9           # Async HTTP client
 Levenshtein>=0.25      # String matching
+gunicorn>=21.0         # WSGI HTTP server for production
+whitenoise>=6.7        # Static file serving for production

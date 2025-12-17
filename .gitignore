@@ -5,7 +5,13 @@ __pycache__/
 sandboxes/
 code_dump/
 testing_data/
+.venv/
 
 .env
 *.pyc
 .DS_Store
+*.log
+*.pot
+db.sqlite3
+media
+staticfiles

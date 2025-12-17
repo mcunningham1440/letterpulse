@@ -27,7 +27,7 @@ This application helps newsletter creators understand which content resonates wi
 ## Project Structure
 
 ```
-beehiiv_analytics_django/
+app/
 ├── beehiiv_analytics/          # Django project settings
 │   ├── settings.py             # Main configuration (uses python-dotenv)
 │   ├── urls.py                 # Root URL routing
