@@ -133,8 +133,9 @@ async def llm_call(function_name, messages, model, reasoning_level, response_for
         kwargs["tools"] = tools
 
     try:
+        OPENAI_API_KEY = json.loads(os.environ["OPENAI_API_KEY"])["OPENAI_API_KEY"]
+
         if asyncio.get_event_loop().is_running():
-            OPENAI_API_KEY = json.loads(os.environ["DATABASE_SECRET"])["OPENAI_API_KEY"]
             client = AsyncOpenAI(api_key=OPENAI_API_KEY)
             try:
                 if response_format is not None:
@@ -146,7 +147,7 @@ async def llm_call(function_name, messages, model, reasoning_level, response_for
             finally:
                 await client.close()
         else:
-            client = OpenAI(api_key=os.environ.get('OPENAI_API_KEY'))
+            client = OpenAI(api_key=OPENAI_API_KEY)
             try:
                 if response_format is not None:
                     kwargs["text_format"] = response_format
