@@ -22,7 +22,13 @@ SECRET_KEY = 'django-insecure-change-this-in-production'
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = [".awsapprunner.com"]
+APP_RUNNER_URL = "https://qp4y3etffq.us-east-1.awsapprunner.com"
+CSRF_TRUSTED_ORIGINS = [
+    APP_RUNNER_URL
+    ]
+ALLOWED_HOSTS = [
+    "qp4y3etffq.us-east-1.awsapprunner.com"
+    ]
 
 
 # Application definition
@@ -57,7 +63,6 @@ MIDDLEWARE = [
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
     'allauth.account.middleware.AccountMiddleware',
-    'django.middleware.security.SecurityMiddleware',
     'whitenoise.middleware.WhiteNoiseMiddleware',
 ]
 
