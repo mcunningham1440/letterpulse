@@ -11,6 +11,7 @@ import asyncio
 import aiohttp
 import csv
 import os
+import logging
 from datetime import datetime
 import time
 from bs4 import BeautifulSoup
@@ -19,6 +20,8 @@ from django.db import transaction
 from django.db.models import F
 import numpy as np
 from Levenshtein import distance as levenshtein_distance
+
+logger = logging.getLogger(__name__)
 
 
 class NotEnoughCredits(Exception):
@@ -95,8 +98,10 @@ async def validate_beehiiv_api_key(beehiiv_token: str) -> tuple[bool, list | str
                 else:
                     return (False, f"API returned status {response.status}")
         except aiohttp.ClientError as e:
+            logger.exception("validate_beehiiv_api_key failed")
             return (False, f"Network error: {str(e)}")
         except Exception as e:
+            logger.exception("validate_beehiiv_api_key failed")
             return (False, f"Unexpected error: {str(e)}")
 
 
@@ -127,51 +132,55 @@ async def llm_call(function_name, messages, model, reasoning_level, response_for
     if tools is not None:
         kwargs["tools"] = tools
 
-    if asyncio.get_event_loop().is_running():
-        client = AsyncOpenAI(api_key=os.environ.get('OPENAI_API_KEY'))
-        try:
-            if response_format is not None:
-                kwargs["text_format"] = response_format
+    try:
+        if asyncio.get_event_loop().is_running():
+            client = AsyncOpenAI(api_key=os.environ.get('OPENAI_API_KEY'))
+            try:
+                if response_format is not None:
+                    kwargs["text_format"] = response_format
 
-                response = await client.responses.parse(**kwargs)
-            else:
-                response = await client.responses.create(**kwargs)
-        finally:
-            await client.close()
-    else:
-        client = OpenAI(api_key=os.environ.get('OPENAI_API_KEY'))
-        try:
-            if response_format is not None:
-                kwargs["text_format"] = response_format
+                    response = await client.responses.parse(**kwargs)
+                else:
+                    response = await client.responses.create(**kwargs)
+            finally:
+                await client.close()
+        else:
+            client = OpenAI(api_key=os.environ.get('OPENAI_API_KEY'))
+            try:
+                if response_format is not None:
+                    kwargs["text_format"] = response_format
 
-                response = client.responses.parse(**kwargs)
-            else:
-                response = client.responses.create(**kwargs)
-        finally:
-            client.close()
+                    response = client.responses.parse(**kwargs)
+                else:
+                    response = client.responses.create(**kwargs)
+            finally:
+                client.close()
+    except Exception:
+        logger.exception("llm_call failed")
+        raise
     duration = time.time() - start_time
 
     # Log the call
-    log_file = settings.DATA_DIR / "llm_call_logs.csv"
-    file_exists = os.path.exists(log_file)
+    # log_file = settings.DATA_DIR / "llm_call_logs.csv"
+    # file_exists = os.path.exists(log_file)
 
-    user_email = user.email if user and user.is_authenticated else "anonymous"
+    # user_email = user.email if user and user.is_authenticated else "anonymous"
 
-    with open(log_file, 'a', newline='', encoding='utf-8') as f:
-        writer = csv.writer(f)
-        if not file_exists:
-            writer.writerow(['function_name', 'run_datetime', 'run_time_s', 'model', 'input_tokens', 'cached_tokens', 'output_tokens', 'reasoning_tokens', 'user'])
-        writer.writerow([
-            function_name,
-            start_datetime,
-            f"{duration:.4f}",
-            model,
-            response.usage.input_tokens,
-            response.usage.input_tokens_details.cached_tokens,
-            response.usage.output_tokens,
-            response.usage.output_tokens_details.reasoning_tokens,
-            user_email
-        ])
+    # with open(log_file, 'a', newline='', encoding='utf-8') as f:
+    #     writer = csv.writer(f)
+    #     if not file_exists:
+    #         writer.writerow(['function_name', 'run_datetime', 'run_time_s', 'model', 'input_tokens', 'cached_tokens', 'output_tokens', 'reasoning_tokens', 'user'])
+    #     writer.writerow([
+    #         function_name,
+    #         start_datetime,
+    #         f"{duration:.4f}",
+    #         model,
+    #         response.usage.input_tokens,
+    #         response.usage.input_tokens_details.cached_tokens,
+    #         response.usage.output_tokens,
+    #         response.usage.output_tokens_details.reasoning_tokens,
+    #         user_email
+    #     ])
 
     return response
 
@@ -191,25 +200,25 @@ async def fetch_post_html(session, post_id, semaphore, beehiiv_token, beehiiv_pu
         Tuple of (post_id, html_content) or (post_id, None) on error
     """
     if not beehiiv_token or not beehiiv_pub_id:
-        print(f"Error: Missing Beehiiv API credentials")
+        logger.error("Missing Beehiiv API credentials")
         return (post_id, None)
 
     url = f"https://api.beehiiv.com/v2/publications/{beehiiv_pub_id}/posts/{post_id}?expand=free_email_content"
     headers = {"Authorization": beehiiv_token}
-    
+
     async with semaphore:
         try:
             async with session.get(url, headers=headers) as response:
                 if response.status == 200:
                     data = await response.json()
                     html_content = data.get('data', {}).get('content', {}).get('free', {}).get('email', '')
-                    print(f"Successfully fetched HTML for post {post_id}")
+                    logger.debug(f"Successfully fetched HTML for post {post_id}")
                     return (post_id, html_content)
                 else:
-                    print(f"Error fetching post {post_id}: status {response.status}")
+                    logger.error(f"Error fetching post {post_id}: status {response.status}")
                     return (post_id, None)
-        except Exception as e:
-            print(f"Exception fetching post {post_id}: {str(e)}")
+        except Exception:
+            logger.exception("fetch_post_html failed")
             return (post_id, None)
 
 
@@ -229,36 +238,36 @@ async def fetch_post_clicks(session, post_id, semaphore, beehiiv_token, beehiiv_
         clicks_dict maps URLs to their unique click counts
     """
     if not beehiiv_token or not beehiiv_pub_id:
-        print(f"Error: Missing Beehiiv API credentials")
+        logger.error("Missing Beehiiv API credentials")
         return (post_id, None)
 
     url = f"https://api.beehiiv.com/v2/publications/{beehiiv_pub_id}/posts/{post_id}?expand=stats"
     headers = {"Authorization": beehiiv_token}
-    
+
     async with semaphore:
         try:
             async with session.get(url, headers=headers) as response:
                 if response.status == 200:
                     data = await response.json()
                     clicks_data = data.get('data', {}).get('stats', {}).get('clicks', [])
-                    
+
                     # Build clicks dictionary mapping URL to max unique clicks
                     clicks_dict = {}
                     for link_data in clicks_data:
                         url_link = link_data['url']
                         if link_data['email']['unique_clicks'] > 0:
                             clicks_dict[url_link] = max(
-                                link_data['email']['unique_clicks'], 
+                                link_data['email']['unique_clicks'],
                                 clicks_dict.get(url_link, 0)
                             )
-                    
-                    print(f"Successfully fetched clicks for post {post_id}")
+
+                    logger.debug(f"Successfully fetched clicks for post {post_id}")
                     return (post_id, clicks_dict)
                 else:
-                    print(f"Error fetching clicks for post {post_id}: status {response.status}")
+                    logger.error(f"Error fetching clicks for post {post_id}: status {response.status}")
                     return (post_id, None)
-        except Exception as e:
-            print(f"Exception fetching clicks for post {post_id}: {str(e)}")
+        except Exception:
+            logger.exception("fetch_post_clicks failed")
             return (post_id, None)
         
 
@@ -501,7 +510,7 @@ async def extract_items_parallel(posts_data, content_desc, htmls, clicks_by_id, 
     for i, result in enumerate(results):
         if isinstance(result, Exception):
             # Log the error but continue with other results
-            print(f"Error extracting items from post {i}: {str(result)}")
+            logger.error(f"Error extracting items from post {i}: {str(result)}")
         else:
             items_list.append(result)
     
@@ -731,12 +740,16 @@ async def fetch_posts_page(session, page, pagination_size, semaphore, beehiiv_to
     """
     url = f"https://api.beehiiv.com/v2/publications/{beehiiv_pub_id}/posts?expand=stats&status=all&limit={pagination_size}&page={page}"
     headers = {"Authorization": beehiiv_token}
-    
+
     async with semaphore:
-        async with session.get(url, headers=headers) as response:
-            print(f"Page {page} status code: {response.status}")
-            data = await response.json()
-            return data.get('data', [])
+        try:
+            async with session.get(url, headers=headers) as response:
+                logger.debug(f"Page {page} status code: {response.status}")
+                data = await response.json()
+                return data.get('data', [])
+        except Exception:
+            logger.exception("fetch_posts_page failed")
+            raise
 
 
 async def fetch_all_posts(beehiiv_token, beehiiv_pub_id):
@@ -754,22 +767,26 @@ async def fetch_all_posts(beehiiv_token, beehiiv_pub_id):
     posts_list = []
     semaphore = asyncio.Semaphore(10)
 
-    timeout = aiohttp.ClientTimeout(total=60)
-    async with aiohttp.ClientSession(timeout=timeout) as session:
-        page = 1
-        while True:
-            tasks = [fetch_posts_page(session, p, pagination_size, semaphore, beehiiv_token, beehiiv_pub_id) for p in range(page, page + 5)]
-            results = await asyncio.gather(*tasks)
-            all_empty = True
-            for posts_data in results:
-                if posts_data:
-                    all_empty = False
-                    posts_list.extend(posts_data)
-                if len(posts_data) < pagination_size:
-                    return posts_list
-            if all_empty:
-                break
-            page += 5
+    try:
+        timeout = aiohttp.ClientTimeout(total=60)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            page = 1
+            while True:
+                tasks = [fetch_posts_page(session, p, pagination_size, semaphore, beehiiv_token, beehiiv_pub_id) for p in range(page, page + 5)]
+                results = await asyncio.gather(*tasks)
+                all_empty = True
+                for posts_data in results:
+                    if posts_data:
+                        all_empty = False
+                        posts_list.extend(posts_data)
+                    if len(posts_data) < pagination_size:
+                        return posts_list
+                if all_empty:
+                    break
+                page += 5
+    except Exception:
+        logger.exception("fetch_all_posts failed")
+        raise
 
     return posts_list
 
@@ -875,6 +892,7 @@ async def refresh_posts_data(beehiiv_token, beehiiv_pub_id):
         return posts_df, f"Successfully fetched and processed {len(posts_df)} posts."
 
     except Exception as e:
+        logger.exception("refresh_posts_data failed")
         return None, f"Error refreshing posts: {str(e)}"
 
 
@@ -1117,7 +1135,7 @@ async def annotate_posts_parallel(post_ids, content_perf_evals, beehiiv_token, b
     annotated_htmls = {}
     for post_id, result in zip(post_ids, results):
         if isinstance(result, Exception):
-            print(f"Error annotating post {post_id}: {result}")
+            logger.error(f"Error annotating post {post_id}: {result}")
         else:
             annotated_htmls[post_id] = result
     
