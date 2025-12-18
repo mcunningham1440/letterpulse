@@ -4,7 +4,6 @@ from django.contrib.postgres.fields import ArrayField
 from django.core.serializers.json import DjangoJSONEncoder
 from django.utils import timezone
 from calendar import monthrange
-import json
 
 
 def get_default_monthly_credits():

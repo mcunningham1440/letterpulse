@@ -3,13 +3,13 @@ Utility functions for the Django analytics app.
 Adapted from the original utils.py for Streamlit.
 """
 
+import json
 from openai import AsyncOpenAI, OpenAI
 from pydantic import BaseModel
-from typing import List, Dict, Literal
+from typing import List, Literal
 import pandas as pd
 import asyncio
 import aiohttp
-import csv
 import os
 import logging
 from datetime import datetime
@@ -134,7 +134,8 @@ async def llm_call(function_name, messages, model, reasoning_level, response_for
 
     try:
         if asyncio.get_event_loop().is_running():
-            client = AsyncOpenAI(api_key=os.environ.get('OPENAI_API_KEY'))
+            OPENAI_API_KEY = json.loads(os.environ["DATABASE_SECRET"])["OPENAI_API_KEY"]
+            client = AsyncOpenAI(api_key=OPENAI_API_KEY)
             try:
                 if response_format is not None:
                     kwargs["text_format"] = response_format

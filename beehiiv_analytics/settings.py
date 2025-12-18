@@ -27,7 +27,8 @@ CSRF_TRUSTED_ORIGINS = [
     APP_RUNNER_URL
     ]
 ALLOWED_HOSTS = [
-    "qp4y3etffq.us-east-1.awsapprunner.com"
+    "qp4y3etffq.us-east-1.awsapprunner.com",
+    "127.0.0.1"
     ]
 
 
