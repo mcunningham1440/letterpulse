@@ -11,6 +11,8 @@ run:
   secrets:
     - name: DATABASE_SECRET
       value-from: arn:aws:secretsmanager:us-east-1:093239908030:secret:rds!cluster-ce9552fb-678f-4052-abab-2eb8568db36a-OgNuAu
+    - name: OPENAI_API_KEY
+      value-from: arn:aws:secretsmanager:us-east-1:093239908030:secret:openai-api-key-WvK759
   command: sh startup.sh
   network:
     port: 8000
