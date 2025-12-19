@@ -7,12 +7,14 @@
     <div class="col-12">
         <div class="d-flex justify-content-between align-items-center mb-4">
             <h1 class="mb-0">Extract Content from Posts</h1>
-            <form method="post" action="{% url 'analytics:refresh_posts' %}" style="display: inline;">
-                {% csrf_token %}
-                <button type="submit" class="btn btn-success" id="refreshPostsBtn">
-                    <i class="bi bi-arrow-clockwise"></i> Refresh Posts
-                </button>
-            </form>
+            <div id="refreshPostsProgress">
+                <form method="post" action="{% url 'analytics:refresh_posts' %}" style="display: inline;">
+                    {% csrf_token %}
+                    <button type="submit" class="btn btn-success" id="refreshPostsBtn">
+                        <i class="bi bi-arrow-clockwise"></i> Refresh Posts
+                    </button>
+                </form>
+            </div>
         </div>
         
         <!-- Posts Selection Card -->
@@ -78,41 +80,43 @@
                     <!-- Get Improvement Tips Section -->
                     <div class="row mb-4">
                         <div class="col-12">
-                            <div class="d-flex align-items-center gap-3">
-                                <button type="button" class="btn btn-warning" id="downloadAnnotatedBtn">
-                                    <i class="bi bi-download"></i> Download Improvement Tips
-                                </button>
-                                <div class="dropdown">
-                                    <button class="btn btn-outline-secondary dropdown-toggle" type="button" id="reportsDropdown" data-bs-toggle="dropdown" aria-expanded="false" data-bs-auto-close="outside">
-                                        Select Reports
+                            <div id="downloadAnnotatedProgress">
+                                <div class="d-flex align-items-center gap-3">
+                                    <button type="button" class="btn btn-warning" id="downloadAnnotatedBtn">
+                                        <i class="bi bi-download"></i> Download Improvement Tips
                                     </button>
-                                    <ul class="dropdown-menu p-3" aria-labelledby="reportsDropdown" style="min-width: 300px;">
-                                        {% if all_reports %}
-                                            <li class="mb-2">
-                                                <div class="form-check">
-                                                    <input class="form-check-input" type="checkbox" id="selectAllReports">
-                                                    <label class="form-check-label fw-bold" for="selectAllReports">Select All</label>
-                                                </div>
-                                            </li>
-                                            <li><hr class="dropdown-divider"></li>
-                                            {% for report in all_reports %}
-                                            <li>
-                                                <div class="form-check">
-                                                    <input class="form-check-input report-checkbox" type="checkbox" name="selected_reports" value="{{ report.id }}" id="report_{{ report.id }}">
-                                                    <label class="form-check-label" for="report_{{ report.id }}">
-                                                        {{ report.name }}
-                                                        <small class="text-muted d-block">{{ report.content_set.name }}</small>
-                                                    </label>
-                                                </div>
-                                            </li>
-                                            {% endfor %}
-                                        {% else %}
-                                            <li class="text-muted">No reports available</li>
-                                        {% endif %}
-                                    </ul>
+                                    <div class="dropdown">
+                                        <button class="btn btn-outline-secondary dropdown-toggle" type="button" id="reportsDropdown" data-bs-toggle="dropdown" aria-expanded="false" data-bs-auto-close="outside">
+                                            Select Reports
+                                        </button>
+                                        <ul class="dropdown-menu p-3" aria-labelledby="reportsDropdown" style="min-width: 300px;">
+                                            {% if all_reports %}
+                                                <li class="mb-2">
+                                                    <div class="form-check">
+                                                        <input class="form-check-input" type="checkbox" id="selectAllReports">
+                                                        <label class="form-check-label fw-bold" for="selectAllReports">Select All</label>
+                                                    </div>
+                                                </li>
+                                                <li><hr class="dropdown-divider"></li>
+                                                {% for report in all_reports %}
+                                                <li>
+                                                    <div class="form-check">
+                                                        <input class="form-check-input report-checkbox" type="checkbox" name="selected_reports" value="{{ report.id }}" id="report_{{ report.id }}">
+                                                        <label class="form-check-label" for="report_{{ report.id }}">
+                                                            {{ report.name }}
+                                                            <small class="text-muted d-block">{{ report.content_set.name }}</small>
+                                                        </label>
+                                                    </div>
+                                                </li>
+                                                {% endfor %}
+                                            {% else %}
+                                                <li class="text-muted">No reports available</li>
+                                            {% endif %}
+                                        </ul>
+                                    </div>
                                 </div>
+                                <div class="form-text">Select reports and posts, then download annotated HTML files with improvement tips</div>
                             </div>
-                            <div class="form-text">Select reports and posts, then download annotated HTML files with improvement tips</div>
                         </div>
                     </div>
                     
@@ -141,11 +145,12 @@
                             <div class="form-text">Describe the content you want to extract from the selected posts</div>
                         </div>
                         <div class="col-md-3">
-                            <label class="form-label fw-bold invisible">Action</label>
-                            <button type="submit" class="btn btn-primary w-100">
-                                <span class="spinner-border spinner-border-sm d-none" id="extractSpinner"></span>
-                                Extract Content
-                            </button>
+                            <div id="extractContentProgress">
+                                <label class="form-label fw-bold invisible">Action</label>
+                                <button type="submit" class="btn btn-primary w-100">
+                                    Extract Content
+                                </button>
+                            </div>
                         </div>
                     </div>
                 </form>
@@ -319,10 +324,18 @@
         });
     }
     
-    // Show spinner on form submit
+    // Show progress bar on extraction form submit
     document.getElementById('extractionForm').addEventListener('submit', function() {
-        const spinner = document.getElementById('extractSpinner');
-        spinner.classList.remove('d-none');
+        const selectedPosts = document.querySelectorAll('.post-checkbox:checked').length;
+        // Base duration + 2s per post (extraction is parallel but has overhead)
+        const baseDuration = {{ progress_durations.extract_content }};
+        const estimatedDuration = Math.min(baseDuration + (selectedPosts * 2), 60);
+
+        ProgressBar.start({
+            containerId: 'extractContentProgress',
+            expectedDuration: estimatedDuration,
+            subtext: 'Processing ' + selectedPosts + ' post' + (selectedPosts !== 1 ? 's' : '') + '...'
+        });
     });
     
     // Handle refresh posts button
@@ -330,7 +343,12 @@
     if (refreshBtn) {
         refreshBtn.closest('form').addEventListener('submit', function(e) {
             refreshBtn.disabled = true;
-            refreshBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Refreshing...';
+
+            ProgressBar.start({
+                containerId: 'refreshPostsProgress',
+                expectedDuration: {{ progress_durations.refresh_posts }},
+                subtext: 'Fetching latest posts from Beehiiv...'
+            });
         });
     }
     
@@ -415,10 +433,20 @@
                 return;
             }
 
-            // Disable button and show loading state
+            // Calculate expected duration: base + per post
+            const numPosts = selectedPostCheckboxes.length;
+            const baseDuration = {{ progress_durations.download_annotated }};
+            const estimatedDuration = Math.min(baseDuration + (numPosts * 5), 120);
+
+            // Start progress bar
+            ProgressBar.start({
+                containerId: 'downloadAnnotatedProgress',
+                expectedDuration: estimatedDuration,
+                subtext: 'Annotating ' + numPosts + ' post' + (numPosts !== 1 ? 's' : '') + '...'
+            });
+
+            // Disable button
             downloadAnnotatedBtn.disabled = true;
-            const originalHtml = downloadAnnotatedBtn.innerHTML;
-            downloadAnnotatedBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Generating...';
 
             try {
                 // Build form data
@@ -441,7 +469,8 @@
 
                 if (response.redirected) {
                     // Server redirected (likely an error), reload to show messages
-                    location.reload();
+                    ProgressBar.complete({ containerId: 'downloadAnnotatedProgress', success: false, message: 'An error occurred' });
+                    setTimeout(function() { location.reload(); }, 1000);
                     return;
                 }
 
@@ -490,13 +519,15 @@
                     }
                 }
 
+                // Complete progress bar
+                ProgressBar.complete({ containerId: 'downloadAnnotatedProgress', success: true, message: 'Download ready!' });
+
             } catch (error) {
                 console.error('Error:', error);
-                alert('Error generating annotated posts. Please try again.');
+                ProgressBar.complete({ containerId: 'downloadAnnotatedProgress', success: false, message: 'Error generating files' });
             } finally {
                 // Re-enable button
                 downloadAnnotatedBtn.disabled = false;
-                downloadAnnotatedBtn.innerHTML = originalHtml;
             }
         });
     }

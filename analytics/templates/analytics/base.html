@@ -1,3 +1,4 @@
+{% load static %}
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -348,6 +349,9 @@
 
     <!-- Marked.js for markdown rendering -->
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+
+    <!-- Progress Bar -->
+    <script src="{% static 'analytics/js/progress-bar.js' %}"></script>
 
     {% block extra_js %}{% endblock %}
 </body>

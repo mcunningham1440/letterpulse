@@ -295,11 +295,11 @@ def run_extraction(request):
         post_ids = posts_of_interest['id'].tolist()
 
         # Fetch HTMLs and clicks dynamically from API in parallel
-        messages.info(request, f"Fetching HTML content and click data for {len(post_ids)} posts...")
+        messages.info(request, f"Fetching content and click data for {len(post_ids)} posts...")
         htmls, clicks_by_id = async_to_sync(fetch_posts_html_and_clicks_parallel)(post_ids, beehiiv_token, beehiiv_pub_id)
         
         if not htmls:
-            messages.error(request, "Failed to fetch HTML content from API.")
+            messages.error(request, "Failed to fetch content from Beehiiv.")
             return redirect('analytics:extract')
         
         # Prepare data for parallel extraction (now includes post_id)
@@ -917,7 +917,7 @@ def refresh_posts(request):
         # Get API credentials (already validated by decorator)
         beehiiv_token, beehiiv_pub_id, _ = get_user_api_credentials(request.user)
 
-        messages.info(request, "Fetching latest posts from Beehiiv API...")
+        messages.info(request, "Fetching latest posts from Beehiiv...")
 
         # Get or create the Publication record
         usage = UsageAccount.objects.get(user=request.user)
@@ -1020,11 +1020,11 @@ def download_click_visualization(request):
         post_ids = posts_of_interest['id'].tolist()
 
         # Fetch HTMLs and clicks from API
-        messages.info(request, f"Fetching HTML content and click data for {len(post_ids)} posts...")
+        messages.info(request, f"Fetching content and click data for {len(post_ids)} posts...")
         htmls, clicks_by_id = async_to_sync(fetch_posts_html_and_clicks_parallel)(post_ids, beehiiv_token, beehiiv_pub_id)
         
         if not htmls:
-            messages.error(request, "Failed to fetch HTML content from API.")
+            messages.error(request, "Failed to fetch content from Beehiiv.")
             return redirect('analytics:extract')
         
         # Create in-memory ZIP file

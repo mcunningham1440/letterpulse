@@ -42,9 +42,9 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     'django.contrib.sites',  # Required by allauth
+    'analytics',  # Must come before allauth to override its templates
     'allauth',
     'allauth.account',
-    'analytics',
 ]
 
 SITE_ID = 1
@@ -81,6 +81,7 @@ TEMPLATES = [
                 'django.contrib.auth.context_processors.auth',
                 'django.contrib.messages.context_processors.messages',
                 'analytics.context_processors.usage_context',
+                'analytics.context_processors.progress_context',
             ],
         },
     },
@@ -189,3 +190,15 @@ DEFAULT_MONTHLY_CREDITS = 100
 CREDITS_PER_EXTRACTION = 1      # Per post extracted from
 CREDITS_PER_REPORT = 1          # Flat cost for generating insights
 CREDITS_PER_ANNOTATION = 1      # Per post annotated with improvement tips
+
+# =============================================================================
+# Progress Bar Expected Durations (seconds)
+# =============================================================================
+# Base durations for time-based progress bars. Actual duration may vary
+# based on number of posts selected.
+PROGRESS_DURATIONS = {
+    'refresh_posts': 45,           # 5-30s, estimate middle
+    'download_annotated': 20,      # 10-30s per post, but parallel
+    'extract_content': 10,         # 5-15s
+    'generate_report': 20,         # 10-30s
+}

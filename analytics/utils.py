@@ -20,8 +20,17 @@ from django.db import transaction
 from django.db.models import F
 import numpy as np
 from Levenshtein import distance as levenshtein_distance
+from dotenv import load_dotenv
 
 logger = logging.getLogger(__name__)
+
+
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
+if not OPENAI_API_KEY:
+    load_dotenv()
+    OPENAI_API_KEY = os.environ["OPENAI_API_KEY"]
+
+OPENAI_API_KEY = json.loads(OPENAI_API_KEY)["OPENAI_API_KEY"]
 
 
 class NotEnoughCredits(Exception):
@@ -133,8 +142,6 @@ async def llm_call(function_name, messages, model, reasoning_level, response_for
         kwargs["tools"] = tools
 
     try:
-        OPENAI_API_KEY = json.loads(os.environ["OPENAI_API_KEY"])["OPENAI_API_KEY"]
-
         if asyncio.get_event_loop().is_running():
             client = AsyncOpenAI(api_key=OPENAI_API_KEY)
             try:

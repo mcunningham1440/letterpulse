@@ -98,12 +98,13 @@
                 </div>
                 
                 <hr class="my-3">
-                
-                <button class="btn btn-primary" id="generateInsightsBtn" disabled>
-                    <span class="spinner-border spinner-border-sm d-none" id="insightsSpinner"></span>
-                    Generate Report
-                </button>
-                <div class="form-text mt-2" id="generateSubtext">Select a content set to generate insights</div>
+
+                <div id="generateReportProgress">
+                    <button class="btn btn-primary" id="generateInsightsBtn" disabled>
+                        Generate Report
+                    </button>
+                    <div class="form-text mt-2" id="generateSubtext">Select a content set to generate insights</div>
+                </div>
                 
                 <div class="mt-4 d-none" id="insightsContent">
                     <hr class="my-4">
@@ -307,25 +308,29 @@
     // Generate report
     document.getElementById('generateInsightsBtn').addEventListener('click', async function() {
         if (!currentContentSet) return;
-        
-        const spinner = document.getElementById('insightsSpinner');
+
         const button = this;
-        
         button.disabled = true;
-        spinner.classList.remove('d-none');
-        
+
+        // Start progress bar
+        ProgressBar.start({
+            containerId: 'generateReportProgress',
+            expectedDuration: {{ progress_durations.generate_report }},
+            subtext: 'Analyzing content patterns...'
+        });
+
         try {
             const formData = new FormData();
             formData.append('set_name', currentContentSet);
             formData.append('csrfmiddlewaretoken', '{{ csrf_token }}');
-            
+
             const response = await fetch('/analyze/generate-insights/', {
                 method: 'POST',
                 body: formData
             });
-            
+
             const data = await response.json();
-            
+
             if (data.success) {
                 currentReportText = data.insights;
                 isViewingSavedReport = false;
@@ -347,14 +352,16 @@
                         usageText.textContent = Math.round(data.credits_used) + ' / ' + Math.round(data.credits_quota) + ' used';
                     }
                 }
+
+                // Complete progress bar
+                ProgressBar.complete({ containerId: 'generateReportProgress', success: true, message: 'Report generated!' });
             } else {
-                alert('Error generating insights: ' + data.error);
+                ProgressBar.complete({ containerId: 'generateReportProgress', success: false, message: data.error || 'Error generating report' });
             }
         } catch (error) {
-            alert('Error generating insights: ' + error.message);
+            ProgressBar.complete({ containerId: 'generateReportProgress', success: false, message: 'Error: ' + error.message });
         } finally {
             button.disabled = false;
-            spinner.classList.add('d-none');
         }
     });
     

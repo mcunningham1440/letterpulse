@@ -2,6 +2,7 @@
 Context processors for the analytics app.
 """
 
+from django.conf import settings
 from .models import UsageAccount
 
 
@@ -26,3 +27,12 @@ def usage_context(request):
         except UsageAccount.DoesNotExist:
             return {}
     return {}
+
+
+def progress_context(request):
+    """
+    Add progress bar durations to template context.
+    """
+    return {
+        'progress_durations': settings.PROGRESS_DURATIONS
+    }

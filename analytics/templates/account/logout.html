@@ -1,0 +1,29 @@
+{% extends "account/base.html" %}
+{% load i18n %}
+
+{% block head_title %}Sign Out{% endblock %}
+
+{% block content %}
+<div class="text-center mb-4">
+    <div class="d-inline-flex align-items-center justify-content-center bg-warning bg-opacity-10 rounded-circle mb-3" style="width: 64px; height: 64px;">
+        <i class="bi bi-box-arrow-right text-warning" style="font-size: 1.75rem;"></i>
+    </div>
+</div>
+
+<h1 class="auth-title">Sign out</h1>
+<p class="auth-subtitle">Are you sure you want to sign out of your account?</p>
+
+<form method="post" action="{% url 'account_logout' %}">
+    {% csrf_token %}
+    {{ redirect_field }}
+
+    <div class="d-grid gap-2">
+        <button type="submit" class="btn btn-primary">
+            Yes, Sign Out
+        </button>
+        <a href="{% url 'analytics:extract' %}" class="btn btn-outline-secondary">
+            Cancel
+        </a>
+    </div>
+</form>
+{% endblock %}
