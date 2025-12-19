@@ -706,7 +706,8 @@ def copy_set(request):
         copy_set = ContentSet.objects.create(
             name=copy_name,
             description=content_set.description,
-            items_data=copy_module.deepcopy(content_set.items_data)
+            items_data=copy_module.deepcopy(content_set.items_data),
+            publication=content_set.publication
         )
         
         return JsonResponse({

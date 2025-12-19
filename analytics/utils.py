@@ -30,7 +30,11 @@ if not OPENAI_API_KEY:
     load_dotenv()
     OPENAI_API_KEY = os.environ["OPENAI_API_KEY"]
 
-OPENAI_API_KEY = json.loads(OPENAI_API_KEY)["OPENAI_API_KEY"]
+# Support both JSON format (AWS AppRunner) and plain string format (local dev)
+try:
+    OPENAI_API_KEY = json.loads(OPENAI_API_KEY)["OPENAI_API_KEY"]
+except (json.JSONDecodeError, KeyError, TypeError):
+    pass  # Already a plain string, use as-is
 
 
 class NotEnoughCredits(Exception):
