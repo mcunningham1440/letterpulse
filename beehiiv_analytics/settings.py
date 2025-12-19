@@ -197,8 +197,8 @@ CREDITS_PER_ANNOTATION = 1      # Per post annotated with improvement tips
 # Base durations for time-based progress bars. Actual duration may vary
 # based on number of posts selected.
 PROGRESS_DURATIONS = {
-    'refresh_posts': 45,           # empirical
-    'download_annotated': 20,
-    'extract_content': 12,         # empirical
-    'generate_report': 20,
+    'refresh_posts': 45,        # empirical
+    'download_annotated': 60,   # empirical
+    'extract_content': 12,      # empirical
+    'generate_report': 65,      # empirical
 }

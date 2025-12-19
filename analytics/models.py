@@ -4,6 +4,7 @@ from django.contrib.postgres.fields import ArrayField
 from django.core.serializers.json import DjangoJSONEncoder
 from django.utils import timezone
 from calendar import monthrange
+import json
 
 
 def get_default_monthly_credits():
@@ -243,32 +244,49 @@ class ContentSet(models.Model):
         if isinstance(self.items_data, list):
             return len(self.items_data)
         return 0
-    
-    def to_dataframe(self):
-        """Convert items_data to a pandas DataFrame"""
-        import pandas as pd
-        if isinstance(self.items_data, list) and len(self.items_data) > 0:
-            df = pd.DataFrame(self.items_data)
-            # Convert post_date to datetime.date if it's a string
-            if 'post_date' in df.columns:
-                df['post_date'] = pd.to_datetime(df['post_date']).dt.date
-            return df
-        return pd.DataFrame()
-    
+
+    def get_items_data(self):
+        """
+        Get items_data as a list of dicts.
+        Converts post_date strings to datetime.date objects if present.
+        """
+        from datetime import datetime
+
+        if not isinstance(self.items_data, list) or len(self.items_data) == 0:
+            return []
+
+        items = []
+        for item in self.items_data:
+            item_copy = dict(item)
+            # Convert post_date string to date object if present
+            if 'post_date' in item_copy and item_copy['post_date']:
+                try:
+                    if isinstance(item_copy['post_date'], str):
+                        item_copy['post_date'] = datetime.strptime(
+                            item_copy['post_date'], '%Y-%m-%d'
+                        ).date()
+                except (ValueError, TypeError):
+                    pass  # Keep as-is if parsing fails
+            items.append(item_copy)
+        return items
+
     @classmethod
-    def from_dataframe(cls, name, df, description=""):
-        """Create a ContentSet from a pandas DataFrame"""
-        # Convert DataFrame to records
-        df_copy = df.copy()
-        if 'post_date' in df_copy.columns:
-            df_copy['post_date'] = df_copy['post_date'].astype(str)
-        
-        items_data = df_copy.to_dict(orient='records')
-        
+    def from_items_data(cls, name, items_data, description=""):
+        """
+        Create a ContentSet from a list of dicts.
+        Converts datetime.date objects to strings for JSON storage.
+        """
+        processed_items = []
+        for item in items_data:
+            item_copy = dict(item)
+            if 'post_date' in item_copy and item_copy['post_date'] is not None:
+                item_copy['post_date'] = str(item_copy['post_date'])
+            processed_items.append(item_copy)
+
         return cls(
             name=name,
             description=description,
-            items_data=items_data
+            items_data=processed_items
         )
 
 

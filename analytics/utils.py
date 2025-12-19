@@ -64,7 +64,7 @@ def charge_credits(user, credits_to_charge: int):
 
         if usage.used_this_period + credits_to_charge > usage.monthly_quota:
             raise NotEnoughCredits(
-                f"Not enough credits. "
+                f"Not enough AI credits. "
                 f"You have {usage.monthly_quota - usage.used_this_period} credits remaining, "
                 f"but this operation requires {credits_to_charge}."
             )

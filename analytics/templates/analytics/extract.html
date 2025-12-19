@@ -116,6 +116,7 @@
                                     </div>
                                 </div>
                                 <div class="form-text">Select reports and posts, then download annotated HTML files with improvement tips</div>
+                                <div class="form-text">🧠 1 AI credit per post</div>
                             </div>
                         </div>
                     </div>
@@ -127,6 +128,7 @@
                                 <i class="bi bi-download"></i> Download Click Visualization
                             </button>
                             <div class="form-text">Download HTML files showing click counts next to each link in the selected posts</div>
+                            <div class="form-text">Free</div>
                         </div>
                     </div>
                     
@@ -143,6 +145,7 @@
                                    placeholder="e.g., 'Items in the quick links section'"
                                    required>
                             <div class="form-text">Describe the content you want to extract from the selected posts</div>
+                            <div class="form-text">🧠 1 AI credit per post</div>
                         </div>
                         <div class="col-md-3">
                             <div id="extractContentProgress">
@@ -329,7 +332,7 @@
         const selectedPosts = document.querySelectorAll('.post-checkbox:checked').length;
         // Base duration + 2s per post (extraction is parallel but has overhead)
         const baseDuration = {{ progress_durations.extract_content }};
-        const estimatedDuration = Math.min(baseDuration + (selectedPosts * 2), 60);
+        const estimatedDuration = Math.min(baseDuration, 60);
 
         ProgressBar.start({
             containerId: 'extractContentProgress',
@@ -436,7 +439,7 @@
             // Calculate expected duration: base + per post
             const numPosts = selectedPostCheckboxes.length;
             const baseDuration = {{ progress_durations.download_annotated }};
-            const estimatedDuration = Math.min(baseDuration + (numPosts * 5), 120);
+            const estimatedDuration = Math.min(baseDuration, 120);
 
             // Start progress bar
             ProgressBar.start({
