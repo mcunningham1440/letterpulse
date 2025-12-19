@@ -175,6 +175,7 @@ ACCOUNT_EMAIL_VERIFICATION = 'optional'  # Set to 'mandatory' for production
 ACCOUNT_USER_MODEL_USERNAME_FIELD = None
 ACCOUNT_SESSION_REMEMBER = True
 ACCOUNT_UNIQUE_EMAIL = True
+ACCOUNT_ADAPTER = 'analytics.adapters.NoSignupAccountAdapter'
 
 # Email settings (use console backend for development)
 EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
