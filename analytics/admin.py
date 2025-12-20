@@ -30,22 +30,22 @@ class PublicationAdmin(admin.ModelAdmin):
 @admin.register(Post)
 class PostAdmin(admin.ModelAdmin):
     list_display = (
-        'title', 'post_id', 'publication', 'status', 'creation_date', 'publish_date_cst',
+        'title', 'post_id', 'user', 'publication', 'status', 'creation_date', 'publish_date_cst',
         'recipients', 'delivered', 'email_opens', 'unique_email_opens',
         'email_clicks', 'unique_email_clicks', 'unsubscribes', 'spam_reports',
         'created_at', 'updated_at'
     )
-    list_filter = ('status', 'publish_date_cst', 'publication')
-    search_fields = ('title', 'subtitle', 'post_id')
+    list_filter = ('status', 'publish_date_cst', 'publication', 'user')
+    search_fields = ('title', 'subtitle', 'post_id', 'user__email')
     ordering = ('-publish_date_cst',)
     readonly_fields = ('created_at', 'updated_at')
 
 
 @admin.register(ContentSet)
 class ContentSetAdmin(admin.ModelAdmin):
-    list_display = ('name', 'publication', 'description', 'created_at', 'updated_at')
-    list_filter = ('publication', 'created_at')
-    search_fields = ('name', 'description')
+    list_display = ('name', 'user', 'publication', 'description', 'created_at', 'updated_at')
+    list_filter = ('publication', 'user', 'created_at')
+    search_fields = ('name', 'description', 'user__email')
     ordering = ('-created_at',)
     readonly_fields = ('created_at', 'updated_at')
 

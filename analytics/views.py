@@ -203,8 +203,8 @@ def extract_view(request):
     # Get current publication for filtering
     _, beehiiv_pub_id, _ = get_user_api_credentials(request.user)
 
-    # Load posts from database filtered by publication
-    posts_df = load_posts_from_db(publication_id=beehiiv_pub_id)
+    # Load posts from database filtered by publication and user
+    posts_df = load_posts_from_db(publication_id=beehiiv_pub_id, user=request.user)
     
     # Reverse order so newer posts appear first
     posts_df = posts_df.iloc[::-1].reset_index(drop=True)
@@ -238,12 +238,12 @@ def extract_view(request):
         
         extracted_items_data = df.to_dict('records')
     
-    # Get content sets for current publication only
+    # Get content sets for current publication and user only
     from .models import Publication
     try:
         publication = Publication.objects.get(pub_id=beehiiv_pub_id)
-        all_content_sets = ContentSet.objects.filter(publication=publication).order_by('name')
-        all_reports = Report.objects.filter(content_set__publication=publication).order_by('name')
+        all_content_sets = ContentSet.objects.filter(publication=publication, user=request.user).order_by('name')
+        all_reports = Report.objects.filter(content_set__publication=publication, content_set__user=request.user).order_by('name')
     except Publication.DoesNotExist:
         all_content_sets = ContentSet.objects.none()
         all_reports = Report.objects.none()
@@ -284,8 +284,8 @@ def run_extraction(request):
         # Convert indices to integers
         selected_indices = [int(idx) for idx in selected_indices]
 
-        # Load data from database filtered by publication
-        posts_df = load_posts_from_db(publication_id=beehiiv_pub_id)
+        # Load data from database filtered by publication and user
+        posts_df = load_posts_from_db(publication_id=beehiiv_pub_id, user=request.user)
         posts_df = posts_df.iloc[::-1].reset_index(drop=True)  # Reverse to match display
 
         # Get selected posts
@@ -434,8 +434,8 @@ def save_content_set(request):
                 messages.error(request, "Please provide a name for the content set.")
                 return redirect('analytics:extract')
 
-            # Check if name already exists for this publication
-            if ContentSet.objects.filter(name=content_set_name, publication=publication).exists():
+            # Check if name already exists for this publication and user
+            if ContentSet.objects.filter(name=content_set_name, publication=publication, user=request.user).exists():
                 messages.error(request, f"A content set named '{content_set_name}' already exists. Please choose a different name.")
                 return redirect('analytics:extract')
 
@@ -443,6 +443,7 @@ def save_content_set(request):
             df = pd.DataFrame(extracted_items)
             content_set = ContentSet.from_dataframe(content_set_name, df)
             content_set.publication = publication
+            content_set.user = request.user
             content_set.save()
             
             messages.success(request, f"Content set '{content_set_name}' saved successfully!")
@@ -455,10 +456,10 @@ def save_content_set(request):
             if not existing_set_name:
                 messages.error(request, "Please select an existing content set.")
                 return redirect('analytics:extract')
-            
-            # Get the existing content set
+
+            # Get the existing content set (owned by this user)
             try:
-                existing_set = ContentSet.objects.get(name=existing_set_name)
+                existing_set = ContentSet.objects.get(name=existing_set_name, user=request.user)
             except ContentSet.DoesNotExist:
                 messages.error(request, f"Content set '{existing_set_name}' not found.")
                 return redirect('analytics:extract')
@@ -473,7 +474,8 @@ def save_content_set(request):
                     name=backup_name,
                     description=f"Backup of '{existing_set_name}' before adding items",
                     items_data=existing_set.items_data,
-                    publication=publication
+                    publication=publication,
+                    user=request.user
                 )
                 backup_set.save()
                 messages.info(request, f"Backup created: '{backup_name}'")
@@ -515,10 +517,10 @@ def analyze_view(request):
     # Get current publication for filtering
     _, beehiiv_pub_id, _ = get_user_api_credentials(request.user)
 
-    # Get content sets for current publication only
+    # Get content sets for current publication and user only
     try:
         publication = Publication.objects.get(pub_id=beehiiv_pub_id)
-        content_sets = ContentSet.objects.filter(publication=publication).order_by('-created_at')
+        content_sets = ContentSet.objects.filter(publication=publication, user=request.user).order_by('-created_at')
     except Publication.DoesNotExist:
         content_sets = ContentSet.objects.none()
 
@@ -535,7 +537,7 @@ def load_content_set(request, set_name):
     Load a specific content set and return as JSON.
     """
     try:
-        content_set = ContentSet.objects.get(name=set_name)
+        content_set = ContentSet.objects.get(name=set_name, user=request.user)
         df = content_set.to_dataframe()
         
         # Format for display
@@ -588,7 +590,7 @@ def generate_insights(request):
                 'error': 'Content set name is required.'
             }, status=400)
 
-        content_set = ContentSet.objects.get(name=set_name)
+        content_set = ContentSet.objects.get(name=set_name, user=request.user)
         df = content_set.to_dataframe()
 
         if df.empty:
@@ -648,15 +650,15 @@ def rename_set(request):
                 'success': False,
                 'error': 'Both old and new names are required.'
             }, status=400)
-        
-        # Check if new name already exists
-        if ContentSet.objects.filter(name=new_name).exists():
+
+        # Check if new name already exists for this user
+        if ContentSet.objects.filter(name=new_name, user=request.user).exists():
             return JsonResponse({
                 'success': False,
                 'error': f"A content set named '{new_name}' already exists."
             }, status=400)
-        
-        content_set = ContentSet.objects.get(name=old_name)
+
+        content_set = ContentSet.objects.get(name=old_name, user=request.user)
         content_set.name = new_name
         content_set.save()
         
@@ -691,13 +693,13 @@ def copy_set(request):
                 'success': False,
                 'error': 'Content set name is required.'
             }, status=400)
-        
-        content_set = ContentSet.objects.get(name=set_name)
+
+        content_set = ContentSet.objects.get(name=set_name, user=request.user)
         copy_name = set_name + ' copy'
-        
+
         # Find a unique name if copy already exists
         counter = 2
-        while ContentSet.objects.filter(name=copy_name).exists():
+        while ContentSet.objects.filter(name=copy_name, user=request.user).exists():
             copy_name = f"{set_name} copy {counter}"
             counter += 1
         
@@ -707,7 +709,8 @@ def copy_set(request):
             name=copy_name,
             description=content_set.description,
             items_data=copy_module.deepcopy(content_set.items_data),
-            publication=content_set.publication
+            publication=content_set.publication,
+            user=request.user
         )
         
         return JsonResponse({
@@ -743,9 +746,9 @@ def merge_sets(request):
                 'success': False,
                 'error': 'Both source and target set names are required.'
             }, status=400)
-        
-        source_set = ContentSet.objects.get(name=source_set_name)
-        target_set = ContentSet.objects.get(name=target_set_name)
+
+        source_set = ContentSet.objects.get(name=source_set_name, user=request.user)
+        target_set = ContentSet.objects.get(name=target_set_name, user=request.user)
         
         # Merge items_data from source to target
         source_items = source_set.items_data if isinstance(source_set.items_data, list) else []
@@ -791,10 +794,10 @@ def delete_items_from_set(request):
                 'success': False,
                 'error': 'Set name and item indices are required.'
             }, status=400)
-        
+
         indices = json.loads(indices_json)
-        
-        content_set = ContentSet.objects.get(name=set_name)
+
+        content_set = ContentSet.objects.get(name=set_name, user=request.user)
         items = content_set.items_data if isinstance(content_set.items_data, list) else []
         
         # Validate indices
@@ -848,8 +851,8 @@ def delete_set(request):
                 'success': False,
                 'error': 'Content set name is required.'
             }, status=400)
-        
-        content_set = ContentSet.objects.get(name=set_name)
+
+        content_set = ContentSet.objects.get(name=set_name, user=request.user)
         content_set.delete()
         
         return JsonResponse({
@@ -875,7 +878,7 @@ def download_csv(request, set_name):
     Download a content set as CSV.
     """
     try:
-        content_set = ContentSet.objects.get(name=set_name)
+        content_set = ContentSet.objects.get(name=set_name, user=request.user)
         df = content_set.to_dataframe()
         
         # Calculate max clicks and max click rate before formatting
@@ -950,6 +953,7 @@ def refresh_posts(request):
 
             post, created = Post.objects.update_or_create(
                 post_id=row['id'],
+                user=request.user,
                 defaults={
                     'publication': publication,
                     'title': row['title'],
@@ -1010,8 +1014,8 @@ def download_click_visualization(request):
         # Convert indices to integers
         selected_indices = [int(idx) for idx in selected_indices]
 
-        # Load posts from database filtered by publication
-        posts_df = load_posts_from_db(publication_id=beehiiv_pub_id)
+        # Load posts from database filtered by publication and user
+        posts_df = load_posts_from_db(publication_id=beehiiv_pub_id, user=request.user)
         posts_df = posts_df.iloc[::-1].reset_index(drop=True)  # Reverse to match display
 
         # Get selected posts
@@ -1107,15 +1111,15 @@ def download_annotated_posts(request):
         selected_indices = [int(idx) for idx in selected_indices]
         selected_report_ids = [int(rid) for rid in selected_report_ids]
 
-        # Load posts from database filtered by publication
-        posts_df = load_posts_from_db(publication_id=beehiiv_pub_id)
+        # Load posts from database filtered by publication and user
+        posts_df = load_posts_from_db(publication_id=beehiiv_pub_id, user=request.user)
         posts_df = posts_df.iloc[::-1].reset_index(drop=True)  # Reverse to match display
 
         # Get selected posts
         posts_of_interest = posts_df.iloc[selected_indices]
 
-        # Get report texts for selected reports
-        reports = Report.objects.filter(id__in=selected_report_ids)
+        # Get report texts for selected reports (owned by this user)
+        reports = Report.objects.filter(id__in=selected_report_ids, content_set__user=request.user)
         content_perf_evals = [report.report_text for report in reports]
 
         if not content_perf_evals:
@@ -1211,9 +1215,9 @@ def save_report(request):
                 'error': 'Content set name is required.'
             }, status=400)
         
-        # Get the content set
-        content_set = ContentSet.objects.get(name=set_name)
-        
+        # Get the content set (must be owned by this user)
+        content_set = ContentSet.objects.get(name=set_name, user=request.user)
+
         # Check if a report with this name already exists for this content set
         if Report.objects.filter(name=report_name, content_set=content_set).exists():
             return JsonResponse({
@@ -1252,7 +1256,7 @@ def load_report(request, report_id):
     Load a saved report and return as JSON.
     """
     try:
-        report = Report.objects.get(id=report_id)
+        report = Report.objects.get(id=report_id, content_set__user=request.user)
         
         return JsonResponse({
             'success': True,
@@ -1285,11 +1289,12 @@ def get_all_reports(request):
         # Get current publication for filtering
         _, beehiiv_pub_id, _ = get_user_api_credentials(request.user)
 
-        # Filter reports by publication through content_set
+        # Filter reports by publication and user through content_set
         try:
             publication = Publication.objects.get(pub_id=beehiiv_pub_id)
             reports = Report.objects.filter(
-                content_set__publication=publication
+                content_set__publication=publication,
+                content_set__user=request.user
             ).order_by('-created_at')
         except Publication.DoesNotExist:
             reports = Report.objects.none()
@@ -1323,7 +1328,7 @@ def delete_report(request, report_id):
     Delete a saved report.
     """
     try:
-        report = Report.objects.get(id=report_id)
+        report = Report.objects.get(id=report_id, content_set__user=request.user)
         report_name = report.name
         report.delete()
         

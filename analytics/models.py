@@ -172,7 +172,7 @@ class Publication(models.Model):
 class Post(models.Model):
     """Model representing a Beehiiv newsletter post"""
 
-    post_id = models.CharField(max_length=255, unique=True, help_text="Beehiiv post ID")
+    post_id = models.CharField(max_length=255, help_text="Beehiiv post ID")
     publication = models.ForeignKey(
         Publication,
         on_delete=models.SET_NULL,
@@ -180,6 +180,12 @@ class Post(models.Model):
         blank=True,
         related_name='posts',
         help_text="The publication this post belongs to"
+    )
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='posts',
+        help_text="The user who owns this post data"
     )
     title = models.CharField(max_length=500)
     subtitle = models.TextField(blank=True, null=True)
@@ -204,7 +210,8 @@ class Post(models.Model):
             models.Index(fields=['-publish_date_cst']),
             models.Index(fields=['post_id']),
         ]
-    
+        unique_together = [['post_id', 'user']]
+
     def __str__(self):
         return f"{self.title} ({self.publish_date_cst})"
     
@@ -226,15 +233,21 @@ class ContentSet(models.Model):
         related_name='content_sets',
         help_text="The publication this content set belongs to"
     )
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='content_sets',
+        help_text="The user who owns this content set"
+    )
     description = models.TextField(blank=True, help_text="Optional description of this content set")
     items_data = models.JSONField(help_text="JSON data containing the extracted items")
-    
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
-    
+
     class Meta:
         ordering = ['-created_at']
-        unique_together = [['name', 'publication']]
+        unique_together = [['name', 'publication', 'user']]
 
     def __str__(self):
         return self.name

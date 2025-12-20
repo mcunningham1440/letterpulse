@@ -64,19 +64,23 @@ Represents a Beehiiv publication (users may have access to multiple):
 
 ### Post
 Stores newsletter post metadata and engagement stats from Beehiiv:
-- `post_id`: Beehiiv post ID (unique)
+- `post_id`: Beehiiv post ID (unique per user)
+- `user`: ForeignKey to User (owner of the post data)
 - `publication`: ForeignKey to Publication (nullable)
 - `title`, `subtitle`
 - `status`: "Draft" or "Published"
 - `creation_date`: DateTime when post was created in Beehiiv (nullable)
 - `publish_date_cst`: Date field (nullable for drafts)
 - Engagement metrics: `recipients`, `delivered`, `email_opens`, `unique_email_opens`, `email_clicks`, `unique_email_clicks`, `unsubscribes`, `spam_reports`
+- Unique constraint: `(post_id, user)` - same post can exist for multiple users
 
 ### ContentSet
 Named collections of extracted content items:
-- `name`: Identifier for the set (unique per publication)
+- `name`: Identifier for the set (unique per publication and user)
+- `user`: ForeignKey to User (owner of the content set)
 - `publication`: ForeignKey to Publication (nullable)
 - `items_data`: JSON array of extracted items with text, links, clicks, and CTR
+- Unique constraint: `(name, publication, user)` - ensures users can have same-named sets for different publications
 
 ### Report
 AI-generated content insights:
@@ -136,6 +140,8 @@ Uses django-allauth for email-based authentication:
 - **Account Info**: View email and change password
 
 **Publication Switching**: Each publication has its own posts, content sets, and reports. Switching publications changes the active data context throughout the app.
+
+**User Scoping**: Posts and ContentSets are scoped to both publication AND user. This means two different users can use the same publication without seeing each other's data.
 
 ## API Endpoints
 
@@ -198,6 +204,9 @@ All Beehiiv API functions require `beehiiv_token` and `beehiiv_pub_id` parameter
 - `process_posts_data()`: Converts raw API data to DataFrame. Drafts have `publish_date_cst` set to "Draft"
 
 Views use `get_user_api_credentials(user)` helper to retrieve credentials and redirect to Account page if not configured.
+
+### Database Functions
+- `load_posts_from_db(publication_id=None, user=None)`: Load posts from database filtered by publication and user
 
 ### AI Functions
 - `llm_call(user=None)`: Wrapper for OpenAI API with logging to CSV

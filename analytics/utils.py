@@ -709,16 +709,19 @@ If you’re optimizing for engagement, skew your programming and naming toward t
     return response
 
 
-def load_posts_from_db(publication_id=None):
-    """Load posts from database into a DataFrame, optionally filtered by publication.
+def load_posts_from_db(publication_id=None, user=None):
+    """Load posts from database into a DataFrame, filtered by publication and user.
 
     Args:
         publication_id: Optional Beehiiv publication ID (e.g., 'pub_xxx') to filter posts.
-                        If None, returns all posts.
+                        If None, returns all posts for the user.
+        user: The user who owns the posts. Required for proper scoping.
     """
     from .models import Post
 
     queryset = Post.objects.all()
+    if user:
+        queryset = queryset.filter(user=user)
     if publication_id:
         queryset = queryset.filter(publication__pub_id=publication_id)
 
