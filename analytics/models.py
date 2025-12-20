@@ -302,6 +302,26 @@ class ContentSet(models.Model):
             items_data=processed_items
         )
 
+    def to_dataframe(self):
+        """
+        Convert items_data to a pandas DataFrame.
+        """
+        import pandas as pd
+        items = self.get_items_data()
+        if items:
+            return pd.DataFrame(items)
+        return pd.DataFrame()
+
+    @classmethod
+    def from_dataframe(cls, name, df, description=""):
+        """
+        Create a ContentSet from a pandas DataFrame.
+        Converts the DataFrame to a list of dicts for JSON storage.
+        """
+        # Convert DataFrame to list of dicts
+        items_data = df.to_dict('records')
+        return cls.from_items_data(name, items_data, description)
+
 
 class Report(models.Model):
     """Model representing a saved content insights report"""
