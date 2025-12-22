@@ -18,11 +18,12 @@ This application helps newsletter creators understand which content resonates wi
 ## Tech Stack
 
 - **Backend**: Django 5.0+, Python
-- **Database**: PostgreSQL (via Docker)
+- **Database**: PostgreSQL on AWS RDS (Aurora)
 - **AI**: OpenAI API (GPT-5.1 with reasoning)
 - **Authentication**: django-allauth (email-based auth)
 - **Frontend**: Bootstrap 5, DataTables, jQuery, Marked.js (markdown rendering)
 - **Async**: aiohttp, asyncio for parallel API calls
+- **Deployment**: AWS App Runner (cloud), local development with gunicorn
 
 ## Project Structure
 
@@ -34,10 +35,12 @@ app/
 │   ├── wsgi.py / asgi.py       # WSGI/ASGI entry points
 │   └── __init__.py
 ├── analytics/                  # Main Django app
-│   ├── models.py               # Post, ContentSet, Report, UsageAccount models
+│   ├── models.py               # Post, ContentSet, Report, UsageAccount, ExecutionLog models
 │   ├── views.py                # All view logic (login-protected)
 │   ├── urls.py                 # App URL patterns (analytics namespace)
 │   ├── utils.py                # Core utility functions (API calls, AI extraction, credit charging)
+│   ├── logsink.py              # Queue-based async logging system
+│   ├── logutils.py             # Logging middleware and decorators
 │   ├── admin.py                # Django admin configuration
 │   ├── signals.py              # User signals (auto-create UsageAccount)
 │   ├── context_processors.py   # Usage stats for templates
@@ -50,8 +53,9 @@ app/
 ├── data/                       # Runtime data (LLM call logs)
 ├── manage.py                   # Django management script
 ├── requirements.txt            # Python dependencies
-├── docker-compose.yml          # PostgreSQL container config
-└── .env / .env.example         # Environment variables
+├── apprunner.yaml              # AWS App Runner configuration
+├── startup.sh                  # Cloud startup script (gunicorn)
+└── .env / .env.example         # Environment variables (local mode)
 ```
 
 ## Database Models
@@ -102,6 +106,22 @@ Tracks AI usage credits and API credentials per user:
 Billing cycle: Credits reset on the same day of the month as the user's signup date (e.g., signup on the 15th means credits renew on the 15th of each month). For months with fewer days, renewal occurs on the last day of the month.
 
 API key validation: When a user enters their API token, it is immediately validated against the Beehiiv `/publications` endpoint. If valid, the list of available publications is cached and the user can select which publication to work with.
+
+### ExecutionLog
+Low-overhead execution logging for HTTP requests and function calls:
+- `ts_start`, `ts_end`: Start and end timestamps
+- `duration_ms`: Execution duration in milliseconds
+- `kind`: "request" (HTTP) or "function" (decorated functions)
+- `name`: View name or module.function
+- `success`: Boolean indicating success/failure
+- `error_type`, `error_message`, `traceback`: Error details if failed
+- `user`: ForeignKey to User (nullable)
+- `request_id`: UUID for request correlation
+- `parent_id`: Optional BigIntegerField for nesting
+- `inputs`, `outputs`, `meta`: JSONField placeholders (currently empty)
+- Indexes on: `created_at`, `(kind, name)`, `request_id`, `success`
+
+Uses queue-based async logging via `logsink.py` with a background worker thread for batch inserts.
 
 ## Authentication
 
@@ -169,25 +189,67 @@ All routes use the `analytics:` namespace.
 - `GET /account/` - Account settings page
 - `POST /account/` - Update API credentials
 
-## Environment Variables
+## Deployment Modes
+
+The app can run in two modes: **local** and **cloud**. Both modes connect to the same AWS RDS database.
+
+### Local Mode
+
+For local development, the app reads environment variables from the `.env` file (via `python-dotenv`).
 
 Required in `.env`:
 ```
-# Django
-SECRET_KEY=your-secret-key
-DEBUG=True
-ALLOWED_HOSTS=localhost,127.0.0.1
+# Database credentials as JSON (matches AWS Secrets Manager format)
+DATABASE_SECRET={"username":"your_db_user","password":"your_db_password"}
 
 # API Keys
 OPENAI_API_KEY=your-openai-api-key
-
-# Database
-DB_NAME=letterpulse
-DB_USER=letterpulse_user
-DB_PASSWORD=local_dev_password
-DB_HOST=localhost
-DB_PORT=5432
 ```
+
+Run locally with:
+```bash
+python manage.py runserver
+```
+
+### Cloud Mode (AWS App Runner)
+
+For production, the app runs on AWS App Runner and reads secrets from AWS Secrets Manager as configured in `apprunner.yaml`:
+
+```yaml
+run:
+  secrets:
+    - name: DATABASE_SECRET
+      value-from: arn:aws:secretsmanager:us-east-1:...:secret:rds!cluster-...
+    - name: OPENAI_API_KEY
+      value-from: arn:aws:secretsmanager:us-east-1:...:secret:openai-api-key-...
+  command: sh startup.sh
+```
+
+The `startup.sh` script:
+1. Runs `collectstatic` to gather static files
+2. Starts gunicorn with 1 worker, 4 threads, 120s timeout
+
+### Environment Variable Format
+
+**DATABASE_SECRET**: JSON string with database credentials. AWS RDS Secrets Manager automatically generates this format:
+```json
+{"username": "db_user", "password": "db_password"}
+```
+
+The `settings.py` parses this JSON to configure the Django database connection:
+```python
+db = json.loads(os.environ["DATABASE_SECRET"])
+DATABASES = {
+    'default': {
+        'USER': db['username'],
+        'PASSWORD': db['password'],
+        'HOST': 'letterpulse-dev.cluster-....us-east-1.rds.amazonaws.com',
+        ...
+    }
+}
+```
+
+**OPENAI_API_KEY**: Standard OpenAI API key string.
 
 **Note:** Beehiiv API credentials (token and publication ID) are configured per-user in the Account settings page, not via environment variables.
 
@@ -235,6 +297,43 @@ Credits are charged at the view level before each AI operation runs.
 
 ### Link Matching
 - `match_links_with_clicks()`: Uses exact matching first, then Levenshtein distance (40% threshold) for fuzzy matching
+
+## Execution Logging System
+
+Queue-based async logging for HTTP requests and function calls with minimal overhead:
+
+### Architecture
+- `ExecutionLoggingMiddleware` in `logutils.py` logs all HTTP requests automatically
+- `@log_function()` decorator for logging specific function executions
+- `LogSink` in `logsink.py` manages a Queue + background worker thread
+- Batch inserts via `bulk_create()` every 50 entries or 1 second
+- Each Gunicorn worker process has its own queue and worker thread
+
+### Configuration (settings.py)
+```python
+EXECUTION_LOG_QUEUE_MAXSIZE = 2000   # Max entries in queue before overflow
+EXECUTION_LOG_BATCH_SIZE = 50        # Entries per bulk_create
+EXECUTION_LOG_FLUSH_INTERVAL = 1.0   # Seconds between flushes
+EXECUTION_LOG_ON_FULL = 'drop'       # 'drop' or 'sync' when queue is full
+```
+
+### Usage
+```python
+from analytics.logutils import log_function
+
+@log_function()
+async def my_function():
+    ...
+
+@log_function(name="custom.name")
+def another_function():
+    ...
+```
+
+### Resilience
+- Queue full → logs dropped silently (or sync-write if `EXECUTION_LOG_ON_FULL='sync'`)
+- Database errors caught and never propagated to the application
+- Worker thread is a daemon thread (won't block app shutdown)
 
 ## Testing Notes
 

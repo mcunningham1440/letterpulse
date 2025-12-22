@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Post, ContentSet, Report, UsageAccount, Publication
+from .models import Post, ContentSet, Report, UsageAccount, Publication, ExecutionLog
 
 
 @admin.register(UsageAccount)
@@ -57,3 +57,28 @@ class ReportAdmin(admin.ModelAdmin):
     search_fields = ('name', 'content_set__name', 'report_text')
     ordering = ('-created_at',)
     readonly_fields = ('created_at', 'updated_at')
+
+
+@admin.register(ExecutionLog)
+class ExecutionLogAdmin(admin.ModelAdmin):
+    list_display = (
+        'created_at', 'kind', 'name', 'success', 'duration_ms',
+        'user', 'request_id', 'error_type'
+    )
+    list_filter = ('kind', 'success', 'created_at', 'user')
+    search_fields = ('name', 'request_id', 'error_type', 'error_message', 'user__email')
+    ordering = ('-created_at',)
+    readonly_fields = (
+        'ts_start', 'ts_end', 'duration_ms', 'kind', 'name', 'success',
+        'error_type', 'error_message', 'traceback', 'user', 'request_id',
+        'parent_id', 'inputs', 'outputs', 'meta', 'created_at'
+    )
+    date_hierarchy = 'created_at'
+
+    def has_add_permission(self, request):
+        # Logs should only be created by the system
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        # Logs should be immutable
+        return False

@@ -61,6 +61,7 @@ MIDDLEWARE = [
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
+    'analytics.logutils.ExecutionLoggingMiddleware',  # Execution logging (after auth)
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
     'allauth.account.middleware.AccountMiddleware',
@@ -203,3 +204,12 @@ PROGRESS_DURATIONS = {
     'extract_content': 12,      # empirical
     'generate_report': 65,      # empirical
 }
+
+# =============================================================================
+# Execution Logging Configuration
+# =============================================================================
+# Queue-based async logging for requests and function calls
+EXECUTION_LOG_QUEUE_MAXSIZE = 2000   # Max entries in queue before overflow
+EXECUTION_LOG_BATCH_SIZE = 50        # Entries per bulk_create
+EXECUTION_LOG_FLUSH_INTERVAL = 1.0   # Seconds between flushes
+EXECUTION_LOG_ON_FULL = 'drop'       # 'drop' or 'sync' when queue is full

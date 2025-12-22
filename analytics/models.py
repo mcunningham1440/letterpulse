@@ -325,22 +325,87 @@ class ContentSet(models.Model):
 
 class Report(models.Model):
     """Model representing a saved content insights report"""
-    
+
     name = models.CharField(max_length=255)
     content_set = models.ForeignKey(
-        ContentSet, 
-        on_delete=models.CASCADE, 
+        ContentSet,
+        on_delete=models.CASCADE,
         related_name='reports',
         help_text="The content set this report is based on"
     )
     report_text = models.TextField(help_text="The markdown-formatted report content")
-    
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
-    
+
     class Meta:
         ordering = ['-created_at']
         unique_together = [['name', 'content_set']]
-    
+
     def __str__(self):
         return f"{self.name} - {self.content_set.name}"
+
+
+class ExecutionLog(models.Model):
+    """
+    Execution logs for HTTP requests and function calls.
+    Uses queue-based async logging for minimal overhead.
+    """
+
+    # Timing fields
+    ts_start = models.DateTimeField(help_text="When execution started")
+    ts_end = models.DateTimeField(help_text="When execution ended")
+    duration_ms = models.IntegerField(help_text="Duration in milliseconds")
+
+    # Classification
+    KIND_CHOICES = [
+        ('request', 'HTTP Request'),
+        ('function', 'Function Call'),
+    ]
+    kind = models.CharField(max_length=20, choices=KIND_CHOICES, help_text="Type of log entry")
+    name = models.CharField(max_length=255, help_text="View name or module.function")
+
+    # Status
+    success = models.BooleanField(default=True, help_text="Whether execution succeeded")
+    error_type = models.CharField(max_length=255, blank=True, default='', help_text="Exception class name")
+    error_message = models.TextField(blank=True, default='', help_text="Exception message")
+    traceback = models.TextField(blank=True, default='', help_text="Full traceback if error")
+
+    # Context
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='execution_logs',
+        help_text="User who triggered the execution"
+    )
+    request_id = models.CharField(
+        max_length=64, blank=True, default='', db_index=True,
+        help_text="UUID for request correlation"
+    )
+    parent_id = models.BigIntegerField(
+        null=True, blank=True,
+        help_text="ID of parent log entry for nesting"
+    )
+
+    # Data placeholders (for future use)
+    inputs = models.JSONField(default=dict, blank=True, help_text="Input parameters (placeholder)")
+    outputs = models.JSONField(default=dict, blank=True, help_text="Output data (placeholder)")
+    meta = models.JSONField(default=dict, blank=True, help_text="Additional metadata (placeholder)")
+
+    # Timestamps
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['-created_at']),
+            models.Index(fields=['kind', 'name']),
+            models.Index(fields=['request_id']),
+            models.Index(fields=['success']),
+        ]
+
+    def __str__(self):
+        status = "OK" if self.success else "ERROR"
+        return f"[{self.kind}] {self.name} - {status} ({self.duration_ms}ms)"
