@@ -21,6 +21,7 @@
             --primary-green: #28a745;
             --hover-green: #218838;
             --sidebar-width: 220px;
+            --sidebar-collapsed-width: 60px;
         }
 
         body {
@@ -40,6 +41,108 @@
             z-index: 1000;
             display: flex;
             flex-direction: column;
+            transition: width 0.2s ease;
+        }
+
+        /* Sidebar Toggle Button */
+        .sidebar-toggle {
+            position: absolute;
+            top: 12px;
+            right: -12px;
+            width: 24px;
+            height: 24px;
+            background-color: #212529;
+            border: 2px solid #343a40;
+            border-radius: 50%;
+            color: #adb5bd;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.75rem;
+            transition: all 0.15s ease;
+            z-index: 1001;
+        }
+
+        .sidebar-toggle:hover {
+            background-color: #343a40;
+            color: white;
+        }
+
+        .sidebar-toggle i {
+            transition: transform 0.2s ease;
+        }
+
+        /* Collapsed Sidebar */
+        .sidebar.collapsed {
+            width: var(--sidebar-collapsed-width);
+        }
+
+        .sidebar.collapsed .sidebar-toggle i {
+            transform: rotate(180deg);
+        }
+
+        .sidebar.collapsed .sidebar-brand-text,
+        .sidebar.collapsed .nav-link-text,
+        .sidebar.collapsed .usage-widget,
+        .sidebar.collapsed .user-email span,
+        .sidebar.collapsed .logout-link span,
+        .sidebar.collapsed .alert span {
+            display: none;
+        }
+
+        .sidebar.collapsed .sidebar-brand {
+            padding: 0.5rem 0 1.5rem;
+            text-align: center;
+        }
+
+        .sidebar.collapsed .sidebar-brand i {
+            margin: 0;
+        }
+
+        .sidebar.collapsed .sidebar-nav .nav-link {
+            justify-content: center;
+            padding: 0.75rem 0;
+        }
+
+        .sidebar.collapsed .sidebar-nav .nav-link i {
+            margin: 0;
+        }
+
+        .sidebar.collapsed .sidebar-nav .nav-item {
+            margin: 0.25rem 0.5rem;
+        }
+
+        .sidebar.collapsed .sidebar-footer {
+            padding: 0.75rem 0.5rem;
+        }
+
+        .sidebar.collapsed .user-menu {
+            align-items: center;
+        }
+
+        .sidebar.collapsed .user-email,
+        .sidebar.collapsed .logout-link {
+            justify-content: center;
+        }
+
+        .sidebar.collapsed .px-3 {
+            padding-left: 0.5rem !important;
+            padding-right: 0.5rem !important;
+        }
+
+        .sidebar.collapsed .alert {
+            justify-content: center;
+            padding: 0.5rem !important;
+        }
+
+        /* Main content transition */
+        .main-content {
+            transition: margin-left 0.2s ease;
+        }
+
+        body.sidebar-collapsed .main-content {
+            margin-left: var(--sidebar-collapsed-width);
         }
 
         .sidebar-nav {
@@ -252,30 +355,33 @@
 </head>
 <body>
     <!-- Sidebar -->
-    <nav class="sidebar">
+    <nav class="sidebar" id="sidebar">
+        <button class="sidebar-toggle" id="sidebarToggle" title="Toggle sidebar">
+            <i class="bi bi-chevron-left"></i>
+        </button>
         <a class="sidebar-brand" href="{% url 'analytics:extract' %}">
-            <i class="bi bi-bar-chart-fill me-2"></i>LetterPulse
+            <i class="bi bi-bar-chart-fill me-2"></i><span class="sidebar-brand-text">LetterPulse</span>
         </a>
         <ul class="sidebar-nav">
             <li class="nav-item">
                 <a class="nav-link {% if request.resolver_match.url_name == 'extract' %}active{% endif %}"
-                   href="{% url 'analytics:extract' %}">
+                   href="{% url 'analytics:extract' %}" title="Extract">
                     <i class="bi bi-file-earmark-text"></i>
-                    Extract
+                    <span class="nav-link-text">Extract</span>
                 </a>
             </li>
             <li class="nav-item">
                 <a class="nav-link {% if request.resolver_match.url_name == 'analyze' %}active{% endif %}"
-                   href="{% url 'analytics:analyze' %}">
+                   href="{% url 'analytics:analyze' %}" title="Analyze">
                     <i class="bi bi-graph-up"></i>
-                    Analyze
+                    <span class="nav-link-text">Analyze</span>
                 </a>
             </li>
             <li class="nav-item">
                 <a class="nav-link {% if request.resolver_match.url_name == 'account' %}active{% endif %}"
-                   href="{% url 'analytics:account' %}">
+                   href="{% url 'analytics:account' %}" title="Account">
                     <i class="bi bi-person-gear"></i>
-                    Account
+                    <span class="nav-link-text">Account</span>
                 </a>
             </li>
         </ul>
@@ -306,11 +412,11 @@
             <div class="user-menu">
                 <div class="user-email">
                     <i class="bi bi-person-circle"></i>
-                    {{ user.email }}
+                    <span>{{ user.email }}</span>
                 </div>
                 <a href="{% url 'account_logout' %}" class="logout-link">
                     <i class="bi bi-box-arrow-right"></i>
-                    Sign Out
+                    <span>Sign Out</span>
                 </a>
             </div>
         </div>
@@ -352,6 +458,27 @@
 
     <!-- Progress Bar -->
     <script src="{% static 'analytics/js/progress-bar.js' %}"></script>
+
+    <!-- Sidebar Toggle -->
+    <script>
+        (function() {
+            const sidebar = document.getElementById('sidebar');
+            const toggle = document.getElementById('sidebarToggle');
+            const STORAGE_KEY = 'sidebarCollapsed';
+
+            // Restore state from localStorage
+            if (localStorage.getItem(STORAGE_KEY) === 'true') {
+                sidebar.classList.add('collapsed');
+                document.body.classList.add('sidebar-collapsed');
+            }
+
+            toggle.addEventListener('click', function() {
+                sidebar.classList.toggle('collapsed');
+                document.body.classList.toggle('sidebar-collapsed');
+                localStorage.setItem(STORAGE_KEY, sidebar.classList.contains('collapsed'));
+            });
+        })();
+    </script>
 
     {% block extra_js %}{% endblock %}
 </body>

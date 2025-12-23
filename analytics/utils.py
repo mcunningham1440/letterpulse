@@ -13,6 +13,7 @@ import aiohttp
 import os
 import logging
 from datetime import datetime
+from zoneinfo import ZoneInfo
 import time
 from bs4 import BeautifulSoup
 from django.conf import settings
@@ -35,6 +36,106 @@ try:
     OPENAI_API_KEY = json.loads(OPENAI_API_KEY)["OPENAI_API_KEY"]
 except (json.JSONDecodeError, KeyError, TypeError):
     pass  # Already a plain string, use as-is
+
+
+# Timezone choices for user preferences - comprehensive list covering all major timezones
+TIMEZONE_CHOICES = [
+    # North America
+    ('America/New_York', 'Eastern Time (ET) - New York'),
+    ('America/Chicago', 'Central Time (CT) - Chicago'),
+    ('America/Denver', 'Mountain Time (MT) - Denver'),
+    ('America/Los_Angeles', 'Pacific Time (PT) - Los Angeles'),
+    ('America/Anchorage', 'Alaska Time (AKT)'),
+    ('Pacific/Honolulu', 'Hawaii Time (HST)'),
+    ('America/Phoenix', 'Arizona (MST - no DST)'),
+    ('America/Toronto', 'Eastern Time - Toronto'),
+    ('America/Vancouver', 'Pacific Time - Vancouver'),
+    ('America/Mexico_City', 'Mexico City (CST)'),
+    # South America
+    ('America/Sao_Paulo', 'São Paulo (BRT)'),
+    ('America/Buenos_Aires', 'Buenos Aires (ART)'),
+    ('America/Bogota', 'Bogotá (COT)'),
+    ('America/Santiago', 'Santiago (CLT)'),
+    # Europe
+    ('Europe/London', 'London (GMT/BST)'),
+    ('Europe/Paris', 'Paris (CET/CEST)'),
+    ('Europe/Berlin', 'Berlin (CET/CEST)'),
+    ('Europe/Amsterdam', 'Amsterdam (CET/CEST)'),
+    ('Europe/Madrid', 'Madrid (CET/CEST)'),
+    ('Europe/Rome', 'Rome (CET/CEST)'),
+    ('Europe/Zurich', 'Zurich (CET/CEST)'),
+    ('Europe/Stockholm', 'Stockholm (CET/CEST)'),
+    ('Europe/Warsaw', 'Warsaw (CET/CEST)'),
+    ('Europe/Athens', 'Athens (EET/EEST)'),
+    ('Europe/Moscow', 'Moscow (MSK)'),
+    ('Europe/Istanbul', 'Istanbul (TRT)'),
+    # Middle East & Africa
+    ('Asia/Dubai', 'Dubai (GST)'),
+    ('Asia/Jerusalem', 'Jerusalem (IST)'),
+    ('Africa/Cairo', 'Cairo (EET)'),
+    ('Africa/Johannesburg', 'Johannesburg (SAST)'),
+    ('Africa/Lagos', 'Lagos (WAT)'),
+    # Asia
+    ('Asia/Kolkata', 'India (IST)'),
+    ('Asia/Bangkok', 'Bangkok (ICT)'),
+    ('Asia/Singapore', 'Singapore (SGT)'),
+    ('Asia/Hong_Kong', 'Hong Kong (HKT)'),
+    ('Asia/Shanghai', 'Shanghai (CST)'),
+    ('Asia/Tokyo', 'Tokyo (JST)'),
+    ('Asia/Seoul', 'Seoul (KST)'),
+    ('Asia/Manila', 'Manila (PHT)'),
+    ('Asia/Jakarta', 'Jakarta (WIB)'),
+    # Oceania
+    ('Australia/Sydney', 'Sydney (AEST/AEDT)'),
+    ('Australia/Melbourne', 'Melbourne (AEST/AEDT)'),
+    ('Australia/Brisbane', 'Brisbane (AEST - no DST)'),
+    ('Australia/Perth', 'Perth (AWST)'),
+    ('Pacific/Auckland', 'Auckland (NZST/NZDT)'),
+    ('Pacific/Fiji', 'Fiji (FJT)'),
+    # UTC
+    ('UTC', 'UTC'),
+]
+
+
+def convert_to_user_timezone(dt, user_timezone_str):
+    """
+    Convert a UTC datetime to the user's preferred timezone.
+
+    Args:
+        dt: A timezone-aware datetime object (expected to be in UTC)
+        user_timezone_str: IANA timezone string (e.g., 'America/New_York')
+
+    Returns:
+        datetime object in the user's timezone, or None if dt is None/NaT
+    """
+    if dt is None:
+        return None
+
+    # Handle pandas NaT (Not a Time) values
+    if pd.isna(dt):
+        return None
+
+    user_tz = ZoneInfo(user_timezone_str)
+    return dt.astimezone(user_tz)
+
+
+def format_date_for_display(dt, user_timezone_str, format_str="%b %d, %Y"):
+    """
+    Convert UTC datetime to user timezone and format for display.
+
+    Args:
+        dt: UTC datetime
+        user_timezone_str: IANA timezone string
+        format_str: strftime format string (default: "Dec 21, 2025")
+
+    Returns:
+        Formatted date string or "-" if dt is None
+    """
+    if dt is None:
+        return "-"
+
+    local_dt = convert_to_user_timezone(dt, user_timezone_str)
+    return local_dt.strftime(format_str)
 
 
 class NotEnoughCredits(Exception):
@@ -726,7 +827,7 @@ def load_posts_from_db(publication_id=None, user=None):
         queryset = queryset.filter(publication__pub_id=publication_id)
 
     posts = queryset.values(
-        'post_id', 'title', 'subtitle', 'status', 'creation_date', 'publish_date_cst',
+        'post_id', 'title', 'subtitle', 'status', 'creation_date', 'publish_date',
         'recipients', 'delivered', 'email_opens', 'unique_email_opens',
         'email_clicks', 'unique_email_clicks', 'unsubscribes', 'spam_reports'
     )
@@ -865,21 +966,20 @@ def process_posts_data(posts_list):
         lambda s: "Draft" if s == 'draft' else "Published"
     )
 
-    # Convert creation date (always present)
+    # Convert creation date (always present) - keep in UTC
     posts_df['creation_date'] = pd.to_datetime(posts_df['created'], unit='s', utc=True)
-    posts_df['creation_date'] = posts_df['creation_date'].dt.tz_convert('America/Chicago')
 
-    # Add derived columns - handle drafts which have no publish_date
-    posts_df['publish_date_cst'] = pd.to_datetime(posts_df['publish_date'], unit='s', utc=True, errors='coerce')
-    # Convert to Chicago timezone where not null
-    mask = posts_df['publish_date_cst'].notna()
-    posts_df.loc[mask, 'publish_date_cst'] = posts_df.loc[mask, 'publish_date_cst'].dt.tz_convert('America/Chicago')
+    # Rename raw publish_date to avoid conflict, then create datetime field
+    posts_df = posts_df.rename(columns={'publish_date': 'publish_date_raw'})
 
-    posts_df['publish_dow'] = posts_df['publish_date_cst'].dt.strftime('%A')
+    # Convert publish_date - keep in UTC (handle drafts which have no publish_date)
+    posts_df['publish_date'] = pd.to_datetime(posts_df['publish_date_raw'], unit='s', utc=True, errors='coerce')
+
+    posts_df['publish_dow'] = posts_df['publish_date'].dt.strftime('%A')
     posts_df['email_open_rate'] = posts_df['unique_email_opens'] / posts_df['delivered'].replace(0, pd.NA)
     posts_df['email_click_rate'] = posts_df['unique_email_clicks'] / posts_df['unique_email_opens'].replace(0, pd.NA)
 
-    posts_df = posts_df.drop(columns=['created', 'publish_date', 'platform'])
+    posts_df = posts_df.drop(columns=['created', 'publish_date_raw', 'platform'])
 
     return posts_df
 

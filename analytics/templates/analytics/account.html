@@ -51,6 +51,22 @@
                     <label class="form-label text-muted">Member Since</label>
                     <div class="fw-medium">{{ user.date_joined|date:"F j, Y" }}</div>
                 </div>
+                <form method="post" action="{% url 'analytics:account' %}" class="mb-3">
+                    {% csrf_token %}
+                    <input type="hidden" name="action" value="update_timezone">
+                    <label for="timezone" class="form-label text-muted">Timezone</label>
+                    <div class="d-flex gap-2">
+                        <select class="form-select" id="timezone" name="timezone" style="max-width: 280px;">
+                            {% for tz_value, tz_label in timezone_choices %}
+                            <option value="{{ tz_value }}" {% if usage.timezone == tz_value %}selected{% endif %}>
+                                {{ tz_label }}
+                            </option>
+                            {% endfor %}
+                        </select>
+                        <button type="submit" class="btn btn-outline-primary btn-sm">Save</button>
+                    </div>
+                    <div class="form-text">Dates will be displayed in your selected timezone</div>
+                </form>
                 <div>
                     <a href="{% url 'account_change_password' %}" class="btn btn-outline-secondary btn-sm">
                         <i class="bi bi-lock me-1"></i>Change Password

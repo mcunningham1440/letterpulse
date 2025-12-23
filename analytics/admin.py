@@ -30,14 +30,14 @@ class PublicationAdmin(admin.ModelAdmin):
 @admin.register(Post)
 class PostAdmin(admin.ModelAdmin):
     list_display = (
-        'title', 'post_id', 'user', 'publication', 'status', 'creation_date', 'publish_date_cst',
+        'title', 'post_id', 'user', 'publication', 'status', 'creation_date', 'publish_date',
         'recipients', 'delivered', 'email_opens', 'unique_email_opens',
         'email_clicks', 'unique_email_clicks', 'unsubscribes', 'spam_reports',
         'created_at', 'updated_at'
     )
-    list_filter = ('status', 'publish_date_cst', 'publication', 'user')
+    list_filter = ('status', 'publish_date', 'publication', 'user')
     search_fields = ('title', 'subtitle', 'post_id', 'user__email')
-    ordering = ('-publish_date_cst',)
+    ordering = ('-publish_date',)
     readonly_fields = ('created_at', 'updated_at')
 
 

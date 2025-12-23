@@ -55,7 +55,7 @@
                                         <input type="checkbox" name="selected_posts" value="{{ forloop.counter0 }}"
                                                class="form-check-input post-checkbox">
                                     </td>
-                                    <td>{{ post.creation_date|date:"Y-m-d"|default:"-" }}</td>
+                                    <td data-order="{{ post.creation_date_sortable }}">{{ post.creation_date_display }}</td>
                                     <td>
                                         {% if post.status == "Draft" %}
                                             <span class="badge bg-warning text-dark">Draft</span>
@@ -63,7 +63,7 @@
                                             <span class="badge bg-success">Published</span>
                                         {% endif %}
                                     </td>
-                                    <td>{{ post.publish_date_cst|date:"Y-m-d"|default:"-" }}</td>
+                                    <td data-order="{{ post.publish_date_sortable }}">{{ post.publish_date_display }}</td>
                                     <td>{{ post.title }}</td>
                                     <td>{{ post.subtitle|default:"-" }}</td>
                                     <td class="text-end">{{ post.recipients|default:0 }}</td>
@@ -193,7 +193,7 @@
                                                class="form-check-input item-checkbox">
                                     </td>
                                     <td>{{ item.post_title }}</td>
-                                    <td>{{ item.post_date }}</td>
+                                    <td data-order="{{ item.post_date_sortable }}">{{ item.post_date_display }}</td>
                                     <td>{{ item.text|truncatewords:15 }}</td>
                                     <td>
                                         <span class="badge bg-secondary">{{ item.links|length }} link{{ item.links|length|pluralize }}</span>

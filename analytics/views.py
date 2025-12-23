@@ -152,6 +152,19 @@ def account_view(request):
 
             return redirect('analytics:account')
 
+        elif action == 'update_timezone':
+            # Handle timezone update
+            from .utils import TIMEZONE_CHOICES
+            new_timezone = request.POST.get('timezone', '').strip()
+            valid_timezones = [tz[0] for tz in TIMEZONE_CHOICES]
+            if new_timezone in valid_timezones:
+                usage.timezone = new_timezone
+                usage.save(update_fields=['timezone'])
+                messages.success(request, "Timezone updated successfully!")
+            else:
+                messages.error(request, "Invalid timezone selected.")
+            return redirect('analytics:account')
+
         elif action == 'switch_publication':
             # Handle publication switching
             new_pub_id = request.POST.get('beehiiv_pub_id', '').strip()
@@ -183,8 +196,10 @@ def account_view(request):
 
             return redirect('analytics:account')
 
+    from .utils import TIMEZONE_CHOICES
     context = {
         'usage': usage,
+        'timezone_choices': TIMEZONE_CHOICES,
     }
 
     return render(request, 'analytics/account.html', context)
@@ -200,17 +215,43 @@ def extract_view(request):
     """
     Display the extract page with posts table.
     """
+    from .utils import convert_to_user_timezone
+
     # Get current publication for filtering
     _, beehiiv_pub_id, _ = get_user_api_credentials(request.user)
 
+    # Get user timezone for date formatting
+    usage = UsageAccount.objects.get(user=request.user)
+    user_tz = usage.timezone
+
     # Load posts from database filtered by publication and user
     posts_df = load_posts_from_db(publication_id=beehiiv_pub_id, user=request.user)
-    
+
     # Reverse order so newer posts appear first
     posts_df = posts_df.iloc[::-1].reset_index(drop=True)
-    
+
     # Convert to list of dicts for template
     posts_data = posts_df.to_dict('records')
+
+    # Format dates for display with user's timezone
+    for post in posts_data:
+        # Format publish_date
+        local_dt = convert_to_user_timezone(post.get('publish_date'), user_tz)
+        if local_dt:
+            post['publish_date_display'] = local_dt.strftime('%b %d, %Y')
+            post['publish_date_sortable'] = local_dt.strftime('%Y-%m-%d')
+        else:
+            post['publish_date_display'] = '-'
+            post['publish_date_sortable'] = ''
+
+        # Format creation_date
+        local_dt = convert_to_user_timezone(post.get('creation_date'), user_tz)
+        if local_dt:
+            post['creation_date_display'] = local_dt.strftime('%b %d, %Y')
+            post['creation_date_sortable'] = local_dt.strftime('%Y-%m-%d')
+        else:
+            post['creation_date_display'] = '-'
+            post['creation_date_sortable'] = ''
     
     # Get extracted items from session if available
     extracted_items = request.session.get('extracted_items', None)
@@ -235,7 +276,32 @@ def extract_view(request):
         df['click_rate'] = df['click_rate'].apply(
             lambda x: [f"{rate * 100:.2f}%" for rate in x] if x else []
         )
-        
+
+        # Format post_date for display (stored as string in session)
+        if 'post_date' in df.columns:
+            from datetime import datetime as dt
+
+            def format_post_date(date_str):
+                if not date_str or date_str == 'None' or date_str == 'NaT':
+                    return '-', ''
+                try:
+                    # Parse the date string (may be in various formats)
+                    if 'T' in str(date_str) or '+' in str(date_str):
+                        # ISO format with time/timezone
+                        parsed = pd.to_datetime(date_str, utc=True)
+                        local_dt = convert_to_user_timezone(parsed, user_tz)
+                    else:
+                        # Simple date format
+                        parsed = dt.strptime(str(date_str)[:10], '%Y-%m-%d')
+                        local_dt = parsed
+                    return local_dt.strftime('%b %d, %Y'), local_dt.strftime('%Y-%m-%d')
+                except Exception:
+                    return str(date_str), str(date_str)
+
+            formatted = df['post_date'].apply(format_post_date)
+            df['post_date_display'] = formatted.apply(lambda x: x[0])
+            df['post_date_sortable'] = formatted.apply(lambda x: x[1])
+
         extracted_items_data = df.to_dict('records')
     
     # Get content sets for current publication and user only
@@ -304,7 +370,7 @@ def run_extraction(request):
         
         # Prepare data for parallel extraction (now includes post_id)
         posts_data = [
-            (row.id, row.title, f"{row.id}.html", row.publish_date_cst, row.unique_email_opens)
+            (row.id, row.title, f"{row.id}.html", row.publish_date, row.unique_email_opens)
             for _, row in posts_of_interest.iterrows()
         ]
         
@@ -539,7 +605,11 @@ def load_content_set(request, set_name):
     try:
         content_set = ContentSet.objects.get(name=set_name, user=request.user)
         df = content_set.to_dataframe()
-        
+
+        # Get user timezone for date formatting
+        usage = UsageAccount.objects.get(user=request.user)
+        user_tz = usage.timezone
+
         # Format for display
         if not df.empty:
             # Calculate max clicks and max click rate before formatting
@@ -547,16 +617,38 @@ def load_content_set(request, set_name):
             df['max_click_rate'] = df['click_rate'].apply(
                 lambda x: f"{max(x) * 100:.2f}%" if x and max(x) > 0 else "0.00%"
             )
-            
+
             # Format click rates as percentages
             df['click_rate'] = df['click_rate'].apply(
                 lambda x: [f"{rate * 100:.2f}%" for rate in x] if x else []
             )
-            
+
+            # Format post_date for display
+            if 'post_date' in df.columns:
+                from datetime import datetime as dt
+
+                def format_date(d):
+                    if d is None:
+                        return '-', ''
+                    try:
+                        if hasattr(d, 'strftime'):
+                            # Already a date/datetime object
+                            return d.strftime('%b %d, %Y'), d.strftime('%Y-%m-%d')
+                        else:
+                            # String - parse it
+                            parsed = dt.strptime(str(d)[:10], '%Y-%m-%d')
+                            return parsed.strftime('%b %d, %Y'), parsed.strftime('%Y-%m-%d')
+                    except Exception:
+                        return str(d), str(d)
+
+                formatted = df['post_date'].apply(format_date)
+                df['post_date_display'] = formatted.apply(lambda x: x[0])
+                df['post_date_sortable'] = formatted.apply(lambda x: x[1])
+
             data = df.to_dict('records')
         else:
             data = []
-        
+
         return JsonResponse({
             'success': True,
             'name': content_set.name,
@@ -946,8 +1038,8 @@ def refresh_posts(request):
         updated_count = 0
 
         for _, row in posts_df.iterrows():
-            # Handle null publish_date_cst for drafts
-            publish_date = row['publish_date_cst']
+            # Handle null publish_date for drafts
+            publish_date = row['publish_date']
             if pd.isna(publish_date):
                 publish_date = None
 
@@ -960,7 +1052,7 @@ def refresh_posts(request):
                     'subtitle': row.get('subtitle', ''),
                     'status': row.get('status', 'Published'),
                     'creation_date': row.get('creation_date'),
-                    'publish_date_cst': publish_date,
+                    'publish_date': publish_date,
                     'recipients': row.get('recipients', 0),
                     'delivered': row.get('delivered', 0),
                     'email_opens': row.get('email_opens', 0),

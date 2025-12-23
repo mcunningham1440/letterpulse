@@ -52,6 +52,11 @@ class UsageAccount(models.Model):
         blank=True,
         help_text="Cached list of publications from Beehiiv API"
     )
+    timezone = models.CharField(
+        max_length=50,
+        default='America/Chicago',
+        help_text="User's preferred timezone for date display"
+    )
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -191,7 +196,7 @@ class Post(models.Model):
     subtitle = models.TextField(blank=True, null=True)
     status = models.CharField(max_length=20, default='Published', help_text="Draft or Published")
     creation_date = models.DateTimeField(blank=True, null=True, help_text="When the post was first created in Beehiiv")
-    publish_date_cst = models.DateField(blank=True, null=True)
+    publish_date = models.DateTimeField(blank=True, null=True, help_text="When the post was published (stored in UTC)")
     recipients = models.IntegerField(default=0)
     delivered = models.IntegerField(default=0)
     email_opens = models.IntegerField(default=0)
@@ -205,15 +210,15 @@ class Post(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
     
     class Meta:
-        ordering = ['-publish_date_cst']
+        ordering = ['-publish_date']
         indexes = [
-            models.Index(fields=['-publish_date_cst']),
+            models.Index(fields=['-publish_date']),
             models.Index(fields=['post_id']),
         ]
         unique_together = [['post_id', 'user']]
 
     def __str__(self):
-        return f"{self.title} ({self.publish_date_cst})"
+        return f"{self.title} ({self.publish_date})"
     
     @property
     def html_filename(self):

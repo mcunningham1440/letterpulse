@@ -73,8 +73,8 @@ Stores newsletter post metadata and engagement stats from Beehiiv:
 - `publication`: ForeignKey to Publication (nullable)
 - `title`, `subtitle`
 - `status`: "Draft" or "Published"
-- `creation_date`: DateTime when post was created in Beehiiv (nullable)
-- `publish_date_cst`: Date field (nullable for drafts)
+- `creation_date`: DateTime when post was created in Beehiiv (nullable, stored in UTC)
+- `publish_date`: DateTime when post was published (nullable for drafts, stored in UTC)
 - Engagement metrics: `recipients`, `delivered`, `email_opens`, `unique_email_opens`, `email_clicks`, `unique_email_clicks`, `unsubscribes`, `spam_reports`
 - Unique constraint: `(post_id, user)` - same post can exist for multiple users
 
@@ -102,6 +102,7 @@ Tracks AI usage credits and API credentials per user:
 - `beehiiv_pub_id`: User's currently selected Beehiiv publication ID
 - `api_key_valid`: Boolean indicating if the API key has been validated
 - `available_publications`: JSON list of publications available to the user
+- `timezone`: User's preferred timezone for date display (IANA timezone string, default 'America/Chicago')
 
 Billing cycle: Credits reset on the same day of the month as the user's signup date (e.g., signup on the 15th means credits renew on the 15th of each month). For months with fewer days, renewal occurs on the last day of the month.
 
@@ -263,7 +264,7 @@ All Beehiiv API functions require `beehiiv_token` and `beehiiv_pub_id` parameter
 - `fetch_posts_html_and_clicks_parallel(post_ids, beehiiv_token, beehiiv_pub_id)`: Batch fetch with semaphore (5 concurrent)
 - `fetch_all_posts(beehiiv_token, beehiiv_pub_id)`: Paginated fetch of all posts (includes drafts, confirmed, and archived via `status=all`)
 - `refresh_posts_data(beehiiv_token, beehiiv_pub_id)`: Full refresh from Beehiiv API
-- `process_posts_data()`: Converts raw API data to DataFrame. Drafts have `publish_date_cst` set to "Draft"
+- `process_posts_data()`: Converts raw API data to DataFrame. All dates are stored in UTC. Drafts have null `publish_date`
 
 Views use `get_user_api_credentials(user)` helper to retrieve credentials and redirect to Account page if not configured.
 

@@ -220,10 +220,12 @@
         
         data.data.forEach((item, index) => {
             const row = document.createElement('tr');
+            const postDateDisplay = item.post_date_display || item.post_date || '-';
+            const postDateSortable = item.post_date_sortable || item.post_date || '';
             row.innerHTML = `
                 <td><input type="checkbox" class="item-checkbox" data-index="${index}"></td>
                 <td>${item.post_title}</td>
-                <td>${item.post_date}</td>
+                <td data-order="${postDateSortable}">${postDateDisplay}</td>
                 <td>${truncateText(item.text, 50)}</td>
                 <td><span class="badge bg-secondary">${item.links.length} link${item.links.length !== 1 ? 's' : ''}</span></td>
                 <td class="text-end">${item.max_clicks}</td>
@@ -234,7 +236,7 @@
         
         // Initialize DataTable
         const table = $('#contentTable').DataTable({
-            order: [[1, 'desc']], // Sort by Post Date descending by default
+            order: [[2, 'desc']], // Sort by Post Date (column 2) descending by default
             paging: false,
             scrollY: '400px',
             scrollCollapse: true
