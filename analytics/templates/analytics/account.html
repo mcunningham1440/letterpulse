@@ -51,20 +51,17 @@
                     <label class="form-label text-muted">Member Since</label>
                     <div class="fw-medium">{{ user.date_joined|date:"F j, Y" }}</div>
                 </div>
-                <form method="post" action="{% url 'analytics:account' %}" class="mb-3">
+                <form method="post" action="{% url 'analytics:account' %}" class="mb-3" id="timezoneForm">
                     {% csrf_token %}
                     <input type="hidden" name="action" value="update_timezone">
                     <label for="timezone" class="form-label text-muted">Timezone</label>
-                    <div class="d-flex gap-2">
-                        <select class="form-select" id="timezone" name="timezone" style="max-width: 280px;">
-                            {% for tz_value, tz_label in timezone_choices %}
-                            <option value="{{ tz_value }}" {% if usage.timezone == tz_value %}selected{% endif %}>
-                                {{ tz_label }}
-                            </option>
-                            {% endfor %}
-                        </select>
-                        <button type="submit" class="btn btn-outline-primary btn-sm">Save</button>
-                    </div>
+                    <select class="form-select" id="timezone" name="timezone" style="max-width: 280px;">
+                        {% for tz_value, tz_label in timezone_choices %}
+                        <option value="{{ tz_value }}" {% if usage.timezone == tz_value %}selected{% endif %}>
+                            {{ tz_label }}
+                        </option>
+                        {% endfor %}
+                    </select>
                     <div class="form-text">Dates will be displayed in your selected timezone</div>
                 </form>
                 <div>
@@ -127,7 +124,22 @@
                         </div>
                     </div>
 
-                    {% if usage.api_key_valid and usage.available_publications %}
+                    <div class="d-flex gap-2 mb-3">
+                        <button type="submit" class="btn btn-primary">
+                            <i class="bi bi-check-lg me-1"></i>Save Token
+                        </button>
+                        {% if usage.beehiiv_token %}
+                        <button type="button" class="btn btn-outline-danger" id="clearCredentials">
+                            <i class="bi bi-trash me-1"></i>Clear
+                        </button>
+                        {% endif %}
+                    </div>
+                </form>
+
+                {% if usage.api_key_valid and usage.available_publications %}
+                <form method="post" action="{% url 'analytics:account' %}" id="publicationForm">
+                    {% csrf_token %}
+                    <input type="hidden" name="action" value="switch_publication">
                     <div class="mb-3">
                         <label for="beehiiv_pub_id" class="form-label">Publication</label>
                         <select class="form-select" id="beehiiv_pub_id" name="beehiiv_pub_id">
@@ -141,22 +153,8 @@
                             Select the publication to analyze. Each publication has its own posts and content sets.
                         </div>
                     </div>
-                    {% else %}
-                    <input type="hidden" name="beehiiv_pub_id" value="">
-                    {% endif %}
-
-                    <div class="d-flex gap-2">
-                        <button type="submit" class="btn btn-primary">
-                            <i class="bi bi-check-lg me-1"></i>
-                            {% if usage.api_key_valid %}Save Changes{% else %}Validate & Save{% endif %}
-                        </button>
-                        {% if usage.beehiiv_token %}
-                        <button type="button" class="btn btn-outline-danger" id="clearCredentials">
-                            <i class="bi bi-trash me-1"></i>Clear
-                        </button>
-                        {% endif %}
-                    </div>
                 </form>
+                {% endif %}
 
             </div>
         </div>
@@ -167,6 +165,22 @@
 {% block extra_js %}
 <script>
 document.addEventListener('DOMContentLoaded', function() {
+    // Auto-submit timezone form on change
+    const timezoneSelect = document.getElementById('timezone');
+    if (timezoneSelect) {
+        timezoneSelect.addEventListener('change', function() {
+            document.getElementById('timezoneForm').submit();
+        });
+    }
+
+    // Auto-submit publication form on change
+    const publicationSelect = document.getElementById('beehiiv_pub_id');
+    if (publicationSelect) {
+        publicationSelect.addEventListener('change', function() {
+            document.getElementById('publicationForm').submit();
+        });
+    }
+
     // Toggle token visibility
     const toggleBtn = document.getElementById('toggleToken');
     const tokenInput = document.getElementById('beehiiv_token');
@@ -187,8 +201,7 @@ document.addEventListener('DOMContentLoaded', function() {
         clearBtn.addEventListener('click', function() {
             if (confirm('Are you sure you want to clear your API credentials?')) {
                 document.getElementById('beehiiv_token').value = '';
-                document.getElementById('beehiiv_pub_id').value = '';
-                document.querySelector('form').submit();
+                document.getElementById('credentialsForm').submit();
             }
         });
     }

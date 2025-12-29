@@ -119,25 +119,6 @@ def convert_to_user_timezone(dt, user_timezone_str):
     return dt.astimezone(user_tz)
 
 
-def format_date_for_display(dt, user_timezone_str, format_str="%b %d, %Y"):
-    """
-    Convert UTC datetime to user timezone and format for display.
-
-    Args:
-        dt: UTC datetime
-        user_timezone_str: IANA timezone string
-        format_str: strftime format string (default: "Dec 21, 2025")
-
-    Returns:
-        Formatted date string or "-" if dt is None
-    """
-    if dt is None:
-        return "-"
-
-    local_dt = convert_to_user_timezone(dt, user_timezone_str)
-    return local_dt.strftime(format_str)
-
-
 class NotEnoughCredits(Exception):
     """Raised when a user doesn't have enough credits for an operation."""
     pass
@@ -827,7 +808,9 @@ def load_posts_from_db(publication_id=None, user=None):
         queryset = queryset.filter(publication__pub_id=publication_id)
 
     posts = queryset.values(
-        'post_id', 'title', 'subtitle', 'status', 'creation_date', 'publish_date',
+        'post_id', 'title',
+        # 'subtitle',  # Commented out - re-enable to show subtitle column
+        'status', 'creation_date', 'publish_date',
         'recipients', 'delivered', 'email_opens', 'unique_email_opens',
         'email_clicks', 'unique_email_clicks', 'unsubscribes', 'spam_reports'
     )
@@ -921,7 +904,7 @@ def process_posts_data(posts_list):
     posts = {
         'id': [],
         'title': [],
-        'subtitle': [],
+        # 'subtitle': [],  # Commented out - re-enable to show subtitle column
         'status': [],
         'created': [],
         'publish_date': [],
@@ -961,13 +944,27 @@ def process_posts_data(posts_list):
 
     posts_df = pd.DataFrame(posts)
 
-    # Convert API status to simplified status: "Draft" or "Published"
-    posts_df['status'] = posts_df['status'].apply(
-        lambda s: "Draft" if s == 'draft' else "Published"
-    )
-
     # Convert creation date (always present) - keep in UTC
     posts_df['creation_date'] = pd.to_datetime(posts_df['created'], unit='s', utc=True)
+
+    # Convert publish_date to datetime for status check
+    posts_df['publish_date_dt'] = pd.to_datetime(posts_df['publish_date'], unit='s', utc=True, errors='coerce')
+
+    # Convert API status to simplified status: "Draft", "Scheduled", or "Published"
+    # Beehiiv uses "confirmed" for both published and scheduled posts
+    import datetime
+    now = datetime.datetime.now(datetime.timezone.utc)
+
+    def get_display_status(row):
+        if row['status'] == 'draft':
+            return "Draft"
+        elif pd.notna(row['publish_date_dt']) and row['publish_date_dt'] > now:
+            return "Scheduled"
+        else:
+            return "Published"
+
+    posts_df['status'] = posts_df.apply(get_display_status, axis=1)
+    posts_df = posts_df.drop(columns=['publish_date_dt'])
 
     # Rename raw publish_date to avoid conflict, then create datetime field
     posts_df = posts_df.rename(columns={'publish_date': 'publish_date_raw'})

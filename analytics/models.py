@@ -194,7 +194,7 @@ class Post(models.Model):
     )
     title = models.CharField(max_length=500)
     subtitle = models.TextField(blank=True, null=True)
-    status = models.CharField(max_length=20, default='Published', help_text="Draft or Published")
+    status = models.CharField(max_length=20, default='Published', help_text="Draft, Scheduled, or Published")
     creation_date = models.DateTimeField(blank=True, null=True, help_text="When the post was first created in Beehiiv")
     publish_date = models.DateTimeField(blank=True, null=True, help_text="When the post was published (stored in UTC)")
     recipients = models.IntegerField(default=0)

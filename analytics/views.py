@@ -361,7 +361,6 @@ def run_extraction(request):
         post_ids = posts_of_interest['id'].tolist()
 
         # Fetch HTMLs and clicks dynamically from API in parallel
-        messages.info(request, f"Fetching content and click data for {len(post_ids)} posts...")
         htmls, clicks_by_id = async_to_sync(fetch_posts_html_and_clicks_parallel)(post_ids, beehiiv_token, beehiiv_pub_id)
         
         if not htmls:
@@ -1013,8 +1012,6 @@ def refresh_posts(request):
         # Get API credentials (already validated by decorator)
         beehiiv_token, beehiiv_pub_id, _ = get_user_api_credentials(request.user)
 
-        messages.info(request, "Fetching latest posts from Beehiiv...")
-
         # Get or create the Publication record
         usage = UsageAccount.objects.get(user=request.user)
         pub_data = next((p for p in usage.available_publications if p["id"] == beehiiv_pub_id), None)
@@ -1069,10 +1066,7 @@ def refresh_posts(request):
             else:
                 updated_count += 1
         
-        messages.success(
-            request, 
-            f"Successfully refreshed posts! Created {created_count} new posts and updated {updated_count} existing posts."
-        )
+        messages.success(request, "Updated posts")
         
     except Exception as e:
         messages.error(request, f"Error refreshing posts: {str(e)}")
@@ -1117,53 +1111,65 @@ def download_click_visualization(request):
         post_ids = posts_of_interest['id'].tolist()
 
         # Fetch HTMLs and clicks from API
-        messages.info(request, f"Fetching content and click data for {len(post_ids)} posts...")
         htmls, clicks_by_id = async_to_sync(fetch_posts_html_and_clicks_parallel)(post_ids, beehiiv_token, beehiiv_pub_id)
         
         if not htmls:
             messages.error(request, "Failed to fetch content from Beehiiv.")
             return redirect('analytics:extract')
         
-        # Create in-memory ZIP file
+        # Build list of generated files
+        generated_files = []
+
+        for _, row in posts_of_interest.iterrows():
+            post_id = row['id']
+            html_filename = f"{post_id}.html"
+
+            # Check if we have HTML and clicks for this post
+            if html_filename not in htmls:
+                continue
+
+            if post_id not in clicks_by_id:
+                continue
+
+            # Get the HTML and clicks
+            post_html = htmls[html_filename]
+            clicks_dict = clicks_by_id[post_id]
+            unique_email_opens = row['unique_email_opens']
+
+            # Generate click visualization HTML
+            visualization_html = generate_click_visualization_html(
+                post_html,
+                clicks_dict,
+                unique_email_opens
+            )
+
+            # Create a safe filename from the post title
+            safe_title = "".join(c if c.isalnum() or c in (' ', '-', '_') else '_' for c in row['title'])
+            safe_title = safe_title[:50]  # Limit length
+
+            generated_files.append((f"{safe_title}.html", visualization_html))
+
+        if not generated_files:
+            messages.error(request, "Failed to generate any visualizations.")
+            return redirect('analytics:extract')
+
+        # Single file: return HTML directly
+        if len(generated_files) == 1:
+            filename, html_content = generated_files[0]
+            response = HttpResponse(html_content, content_type='text/html')
+            response['Content-Disposition'] = f'attachment; filename="{filename}"'
+            return response
+
+        # Multiple files: create ZIP
         zip_buffer = io.BytesIO()
-        
         with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
-            for _, row in posts_of_interest.iterrows():
-                post_id = row['id']
-                html_filename = f"{post_id}.html"
-                
-                # Check if we have HTML and clicks for this post
-                if html_filename not in htmls:
-                    continue
-                    
-                if post_id not in clicks_by_id:
-                    continue
-                
-                # Get the HTML and clicks
-                post_html = htmls[html_filename]
-                clicks_dict = clicks_by_id[post_id]
-                unique_email_opens = row['unique_email_opens']
-                
-                # Generate click visualization HTML
-                visualization_html = generate_click_visualization_html(
-                    post_html, 
-                    clicks_dict, 
-                    unique_email_opens
-                )
-                
-                # Create a safe filename from the post title
-                safe_title = "".join(c if c.isalnum() or c in (' ', '-', '_') else '_' for c in row['title'])
-                safe_title = safe_title[:50]  # Limit length
-                
-                # Add to ZIP with a descriptive filename
-                zip_filename = f"{safe_title}_{post_id}_clicks.html"
-                zip_file.writestr(zip_filename, visualization_html)
-        
-        # Prepare the response
+            for filename, html_content in generated_files:
+                zip_file.writestr(filename, html_content)
+
         zip_buffer.seek(0)
         response = HttpResponse(zip_buffer.getvalue(), content_type='application/zip')
         response['Content-Disposition'] = 'attachment; filename="click_visualizations.zip"'
-        
+
         return response
         
     except Exception as e:
@@ -1231,28 +1237,49 @@ def download_annotated_posts(request):
         if not annotated_htmls:
             messages.error(request, "Failed to generate any annotated posts.")
             return redirect('analytics:extract')
-        
-        # Create in-memory ZIP file
+
+        # Build list of generated files
+        generated_files = []
+
+        for _, row in posts_of_interest.iterrows():
+            post_id = row['id']
+
+            if post_id not in annotated_htmls:
+                continue
+
+            annotated_html = annotated_htmls[post_id]
+
+            # Create a safe filename from the post title
+            safe_title = "".join(c if c.isalnum() or c in (' ', '-', '_') else '_' for c in row['title'])
+            safe_title = safe_title[:50]  # Limit length
+
+            generated_files.append((f"{safe_title}.html", annotated_html))
+
+        # Single file: return HTML directly
+        if len(generated_files) == 1:
+            filename, html_content = generated_files[0]
+            response = HttpResponse(html_content, content_type='text/html')
+            response['Content-Disposition'] = f'attachment; filename="{filename}"'
+
+            # Add credit info headers for frontend to update sidebar
+            from .models import UsageAccount
+            try:
+                usage = UsageAccount.objects.get(user=request.user)
+                usage.ensure_current_period()
+                response['X-Credits-Used'] = str(usage.used_this_period)
+                response['X-Credits-Quota'] = str(usage.monthly_quota)
+                response['Access-Control-Expose-Headers'] = 'X-Credits-Used, X-Credits-Quota'
+            except UsageAccount.DoesNotExist:
+                pass
+
+            return response
+
+        # Multiple files: create ZIP
         zip_buffer = io.BytesIO()
-        
         with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
-            for _, row in posts_of_interest.iterrows():
-                post_id = row['id']
-                
-                if post_id not in annotated_htmls:
-                    continue
-                
-                annotated_html = annotated_htmls[post_id]
-                
-                # Create a safe filename from the post title
-                safe_title = "".join(c if c.isalnum() or c in (' ', '-', '_') else '_' for c in row['title'])
-                safe_title = safe_title[:50]  # Limit length
-                
-                # Add to ZIP with a descriptive filename
-                zip_filename = f"{safe_title}_{post_id}_annotated.html"
-                zip_file.writestr(zip_filename, annotated_html)
-        
-        # Prepare the response
+            for filename, html_content in generated_files:
+                zip_file.writestr(filename, html_content)
+
         zip_buffer.seek(0)
         response = HttpResponse(zip_buffer.getvalue(), content_type='application/zip')
         response['Content-Disposition'] = 'attachment; filename="annotated_posts.zip"'

@@ -5,32 +5,24 @@
 {% block content %}
 <div class="row">
     <div class="col-12">
-        <div class="d-flex justify-content-between align-items-center mb-4">
-            <h1 class="mb-0">Extract Content from Posts</h1>
-            <div id="refreshPostsProgress">
-                <form method="post" action="{% url 'analytics:refresh_posts' %}" style="display: inline;">
-                    {% csrf_token %}
-                    <button type="submit" class="btn btn-success" id="refreshPostsBtn">
-                        <i class="bi bi-arrow-clockwise"></i> Refresh Posts
-                    </button>
-                </form>
-            </div>
-        </div>
-        
         <!-- Posts Selection Card -->
         <div class="card">
-            <div class="card-header">
-                <h5 class="mb-0">Select Posts for Extraction</h5>
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0">Select Posts</h5>
+                <div id="refreshPostsProgress">
+                    <form method="post" action="{% url 'analytics:refresh_posts' %}" style="display: inline;">
+                        {% csrf_token %}
+                        <button type="submit" class="btn btn-success btn-sm" id="refreshPostsBtn">
+                            <i class="bi bi-arrow-clockwise"></i> Refresh Posts
+                        </button>
+                    </form>
+                </div>
             </div>
             <div class="card-body">
-                <div class="alert alert-info mb-3">
-                    <i class="bi bi-info-circle"></i>
-                    Check the boxes next to posts you want to analyze, then provide a content description below.
-                </div>
-                
                 <form method="post" action="{% url 'analytics:run_extraction' %}" id="extractionForm">
                     {% csrf_token %}
-                    
+                    <input type="hidden" id="content_desc" name="content_desc" value="">
+
                     <div class="table-responsive">
                         <table class="table table-hover table-sm" id="postsTable">
                             <thead>
@@ -42,7 +34,7 @@
                                     <th>Status</th>
                                     <th>Publish Date</th>
                                     <th>Title</th>
-                                    <th>Subtitle</th>
+                                    <!-- <th>Subtitle</th> -->
                                     <th class="text-end">Recipients</th>
                                     <th class="text-end">Opens</th>
                                     <th class="text-end">Clicks</th>
@@ -59,13 +51,15 @@
                                     <td>
                                         {% if post.status == "Draft" %}
                                             <span class="badge bg-warning text-dark">Draft</span>
+                                        {% elif post.status == "Scheduled" %}
+                                            <span class="badge bg-primary">Scheduled</span>
                                         {% else %}
                                             <span class="badge bg-success">Published</span>
                                         {% endif %}
                                     </td>
                                     <td data-order="{{ post.publish_date_sortable }}">{{ post.publish_date_display }}</td>
                                     <td>{{ post.title }}</td>
-                                    <td>{{ post.subtitle|default:"-" }}</td>
+                                    <!-- <td>{{ post.subtitle|default:"-" }}</td> -->
                                     <td class="text-end">{{ post.recipients|default:0 }}</td>
                                     <td class="text-end">{{ post.unique_email_opens|default:0 }}</td>
                                     <td class="text-end">{{ post.unique_email_clicks|default:0 }}</td>
@@ -74,85 +68,84 @@
                             </tbody>
                         </table>
                     </div>
-                    
-                    <hr class="my-4">
-                    
-                    <!-- Get Improvement Tips Section -->
-                    <div class="row mb-4">
-                        <div class="col-12">
-                            <div id="downloadAnnotatedProgress">
-                                <div class="d-flex align-items-center gap-3">
-                                    <button type="button" class="btn btn-warning" id="downloadAnnotatedBtn">
-                                        <i class="bi bi-download"></i> Download Improvement Tips
+
+                    <!-- Sticky Action Bar -->
+                    <div class="sticky-action-bar bg-light border-top py-3 mt-3" id="actionBar" style="position: sticky; bottom: 0; z-index: 1020;">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <div class="d-flex align-items-center">
+                                <span class="text-muted me-3">
+                                    <i class="bi bi-check2-square"></i>
+                                    <span id="selectedCount">0</span> posts selected
+                                </span>
+                            </div>
+                            <div class="d-flex gap-2">
+                                <!-- Download Click Visualization -->
+                                <div id="downloadClickVizProgress" style="min-width: 200px;">
+                                    <button type="button" class="btn btn-info btn-sm w-100" id="downloadClickVizBtn">
+                                        <i class="bi bi-download"></i> Download Click Visualization
                                     </button>
-                                    <div class="dropdown">
-                                        <button class="btn btn-outline-secondary dropdown-toggle" type="button" id="reportsDropdown" data-bs-toggle="dropdown" aria-expanded="false" data-bs-auto-close="outside">
-                                            Select Reports
-                                        </button>
-                                        <ul class="dropdown-menu p-3" aria-labelledby="reportsDropdown" style="min-width: 300px;">
-                                            {% if all_reports %}
-                                                <li class="mb-2">
-                                                    <div class="form-check">
-                                                        <input class="form-check-input" type="checkbox" id="selectAllReports">
-                                                        <label class="form-check-label fw-bold" for="selectAllReports">Select All</label>
-                                                    </div>
-                                                </li>
-                                                <li><hr class="dropdown-divider"></li>
-                                                {% for report in all_reports %}
-                                                <li>
-                                                    <div class="form-check">
-                                                        <input class="form-check-input report-checkbox" type="checkbox" name="selected_reports" value="{{ report.id }}" id="report_{{ report.id }}">
-                                                        <label class="form-check-label" for="report_{{ report.id }}">
-                                                            {{ report.name }}
-                                                            <small class="text-muted d-block">{{ report.content_set.name }}</small>
-                                                        </label>
-                                                    </div>
-                                                </li>
-                                                {% endfor %}
-                                            {% else %}
-                                                <li class="text-muted">No reports available</li>
-                                            {% endif %}
-                                        </ul>
+                                </div>
+
+                                <!-- Extract Content Dropdown -->
+                                <div class="dropdown" id="extractContentProgress" style="min-width: 200px;">
+                                    <button class="btn btn-primary btn-sm w-100 dropdown-toggle" type="button" id="extractContentDropdown" data-bs-toggle="dropdown" aria-expanded="false" data-bs-auto-close="outside">
+                                        <i class="bi bi-file-earmark-text"></i> Extract Content
+                                    </button>
+                                    <div class="dropdown-menu p-3" aria-labelledby="extractContentDropdown" style="min-width: 320px;">
+                                        <div class="mb-3">
+                                            <label for="content_desc_input" class="form-label small fw-bold">Item Description</label>
+                                            <input type="text"
+                                                   class="form-control form-control-sm"
+                                                   id="content_desc_input"
+                                                   placeholder="e.g., 'Items in the quick links section'">
+                                            <div class="form-text small">Describe the content to extract</div>
+                                        </div>
+                                        <div class="d-flex justify-content-between align-items-center">
+                                            <small class="text-muted">1 credit/post</small>
+                                            <button type="button" class="btn btn-primary btn-sm" id="extractContentBtn">
+                                                <i class="bi bi-play-fill"></i> Run
+                                            </button>
+                                        </div>
                                     </div>
                                 </div>
-                                <div class="form-text">Select reports and posts, then download annotated HTML files with improvement tips</div>
-                                <div class="form-text">🧠 1 AI credit per post</div>
-                            </div>
-                        </div>
-                    </div>
-                    
-                    <!-- Download Click Visualization Button -->
-                    <div class="row mb-4">
-                        <div class="col-12">
-                            <button type="button" class="btn btn-info" id="downloadClickVizBtn">
-                                <i class="bi bi-download"></i> Download Click Visualization
-                            </button>
-                            <div class="form-text">Download HTML files showing click counts next to each link in the selected posts</div>
-                            <div class="form-text">Free</div>
-                        </div>
-                    </div>
-                    
-                    <hr class="my-4">
-                    
-                    <!-- Content Description -->
-                    <div class="row">
-                        <div class="col-md-9">
-                            <label for="content_desc" class="form-label fw-bold">Content Description</label>
-                            <input type="text"
-                                   class="form-control"
-                                   id="content_desc"
-                                   name="content_desc"
-                                   placeholder="e.g., 'Items in the quick links section'"
-                                   required>
-                            <div class="form-text">Describe the content you want to extract from the selected posts</div>
-                            <div class="form-text">🧠 1 AI credit per post</div>
-                        </div>
-                        <div class="col-md-3">
-                            <div id="extractContentProgress">
-                                <label class="form-label fw-bold invisible">Action</label>
-                                <button type="submit" class="btn btn-primary w-100">
-                                    Extract Content
-                                </button>
+
+                                <!-- Get Improvement Tips Dropdown -->
+                                <div class="dropdown" id="downloadAnnotatedProgress" style="min-width: 200px;">
+                                    <button class="btn btn-warning btn-sm w-100 dropdown-toggle" type="button" id="improvementTipsDropdown" data-bs-toggle="dropdown" aria-expanded="false" data-bs-auto-close="outside">
+                                        <i class="bi bi-lightbulb"></i> Get Improvement Tips
+                                    </button>
+                                    <div class="dropdown-menu p-3" aria-labelledby="improvementTipsDropdown" style="min-width: 320px;">
+                                        <div class="mb-3">
+                                            <label class="form-label small fw-bold">Select Reports</label>
+                                            <div style="max-height: 200px; overflow-y: auto;">
+                                                {% if all_reports %}
+                                                    <div class="form-check mb-2">
+                                                        <input class="form-check-input" type="checkbox" id="selectAllReports">
+                                                        <label class="form-check-label fw-bold small" for="selectAllReports">Select All</label>
+                                                    </div>
+                                                    <hr class="my-2">
+                                                    {% for report in all_reports %}
+                                                    <div class="form-check">
+                                                        <input class="form-check-input report-checkbox" type="checkbox" name="selected_reports" value="{{ report.id }}" id="report_{{ report.id }}">
+                                                        <label class="form-check-label small" for="report_{{ report.id }}">
+                                                            {{ report.name }}
+                                                            <span class="text-muted d-block" style="font-size: 0.75rem;">{{ report.content_set.name }}</span>
+                                                        </label>
+                                                    </div>
+                                                    {% endfor %}
+                                                {% else %}
+                                                    <span class="text-muted small">No reports available</span>
+                                                {% endif %}
+                                            </div>
+                                        </div>
+                                        <div class="d-flex justify-content-between align-items-center">
+                                            <small class="text-muted">1 credit/post</small>
+                                            <button type="button" class="btn btn-warning btn-sm" id="downloadAnnotatedBtn">
+                                                <i class="bi bi-play-fill"></i> Run
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -206,77 +199,77 @@
                         </table>
                     </div>
                     
-                    <div class="text-center mt-3">
-                        <button type="submit" class="btn btn-danger">Remove Selected Items</button>
-                    </div>
                 </form>
-                
-                <hr class="my-4">
-                
-                <!-- Save Content Set -->
-                <h5 class="mb-3">Save Content Set</h5>
-                
-                <!-- Toggle Switch -->
-                <div class="form-check form-switch mb-3">
-                    <input class="form-check-input" type="checkbox" id="addToExistingSwitch">
-                    <label class="form-check-label" for="addToExistingSwitch">
-                        <span id="switchLabel">Add to Existing Set</span>
-                    </label>
-                </div>
-                
-                <form method="post" action="{% url 'analytics:save_content_set' %}">
-                    {% csrf_token %}
-                    
-                    <!-- Hidden field to indicate mode -->
-                    <input type="hidden" id="setMode" name="set_mode" value="create">
-                    
-                    <!-- Create New Set Fields -->
-                    <div id="createNewFields">
-                        <div class="row">
-                            <div class="col-md-9">
-                                <label for="content_set_name" class="form-label fw-bold">Content Set Name</label>
-                                <input type="text" 
-                                       class="form-control" 
-                                       id="content_set_name" 
-                                       name="content_set_name" 
-                                       placeholder="e.g., 'Quick links'">
-                                <div class="form-text">Enter a unique name for this content set</div>
-                            </div>
-                            <div class="col-md-3">
-                                <label class="form-label fw-bold invisible">Action</label>
-                                <button type="submit" id="submitBtn" class="btn btn-primary w-100">Save Content Set</button>
-                            </div>
-                        </div>
-                    </div>
-                    
-                    <!-- Add to Existing Set Fields -->
-                    <div id="addToExistingFields" style="display: none;">
-                        <div class="row">
-                            <div class="col-md-9">
-                                <label for="existing_set_name" class="form-label fw-bold">Select Existing Content Set</label>
-                                <select class="form-select" 
-                                        id="existing_set_name" 
-                                        name="existing_set_name">
-                                    <option value="">-- Choose a content set --</option>
-                                    {% for content_set in all_content_sets %}
-                                    <option value="{{ content_set.name }}">{{ content_set.name }} ({{ content_set.get_items_count }} items)</option>
-                                    {% endfor %}
-                                </select>
-                                <div class="form-text">Select which content set to add items to</div>
-                                
-                                <div class="form-check mt-2">
-                                    <input class="form-check-input" type="checkbox" id="keepCopy" name="keep_copy" value="true">
-                                    <label class="form-check-label" for="keepCopy">
-                                        Keep copy of old set
-                                    </label>
+
+                <!-- Action Bar -->
+                <div class="bg-light border-top py-3 mt-3">
+                    <div class="d-flex justify-content-end gap-2">
+                        <!-- Remove Selected Items -->
+                        <button type="button" class="btn btn-danger btn-sm" id="removeSelectedItemsBtn" style="min-width: 200px;">
+                            <i class="bi bi-trash"></i> Remove Selected Items
+                        </button>
+
+                        <!-- Save Content Set -->
+                        <form method="post" action="{% url 'analytics:save_content_set' %}" id="saveContentSetForm" style="display: inline;">
+                            {% csrf_token %}
+                            <input type="hidden" id="setMode" name="set_mode" value="create">
+                            <input type="hidden" id="content_set_name" name="content_set_name" value="">
+                            <input type="hidden" id="existing_set_name_hidden" name="existing_set_name" value="">
+                            <input type="hidden" id="keep_copy_hidden" name="keep_copy" value="">
+
+                            <div class="dropdown">
+                                <button class="btn btn-success btn-sm dropdown-toggle" type="button" id="saveContentSetDropdown" data-bs-toggle="dropdown" aria-expanded="false" data-bs-auto-close="outside" style="min-width: 200px;">
+                                    <i class="bi bi-floppy"></i> Save Content Set
+                                </button>
+                                <div class="dropdown-menu dropdown-menu-end p-3" aria-labelledby="saveContentSetDropdown" style="min-width: 320px;">
+                                    <!-- Toggle Switch -->
+                                    <div class="form-check form-switch mb-3">
+                                        <input class="form-check-input" type="checkbox" id="addToExistingSwitch">
+                                        <label class="form-check-label small" for="addToExistingSwitch">
+                                            Add to Existing Set
+                                        </label>
+                                    </div>
+
+                                    <!-- Create New Set Fields -->
+                                    <div id="createNewFields">
+                                        <div class="mb-3">
+                                            <label for="content_set_name_input" class="form-label small fw-bold">Content Set Name</label>
+                                            <input type="text"
+                                                   class="form-control form-control-sm"
+                                                   id="content_set_name_input"
+                                                   placeholder="e.g., 'Quick links'">
+                                        </div>
+                                    </div>
+
+                                    <!-- Add to Existing Set Fields -->
+                                    <div id="addToExistingFields" style="display: none;">
+                                        <div class="mb-3">
+                                            <label for="existing_set_name" class="form-label small fw-bold">Select Existing Set</label>
+                                            <select class="form-select form-select-sm" id="existing_set_name">
+                                                <option value="">-- Choose a content set --</option>
+                                                {% for content_set in all_content_sets %}
+                                                <option value="{{ content_set.name }}">{{ content_set.name }} ({{ content_set.get_items_count }} items)</option>
+                                                {% endfor %}
+                                            </select>
+                                        </div>
+                                        <div class="form-check mb-3">
+                                            <input class="form-check-input" type="checkbox" id="keepCopy">
+                                            <label class="form-check-label small" for="keepCopy">
+                                                Keep copy of old set
+                                            </label>
+                                        </div>
+                                    </div>
+
+                                    <div class="d-flex justify-content-end">
+                                        <button type="button" class="btn btn-success btn-sm" id="saveContentSetBtn">
+                                            <i class="bi bi-check-lg"></i> Save
+                                        </button>
+                                    </div>
                                 </div>
                             </div>
-                            <div class="col-md-3 d-flex align-items-end">
-                                <button type="submit" id="addToSetBtn" class="btn btn-primary w-100">Add to Set</button>
-                            </div>
-                        </div>
+                        </form>
                     </div>
-                </form>
+                </div>
             </div>
         </div>
         {% endif %}
@@ -297,7 +290,7 @@
                 { orderable: false, targets: 0 } // Disable sorting on checkbox column
             ]
         });
-        
+
         // Initialize DataTables for extracted items table if it exists
         if ($('#extractedItemsTable').length) {
             $('#extractedItemsTable').DataTable({
@@ -311,13 +304,28 @@
             });
         }
     });
-    
+
+    // Update selected count display
+    function updateActionBar() {
+        const selectedCount = document.querySelectorAll('.post-checkbox:checked').length;
+        const countSpan = document.getElementById('selectedCount');
+        countSpan.textContent = selectedCount;
+    }
+
+    // Listen for checkbox changes
+    document.addEventListener('change', function(e) {
+        if (e.target.classList.contains('post-checkbox') || e.target.id === 'selectAll') {
+            updateActionBar();
+        }
+    });
+
     // Select all posts checkbox
     document.getElementById('selectAll').addEventListener('change', function() {
         const checkboxes = document.querySelectorAll('.post-checkbox');
         checkboxes.forEach(cb => cb.checked = this.checked);
+        updateActionBar();
     });
-    
+
     // Select all items checkbox
     const selectAllItems = document.getElementById('selectAllItems');
     if (selectAllItems) {
@@ -326,21 +334,44 @@
             checkboxes.forEach(cb => cb.checked = this.checked);
         });
     }
-    
-    // Show progress bar on extraction form submit
-    document.getElementById('extractionForm').addEventListener('submit', function() {
-        const selectedPosts = document.querySelectorAll('.post-checkbox:checked').length;
-        // Base duration + 2s per post (extraction is parallel but has overhead)
-        const baseDuration = {{ progress_durations.extract_content }};
-        const estimatedDuration = Math.min(baseDuration, 60);
 
-        ProgressBar.start({
-            containerId: 'extractContentProgress',
-            expectedDuration: estimatedDuration,
-            subtext: 'Processing ' + selectedPosts + ' post' + (selectedPosts !== 1 ? 's' : '') + '...'
+    // Handle Extract Content button click
+    const extractContentBtn = document.getElementById('extractContentBtn');
+    if (extractContentBtn) {
+        extractContentBtn.addEventListener('click', function() {
+            const selectedPosts = document.querySelectorAll('.post-checkbox:checked');
+            if (selectedPosts.length === 0) {
+                alert('Please select at least one post.');
+                return;
+            }
+
+            const contentDescInput = document.getElementById('content_desc_input');
+            const contentDescHidden = document.getElementById('content_desc');
+
+            if (!contentDescInput.value.trim()) {
+                alert('Please enter an item description.');
+                contentDescInput.focus();
+                return;
+            }
+
+            // Copy value to hidden field
+            contentDescHidden.value = contentDescInput.value.trim();
+
+            const numPosts = selectedPosts.length;
+            const baseDuration = {{ progress_durations.extract_content }};
+            const estimatedDuration = Math.min(baseDuration, 60);
+
+            ProgressBar.start({
+                containerId: 'extractContentProgress',
+                expectedDuration: estimatedDuration,
+                subtext: 'Processing ' + numPosts + ' post' + (numPosts !== 1 ? 's' : '') + '...'
+            });
+
+            // Submit the form
+            document.getElementById('extractionForm').submit();
         });
-    });
-    
+    }
+
     // Handle refresh posts button
     const refreshBtn = document.getElementById('refreshPostsBtn');
     if (refreshBtn) {
@@ -354,31 +385,30 @@
             });
         });
     }
-    
+
     // Handle download click visualization button
     const downloadClickVizBtn = document.getElementById('downloadClickVizBtn');
     if (downloadClickVizBtn) {
         downloadClickVizBtn.addEventListener('click', function() {
-            // Check if any posts are selected
             const selectedCheckboxes = document.querySelectorAll('.post-checkbox:checked');
-            
+
             if (selectedCheckboxes.length === 0) {
                 alert('Please select at least one post.');
                 return;
             }
-            
+
             // Create a form to submit the selected posts
             const form = document.createElement('form');
             form.method = 'POST';
             form.action = "{% url 'analytics:download_click_visualization' %}";
-            
+
             // Add CSRF token
             const csrfInput = document.createElement('input');
             csrfInput.type = 'hidden';
             csrfInput.name = 'csrfmiddlewaretoken';
             csrfInput.value = '{{ csrf_token }}';
             form.appendChild(csrfInput);
-            
+
             // Add selected post indices
             selectedCheckboxes.forEach(checkbox => {
                 const input = document.createElement('input');
@@ -387,18 +417,18 @@
                 input.value = checkbox.value;
                 form.appendChild(input);
             });
-            
+
             // Submit the form
             document.body.appendChild(form);
-            
+
             // Disable button and show loading state
             downloadClickVizBtn.disabled = true;
             const originalHtml = downloadClickVizBtn.innerHTML;
-            downloadClickVizBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Generating...';
-            
+            downloadClickVizBtn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+
             form.submit();
-            
-            // Re-enable button after a delay (form submission will navigate away or download will start)
+
+            // Re-enable button after a delay
             setTimeout(function() {
                 downloadClickVizBtn.disabled = false;
                 downloadClickVizBtn.innerHTML = originalHtml;
@@ -406,7 +436,7 @@
             }, 3000);
         });
     }
-    
+
     // Handle select all reports checkbox
     const selectAllReports = document.getElementById('selectAllReports');
     if (selectAllReports) {
@@ -415,12 +445,11 @@
             checkboxes.forEach(cb => cb.checked = this.checked);
         });
     }
-    
-    // Handle download annotated posts button
+
+    // Handle Get Improvement Tips button
     const downloadAnnotatedBtn = document.getElementById('downloadAnnotatedBtn');
     if (downloadAnnotatedBtn) {
         downloadAnnotatedBtn.addEventListener('click', async function() {
-            // Check if any posts are selected
             const selectedPostCheckboxes = document.querySelectorAll('.post-checkbox:checked');
 
             if (selectedPostCheckboxes.length === 0) {
@@ -428,7 +457,6 @@
                 return;
             }
 
-            // Check if any reports are selected
             const selectedReportCheckboxes = document.querySelectorAll('.report-checkbox:checked');
 
             if (selectedReportCheckboxes.length === 0) {
@@ -436,7 +464,6 @@
                 return;
             }
 
-            // Calculate expected duration: base + per post
             const numPosts = selectedPostCheckboxes.length;
             const baseDuration = {{ progress_durations.download_annotated }};
             const estimatedDuration = Math.min(baseDuration, 120);
@@ -448,11 +475,9 @@
                 subtext: 'Annotating ' + numPosts + ' post' + (numPosts !== 1 ? 's' : '') + '...'
             });
 
-            // Disable button
             downloadAnnotatedBtn.disabled = true;
 
             try {
-                // Build form data
                 const formData = new FormData();
                 formData.append('csrfmiddlewaretoken', '{{ csrf_token }}');
 
@@ -464,14 +489,12 @@
                     formData.append('selected_reports', checkbox.value);
                 });
 
-                // Use fetch to make the request
                 const response = await fetch("{% url 'analytics:download_annotated_posts' %}", {
                     method: 'POST',
                     body: formData
                 });
 
                 if (response.redirected) {
-                    // Server redirected (likely an error), reload to show messages
                     ProgressBar.complete({ containerId: 'downloadAnnotatedProgress', success: false, message: 'An error occurred' });
                     setTimeout(function() { location.reload(); }, 1000);
                     return;
@@ -481,10 +504,8 @@
                     throw new Error('Download failed');
                 }
 
-                // Get the blob for download
                 const blob = await response.blob();
 
-                // Get filename from Content-Disposition header or use default
                 const contentDisposition = response.headers.get('Content-Disposition');
                 let filename = 'annotated_posts.zip';
                 if (contentDisposition) {
@@ -492,7 +513,6 @@
                     if (match) filename = match[1];
                 }
 
-                // Create download link and trigger it
                 const url = window.URL.createObjectURL(blob);
                 const a = document.createElement('a');
                 a.href = url;
@@ -502,68 +522,92 @@
                 window.URL.revokeObjectURL(url);
                 document.body.removeChild(a);
 
-                // Update sidebar credits from response headers
                 const creditsUsed = response.headers.get('X-Credits-Used');
                 const creditsQuota = response.headers.get('X-Credits-Quota');
 
                 if (creditsUsed && creditsQuota) {
                     const percentage = (parseFloat(creditsUsed) / parseFloat(creditsQuota)) * 100;
 
-                    // Update usage bar
                     const usageBarFill = document.querySelector('.usage-bar-fill');
                     if (usageBarFill) {
                         usageBarFill.style.width = percentage + '%';
                     }
 
-                    // Update usage text
                     const usageText = document.querySelector('.usage-text');
                     if (usageText) {
                         usageText.textContent = Math.round(parseFloat(creditsUsed)) + ' / ' + Math.round(parseFloat(creditsQuota)) + ' used';
                     }
                 }
 
-                // Complete progress bar
                 ProgressBar.complete({ containerId: 'downloadAnnotatedProgress', success: true, message: 'Download ready!' });
 
             } catch (error) {
                 console.error('Error:', error);
                 ProgressBar.complete({ containerId: 'downloadAnnotatedProgress', success: false, message: 'Error generating files' });
             } finally {
-                // Re-enable button
                 downloadAnnotatedBtn.disabled = false;
             }
         });
     }
-    
+
+    // Handle Remove Selected Items button
+    const removeSelectedItemsBtn = document.getElementById('removeSelectedItemsBtn');
+    if (removeSelectedItemsBtn) {
+        removeSelectedItemsBtn.addEventListener('click', function() {
+            const selectedItems = document.querySelectorAll('.item-checkbox:checked');
+            if (selectedItems.length === 0) {
+                alert('Please select at least one item to remove.');
+                return;
+            }
+            document.getElementById('deleteForm').submit();
+        });
+    }
+
     // Handle toggle switch for Create New Set / Add to Existing Set
     const addToExistingSwitch = document.getElementById('addToExistingSwitch');
     const createNewFields = document.getElementById('createNewFields');
     const addToExistingFields = document.getElementById('addToExistingFields');
     const setModeInput = document.getElementById('setMode');
-    const contentSetNameInput = document.getElementById('content_set_name');
-    const existingSetNameInput = document.getElementById('existing_set_name');
-    
+
     if (addToExistingSwitch) {
         addToExistingSwitch.addEventListener('change', function() {
             if (this.checked) {
-                // Switch to "Add to Existing Set" mode
                 createNewFields.style.display = 'none';
                 addToExistingFields.style.display = 'block';
                 setModeInput.value = 'add';
-                
-                // Update required fields
-                contentSetNameInput.removeAttribute('required');
-                existingSetNameInput.setAttribute('required', 'required');
             } else {
-                // Switch to "Create New Set" mode
                 createNewFields.style.display = 'block';
                 addToExistingFields.style.display = 'none';
                 setModeInput.value = 'create';
-                
-                // Update required fields
-                contentSetNameInput.setAttribute('required', 'required');
-                existingSetNameInput.removeAttribute('required');
             }
+        });
+    }
+
+    // Handle Save Content Set button
+    const saveContentSetBtn = document.getElementById('saveContentSetBtn');
+    if (saveContentSetBtn) {
+        saveContentSetBtn.addEventListener('click', function() {
+            const isAddMode = addToExistingSwitch && addToExistingSwitch.checked;
+
+            if (isAddMode) {
+                const existingSetName = document.getElementById('existing_set_name').value;
+                if (!existingSetName) {
+                    alert('Please select an existing content set.');
+                    return;
+                }
+                document.getElementById('existing_set_name_hidden').value = existingSetName;
+                document.getElementById('keep_copy_hidden').value = document.getElementById('keepCopy').checked ? 'true' : '';
+            } else {
+                const contentSetName = document.getElementById('content_set_name_input').value.trim();
+                if (!contentSetName) {
+                    alert('Please enter a content set name.');
+                    document.getElementById('content_set_name_input').focus();
+                    return;
+                }
+                document.getElementById('content_set_name').value = contentSetName;
+            }
+
+            document.getElementById('saveContentSetForm').submit();
         });
     }
 </script>
