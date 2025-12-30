@@ -1,6 +1,6 @@
 {% extends 'analytics/base.html' %}
 
-{% block title %}Extract Content - LetterPulse{% endblock %}
+{% block title %}Posts - LetterPulse{% endblock %}
 
 {% block content %}
 <div class="row">
@@ -494,14 +494,17 @@
                     body: formData
                 });
 
-                if (response.redirected) {
-                    ProgressBar.complete({ containerId: 'downloadAnnotatedProgress', success: false, message: 'An error occurred' });
-                    setTimeout(function() { location.reload(); }, 1000);
-                    return;
-                }
-
                 if (!response.ok) {
-                    throw new Error('Download failed');
+                    // Try to get error message from JSON response
+                    try {
+                        const errorData = await response.json();
+                        ProgressBar.forceClose({ containerId: 'downloadAnnotatedProgress' });
+                        alert(errorData.error || 'An error occurred');
+                    } catch (e) {
+                        ProgressBar.forceClose({ containerId: 'downloadAnnotatedProgress' });
+                        alert('An error occurred');
+                    }
+                    return;
                 }
 
                 const blob = await response.blob();

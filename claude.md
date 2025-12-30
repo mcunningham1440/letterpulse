@@ -47,8 +47,8 @@ app/
 │   ├── templates/analytics/    # HTML templates
 │   │   ├── base.html           # Base template with Bootstrap/DataTables and user sidebar
 │   │   ├── account.html        # Account settings (usage, API credentials)
-│   │   ├── extract.html        # Content extraction page
-│   │   └── analyze.html        # Analysis and reporting page
+│   │   ├── posts.html          # Posts selection and content extraction page
+│   │   └── insights.html       # Analysis and reporting page
 │   └── migrations/             # Database migrations
 ├── data/                       # Runtime data (LLM call logs)
 ├── manage.py                   # Django management script
@@ -136,7 +136,7 @@ Uses django-allauth for email-based authentication:
 
 ## Key Features & Workflows
 
-### 1. Extract Page (`/extract/`)
+### 1. Posts Page (`/posts/`)
 - **Refresh Posts**: Fetches all posts from Beehiiv API with pagination
 - **Select Posts**: DataTable with sorting by date, opens, clicks
 - **Content Extraction**: Describe content to extract (e.g., "items in the quick links section")
@@ -147,7 +147,7 @@ Uses django-allauth for email-based authentication:
 - **Download Improvement Tips**: ZIP of HTML files with AI-generated improvement tips
 - **Save Content Sets**: Create new or add to existing sets
 
-### 2. Analyze Page (`/analyze/`)
+### 2. Insights Page (`/insights/`)
 - **View Content Sets**: Browse extracted items with CTR data
 - **Generate Insights**: AI analysis identifying top/bottom performing content patterns
 - **Manage Sets**: Rename, copy, merge, delete items or entire sets
@@ -168,23 +168,23 @@ Uses django-allauth for email-based authentication:
 
 All routes use the `analytics:` namespace.
 
-### Extract Routes
-- `GET /extract/` - Main extraction page
-- `POST /extract/run/` - Run AI content extraction
-- `POST /extract/save/` - Save extracted items as ContentSet
-- `POST /extract/delete-items/` - Remove items from session
-- `POST /extract/refresh-posts/` - Fetch latest posts from Beehiiv
-- `POST /extract/download-click-viz/` - Generate click visualization ZIP
-- `POST /extract/download-annotated/` - Generate annotated HTML ZIP
+### Posts Routes
+- `GET /posts/` - Main posts page
+- `POST /posts/run/` - Run AI content extraction
+- `POST /posts/save/` - Save extracted items as ContentSet
+- `POST /posts/delete-items/` - Remove items from session
+- `POST /posts/refresh-posts/` - Fetch latest posts from Beehiiv
+- `POST /posts/download-click-viz/` - Generate click visualization ZIP
+- `POST /posts/download-annotated/` - Generate annotated HTML ZIP
 
-### Analyze Routes
-- `GET /analyze/` - Analysis dashboard
-- `GET /analyze/load-content-set/<name>/` - Load ContentSet as JSON
-- `POST /analyze/generate-insights/` - Generate AI report
-- `GET /analyze/download-csv/<name>/` - Export as CSV
-- `POST /analyze/rename-set/`, `/copy-set/`, `/merge-sets/`, `/delete-set/`, `/delete-items/`
-- `POST /analyze/save-report/`, `GET /analyze/load-report/<id>/`, `DELETE /analyze/delete-report/<id>/`
-- `GET /analyze/get-all-reports/` - List all reports
+### Insights Routes
+- `GET /insights/` - Insights dashboard
+- `GET /insights/load-content-set/<name>/` - Load ContentSet as JSON
+- `POST /insights/generate-insights/` - Generate AI report
+- `GET /insights/download-csv/<name>/` - Export as CSV
+- `POST /insights/rename-set/`, `/copy-set/`, `/merge-sets/`, `/delete-set/`, `/delete-items/`
+- `POST /insights/save-report/`, `GET /insights/load-report/<id>/`, `DELETE /insights/delete-report/<id>/`
+- `GET /insights/get-all-reports/` - List all reports
 
 ### Account Routes
 - `GET /account/` - Account settings page

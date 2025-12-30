@@ -1,82 +1,72 @@
 {% extends 'analytics/base.html' %}
 
-{% block title %}Analyze Content - LetterPulse{% endblock %}
+{% block title %}Insights - LetterPulse{% endblock %}
 
 {% block content %}
 <div class="row">
     <div class="col-12">
-        <h1 class="mb-4">Analyze Content</h1>
-        
-        <!-- Content Set Selection Card -->
-        <div class="card">
+        <!-- Content Set Card -->
+        <div class="card" id="contentSetCard">
             <div class="card-header">
-                <h5 class="mb-0">Choose a Content Set</h5>
-            </div>
-            <div class="card-body">
+                <h5 class="mb-3">Select a Content Set</h5>
                 {% if content_sets %}
-                <div class="mb-3">
-                    <label for="contentSetSelect" class="form-label fw-bold">Select Content Set</label>
-                    <select class="form-select" id="contentSetSelect">
-                        <option value="">-- Select a content set --</option>
-                        {% for content_set in content_sets %}
-                        <option value="{{ content_set.name }}">
-                            {{ content_set.name }} ({{ content_set.get_items_count }} items, created {{ content_set.created_at|date:"M d, Y" }})
-                        </option>
-                        {% endfor %}
-                    </select>
-                </div>
+                <select class="form-select" id="contentSetSelect">
+                    <option value="">-- Select a content set --</option>
+                    {% for content_set in content_sets %}
+                    <option value="{{ content_set.name }}">
+                        {{ content_set.name }} ({{ content_set.get_items_count }} items, created {{ content_set.created_at|date:"M d, Y" }})
+                    </option>
+                    {% endfor %}
+                </select>
                 {% else %}
-                <div class="alert alert-info">
-                    No content sets available. Please extract and save content in the Extract tab first.
+                <div class="alert alert-info mb-0 no-auto-dismiss">
+                    No content sets available. Please extract and save content in the Posts tab first.
                 </div>
                 {% endif %}
             </div>
-        </div>
-
-        <!-- Content Set Display Card -->
-        <div class="card mt-4 d-none" id="contentSetCard">
-            <div class="card-header d-flex justify-content-between align-items-center">
-                <h5 class="mb-0">Content Set: <span id="contentSetName"></span></h5>
-                <button class="btn btn-sm btn-outline-primary" id="downloadBtn">
-                    Download CSV
-                </button>
-            </div>
-            <div class="card-body">
-                <div class="table-responsive">
-                    <table class="table table-hover table-sm" id="contentTable">
-                        <thead>
-                            <tr>
-                                <th><input type="checkbox" id="selectAll"></th>
-                                <th>Post Title</th>
-                                <th>Post Date</th>
-                                <th>Item Text</th>
-                                <th>Links</th>
-                                <th class="text-end">Max Clicks</th>
-                                <th class="text-end">Max CTR</th>
-                            </tr>
-                        </thead>
-                        <tbody id="contentTableBody">
-                        </tbody>
-                    </table>
+            <div id="contentSetDetails" class="d-none">
+                <div class="card-body">
+                    <div class="table-responsive">
+                        <table class="table table-hover table-sm" id="contentTable">
+                            <thead>
+                                <tr>
+                                    <th><input type="checkbox" id="selectAll"></th>
+                                    <th>Post Title</th>
+                                    <th>Post Date</th>
+                                    <th>Item Text</th>
+                                    <th>Links</th>
+                                    <th class="text-end">Max Clicks</th>
+                                    <th class="text-end">Max CTR</th>
+                                </tr>
+                            </thead>
+                            <tbody id="contentTableBody">
+                            </tbody>
+                        </table>
+                    </div>
                 </div>
-            </div>
-            <div class="card-footer">
-                <div class="d-flex gap-2 flex-wrap">
-                    <button class="btn btn-sm btn-info" id="renameBtn">
-                        <i class="bi bi-pencil"></i> Rename Set
-                    </button>
-                    <button class="btn btn-sm btn-success" id="copyBtn">
-                        <i class="bi bi-files"></i> Make Copy
-                    </button>
-                    <button class="btn btn-sm btn-secondary" id="mergeBtn">
-                        <i class="bi bi-union"></i> Merge With...
-                    </button>
-                    <button class="btn btn-sm btn-warning" id="deleteItemsBtn">
-                        <i class="bi bi-trash"></i> Delete Selected Items
-                    </button>
-                    <button class="btn btn-sm btn-danger" id="deleteSetBtn">
-                        <i class="bi bi-trash-fill"></i> Delete Set
-                    </button>
+                <div class="card-footer">
+                    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+                        <div class="d-flex gap-2 flex-wrap">
+                            <button class="btn btn-sm btn-info" id="renameBtn">
+                                <i class="bi bi-pencil"></i> Rename Set
+                            </button>
+                            <button class="btn btn-sm btn-success" id="copyBtn">
+                                <i class="bi bi-files"></i> Make Copy
+                            </button>
+                            <button class="btn btn-sm btn-secondary" id="mergeBtn">
+                                <i class="bi bi-union"></i> Merge With...
+                            </button>
+                            <button class="btn btn-sm btn-warning" id="deleteItemsBtn">
+                                <i class="bi bi-trash"></i> Delete Selected Items
+                            </button>
+                            <button class="btn btn-sm btn-danger" id="deleteSetBtn">
+                                <i class="bi bi-trash-fill"></i> Delete Set
+                            </button>
+                        </div>
+                        <button class="btn btn-sm btn-outline-primary" id="downloadBtn">
+                            <i class="bi bi-download"></i> Download CSV
+                        </button>
+                    </div>
                 </div>
             </div>
         </div>
@@ -87,52 +77,82 @@
                 <h5 class="mb-0">Content Insights</h5>
             </div>
             <div class="card-body">
-                <div class="mb-4">
-                    <label for="reportSelect" class="form-label fw-bold">Select Report</label>
-                    <select class="form-select" id="reportSelect">
-                        <option value="">-- Select a saved report --</option>
-                    </select>
-                    <button class="btn btn-sm btn-danger mt-2 d-none" id="deleteReportBtn">
-                        <i class="bi bi-trash-fill"></i> Delete Report
-                    </button>
+                <!-- Mode Toggle Switch -->
+                <div class="form-check form-switch mb-4">
+                    <input class="form-check-input" type="checkbox" id="reportModeSwitch">
+                    <label class="form-check-label" for="reportModeSwitch">
+                        <span id="reportModeLabel">Create content report</span>
+                    </label>
                 </div>
-                
-                <hr class="my-3">
 
-                <div id="generateReportProgress">
-                    <button class="btn btn-primary" id="generateInsightsBtn" disabled>
-                        Generate Report
-                    </button>
-                    <div class="form-text mt-2" id="generateSubtext">Select a content set to generate insights</div>
-                    <div class="form-text">🧠 1 AI credit</div>
-                </div>
-                
-                <div class="mt-4 d-none" id="insightsContent">
-                    <hr class="my-4">
-                    
-                    <div id="saveReportSection">
-                        <h6 class="fw-bold mb-3">Save Report</h6>
-                        <div class="row mb-4">
-                            <div class="col-md-9">
-                                <label for="report_name" class="form-label fw-bold">Report Name</label>
-                                <input type="text" 
-                                       class="form-control" 
-                                       id="report_name" 
-                                       placeholder="e.g., 'Quick links analysis'">
-                                <div class="form-text">Enter a name for this report</div>
+                <!-- Create Report Mode -->
+                <div id="createReportMode">
+                    <div class="dropdown" id="generateReportProgress" style="display: inline-block;">
+                        <button class="btn btn-primary dropdown-toggle" type="button" id="generateReportDropdown" data-bs-toggle="dropdown" aria-expanded="false" data-bs-auto-close="outside">
+                            <i class="bi bi-file-earmark-text"></i> Generate Report
+                        </button>
+                        <div class="dropdown-menu p-3" aria-labelledby="generateReportDropdown" style="min-width: 320px;">
+                            <div class="mb-3">
+                                <label for="reportContentSetSelect" class="form-label small fw-bold">Select Content Set</label>
+                                <select class="form-select form-select-sm" id="reportContentSetSelect">
+                                    <option value="">-- Choose a content set --</option>
+                                    {% for content_set in content_sets %}
+                                    <option value="{{ content_set.name }}">
+                                        {{ content_set.name }} ({{ content_set.get_items_count }} items)
+                                    </option>
+                                    {% endfor %}
+                                </select>
                             </div>
-                            <div class="col-md-3">
-                                <label class="form-label fw-bold invisible">Action</label>
-                                <button class="btn btn-success w-100" id="saveReportBtn">
-                                    <i class="bi bi-save"></i> Save Report
+                            <div class="d-flex justify-content-between align-items-center">
+                                <small class="text-muted">1 AI credit</small>
+                                <button type="button" class="btn btn-primary btn-sm" id="generateInsightsBtn">
+                                    <i class="bi bi-play-fill"></i> Run
                                 </button>
                             </div>
                         </div>
-                        
-                        <hr class="my-4">
                     </div>
-                    
-                    <h6 class="fw-bold mb-3">Report</h6>
+                </div>
+
+                <!-- View Report Mode -->
+                <div id="viewReportMode" style="display: none;">
+                    <div class="mb-3">
+                        <label for="reportSelect" class="form-label small fw-bold">Select Report</label>
+                        <select class="form-select" id="reportSelect">
+                            <option value="">-- Select a saved report --</option>
+                        </select>
+                    </div>
+                    <button class="btn btn-sm btn-danger d-none" id="deleteReportBtn">
+                        <i class="bi bi-trash-fill"></i> Delete Report
+                    </button>
+                </div>
+
+                <!-- Report Content (shown after generation or selection) -->
+                <div class="mt-4 d-none" id="insightsContent">
+                    <hr class="my-4">
+
+                    <div class="d-flex justify-content-between align-items-center mb-4">
+                        <h6 class="fw-bold mb-0">Report</h6>
+                        <div id="saveReportSection" class="dropdown" style="display: inline-block;">
+                            <button class="btn btn-success dropdown-toggle" type="button" id="saveReportDropdown" data-bs-toggle="dropdown" aria-expanded="false" data-bs-auto-close="outside">
+                                <i class="bi bi-save"></i> Save Report
+                            </button>
+                            <div class="dropdown-menu dropdown-menu-end p-3" aria-labelledby="saveReportDropdown" style="min-width: 320px;">
+                                <div class="mb-3">
+                                    <label for="report_name" class="form-label small fw-bold">Report Name</label>
+                                    <input type="text"
+                                           class="form-control form-control-sm"
+                                           id="report_name"
+                                           placeholder="e.g., 'Quick links analysis'">
+                                </div>
+                                <div class="d-flex justify-content-end">
+                                    <button type="button" class="btn btn-success btn-sm" id="saveReportBtn">
+                                        <i class="bi bi-check-lg"></i> Save
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
                     <div id="insightsText"></div>
                 </div>
             </div>
@@ -150,7 +170,7 @@
     // Load all reports on page load
     async function loadAllReports() {
         try {
-            const response = await fetch('/analyze/get-all-reports/');
+            const response = await fetch('/insights/get-all-reports/');
             const data = await response.json();
             
             if (data.success) {
@@ -173,31 +193,52 @@
     // Call on page load
     loadAllReports();
     
-    // Handle content set selection
+    // Handle report mode switch
+    document.getElementById('reportModeSwitch').addEventListener('change', function() {
+        const createMode = document.getElementById('createReportMode');
+        const viewMode = document.getElementById('viewReportMode');
+        const modeLabel = document.getElementById('reportModeLabel');
+
+        if (this.checked) {
+            // View mode
+            createMode.style.display = 'none';
+            viewMode.style.display = 'block';
+            modeLabel.textContent = 'View content report';
+        } else {
+            // Create mode
+            createMode.style.display = 'block';
+            viewMode.style.display = 'none';
+            modeLabel.textContent = 'Create content report';
+        }
+
+        // Hide insights content when switching modes
+        document.getElementById('insightsContent').classList.add('d-none');
+        document.getElementById('deleteReportBtn').classList.add('d-none');
+        document.getElementById('reportSelect').value = '';
+    });
+
+    // Handle content set selection (for viewing content set data)
     document.getElementById('contentSetSelect').addEventListener('change', async function() {
         const setName = this.value;
-        
+
         if (!setName) {
-            document.getElementById('contentSetCard').classList.add('d-none');
+            document.getElementById('contentSetDetails').classList.add('d-none');
+            document.getElementById('contentTableBody').innerHTML = '';
             currentContentSet = null;
-            document.getElementById('generateInsightsBtn').disabled = true;
-            document.getElementById('generateSubtext').textContent = 'Select a content set to generate insights';
             document.getElementById('insightsContent').classList.add('d-none');
             return;
         }
-        
+
         // Load content set
         try {
-            const response = await fetch(`/analyze/load-content-set/${encodeURIComponent(setName)}/`);
+            const response = await fetch(`/insights/load-content-set/${encodeURIComponent(setName)}/`);
             const data = await response.json();
-            
+
             if (data.success) {
                 currentContentSet = setName;
                 displayContentSet(data);
-                document.getElementById('contentSetCard').classList.remove('d-none');
+                document.getElementById('contentSetDetails').classList.remove('d-none');
                 document.getElementById('insightsContent').classList.add('d-none');
-                document.getElementById('generateInsightsBtn').disabled = false;
-                document.getElementById('generateSubtext').textContent = `Generate content insights from ${setName}`;
             } else {
                 alert('Error loading content set: ' + data.error);
             }
@@ -208,8 +249,6 @@
     
     // Display content set data
     function displayContentSet(data) {
-        document.getElementById('contentSetName').textContent = data.name;
-        
         // Destroy existing DataTable if it exists
         if ($.fn.DataTable.isDataTable('#contentTable')) {
             $('#contentTable').DataTable().destroy();
@@ -254,48 +293,28 @@
         return text.substring(0, maxLength) + '...';
     }
     
-    // Handle report selection
+    // Handle report selection (View mode)
     document.getElementById('reportSelect').addEventListener('change', async function() {
         const reportId = this.value;
         const deleteReportBtn = document.getElementById('deleteReportBtn');
-        
+
         if (!reportId) {
             document.getElementById('insightsContent').classList.add('d-none');
             deleteReportBtn.classList.add('d-none');
             return;
         }
-        
+
         // Show delete button when a report is selected
         deleteReportBtn.classList.remove('d-none');
-        
+
         try {
-            const response = await fetch(`/analyze/load-report/${reportId}/`);
+            const response = await fetch(`/insights/load-report/${reportId}/`);
             const data = await response.json();
-            
+
             if (data.success) {
-                // Auto-select the content set for this report
-                const contentSetSelect = document.getElementById('contentSetSelect');
-                const contentSetName = data.content_set_name;
-                
-                // Set the content set dropdown value
-                contentSetSelect.value = contentSetName;
-                
-                // Trigger content set loading if not already loaded or different
-                if (currentContentSet !== contentSetName) {
-                    currentContentSet = contentSetName;
-                    const setResponse = await fetch(`/analyze/load-content-set/${encodeURIComponent(contentSetName)}/`);
-                    const setData = await setResponse.json();
-                    
-                    if (setData.success) {
-                        displayContentSet(setData);
-                        document.getElementById('contentSetCard').classList.remove('d-none');
-                        document.getElementById('generateInsightsBtn').disabled = false;
-                        document.getElementById('generateSubtext').textContent = `Generate content insights from ${contentSetName}`;
-                    }
-                }
-                
                 // Display the report
                 currentReportText = data.report_text;
+                currentContentSet = data.content_set_name;
                 isViewingSavedReport = true;
                 document.getElementById('insightsText').innerHTML = marked.parse(data.report_text);
                 document.getElementById('insightsContent').classList.remove('d-none');
@@ -310,10 +329,19 @@
     
     // Generate report
     document.getElementById('generateInsightsBtn').addEventListener('click', async function() {
-        if (!currentContentSet) return;
+        const selectedSet = document.getElementById('reportContentSetSelect').value;
+
+        if (!selectedSet) {
+            alert('Please select a content set.');
+            return;
+        }
 
         const button = this;
         button.disabled = true;
+
+        // Close the dropdown
+        const dropdown = bootstrap.Dropdown.getInstance(document.getElementById('generateReportDropdown'));
+        if (dropdown) dropdown.hide();
 
         // Start progress bar
         ProgressBar.start({
@@ -324,10 +352,10 @@
 
         try {
             const formData = new FormData();
-            formData.append('set_name', currentContentSet);
+            formData.append('set_name', selectedSet);
             formData.append('csrfmiddlewaretoken', '{{ csrf_token }}');
 
-            const response = await fetch('/analyze/generate-insights/', {
+            const response = await fetch('/insights/generate-insights/', {
                 method: 'POST',
                 body: formData
             });
@@ -335,11 +363,12 @@
             const data = await response.json();
 
             if (data.success) {
+                currentContentSet = selectedSet;
                 currentReportText = data.insights;
                 isViewingSavedReport = false;
                 document.getElementById('insightsText').innerHTML = marked.parse(data.insights);
                 document.getElementById('insightsContent').classList.remove('d-none');
-                document.getElementById('saveReportSection').style.display = 'block';
+                document.getElementById('saveReportSection').style.display = 'inline-block';
                 document.getElementById('report_name').value = '';
 
                 // Reset the report select dropdown
@@ -359,7 +388,8 @@
                 // Complete progress bar
                 ProgressBar.complete({ containerId: 'generateReportProgress', success: true, message: 'Report generated!' });
             } else {
-                ProgressBar.complete({ containerId: 'generateReportProgress', success: false, message: data.error || 'Error generating report' });
+                ProgressBar.forceClose({ containerId: 'generateReportProgress' });
+                alert(data.error || 'Error generating report');
             }
         } catch (error) {
             ProgressBar.complete({ containerId: 'generateReportProgress', success: false, message: 'Error: ' + error.message });
@@ -373,7 +403,7 @@
     // Download CSV
     document.getElementById('downloadBtn').addEventListener('click', function() {
         if (currentContentSet) {
-            window.location.href = `/analyze/download-csv/${encodeURIComponent(currentContentSet)}/`;
+            window.location.href = `/insights/download-csv/${encodeURIComponent(currentContentSet)}/`;
         }
     });
     
@@ -396,7 +426,7 @@
             formData.append('new_name', newName);
             formData.append('csrfmiddlewaretoken', '{{ csrf_token }}');
             
-            const response = await fetch('/analyze/rename-set/', {
+            const response = await fetch('/insights/rename-set/', {
                 method: 'POST',
                 body: formData
             });
@@ -427,7 +457,7 @@
             formData.append('set_name', currentContentSet);
             formData.append('csrfmiddlewaretoken', '{{ csrf_token }}');
             
-            const response = await fetch('/analyze/copy-set/', {
+            const response = await fetch('/insights/copy-set/', {
                 method: 'POST',
                 body: formData
             });
@@ -518,7 +548,7 @@
                 formData.append('target_set', targetSet);
                 formData.append('csrfmiddlewaretoken', '{{ csrf_token }}');
                 
-                const response = await fetch('/analyze/merge-sets/', {
+                const response = await fetch('/insights/merge-sets/', {
                     method: 'POST',
                     body: formData
                 });
@@ -557,7 +587,7 @@
             formData.append('indices', JSON.stringify(indices));
             formData.append('csrfmiddlewaretoken', '{{ csrf_token }}');
             
-            const response = await fetch('/analyze/delete-items/', {
+            const response = await fetch('/insights/delete-items/', {
                 method: 'POST',
                 body: formData
             });
@@ -587,7 +617,7 @@
             formData.append('set_name', currentContentSet);
             formData.append('csrfmiddlewaretoken', '{{ csrf_token }}');
             
-            const response = await fetch('/analyze/delete-set/', {
+            const response = await fetch('/insights/delete-set/', {
                 method: 'POST',
                 body: formData
             });
@@ -608,37 +638,43 @@
     // Save report
     document.getElementById('saveReportBtn').addEventListener('click', async function() {
         const reportName = document.getElementById('report_name').value.trim();
-        
+
         if (!reportName) {
             alert('Please enter a report name.');
             return;
         }
-        
+
         if (!currentContentSet || !currentReportText) {
             alert('No report to save.');
             return;
         }
-        
+
+        // Close the dropdown
+        const dropdown = bootstrap.Dropdown.getInstance(document.getElementById('saveReportDropdown'));
+        if (dropdown) dropdown.hide();
+
         try {
             const formData = new FormData();
             formData.append('report_name', reportName);
             formData.append('report_text', currentReportText);
             formData.append('set_name', currentContentSet);
             formData.append('csrfmiddlewaretoken', '{{ csrf_token }}');
-            
-            const response = await fetch('/analyze/save-report/', {
+
+            const response = await fetch('/insights/save-report/', {
                 method: 'POST',
                 body: formData
             });
-            
+
             const data = await response.json();
-            
+
             if (data.success) {
                 alert(data.message);
                 // Reload all reports dropdown
                 loadAllReports();
                 // Clear the report name input
                 document.getElementById('report_name').value = '';
+                // Hide the save button after saving
+                document.getElementById('saveReportSection').style.display = 'none';
             } else {
                 alert('Error saving report: ' + data.error);
             }
@@ -668,7 +704,7 @@
             const formData = new FormData();
             formData.append('csrfmiddlewaretoken', '{{ csrf_token }}');
             
-            const response = await fetch(`/analyze/delete-report/${reportId}/`, {
+            const response = await fetch(`/insights/delete-report/${reportId}/`, {
                 method: 'POST',
                 body: formData
             });

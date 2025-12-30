@@ -68,8 +68,8 @@ def require_valid_api_credentials(view_func):
 
 @login_required
 def index(request):
-    """Redirect to extract page"""
-    return redirect('analytics:extract')
+    """Redirect to posts page"""
+    return redirect('analytics:posts')
 
 
 @login_required
@@ -211,9 +211,9 @@ from django.utils import timezone
 
 @login_required
 @require_valid_api_credentials
-def extract_view(request):
+def posts_view(request):
     """
-    Display the extract page with posts table.
+    Display the posts page with posts table.
     """
     from .utils import convert_to_user_timezone
 
@@ -321,7 +321,7 @@ def extract_view(request):
         'all_reports': all_reports,
     }
     
-    return render(request, 'analytics/extract.html', context)
+    return render(request, 'analytics/posts.html', context)
 
 
 @login_required
@@ -341,11 +341,11 @@ def run_extraction(request):
 
         if not content_desc:
             messages.error(request, "Please provide a content description.")
-            return redirect('analytics:extract')
+            return redirect('analytics:posts')
 
         if not selected_indices:
             messages.error(request, "Please select at least one post.")
-            return redirect('analytics:extract')
+            return redirect('analytics:posts')
 
         # Convert indices to integers
         selected_indices = [int(idx) for idx in selected_indices]
@@ -365,7 +365,7 @@ def run_extraction(request):
         
         if not htmls:
             messages.error(request, "Failed to fetch content from Beehiiv.")
-            return redirect('analytics:extract')
+            return redirect('analytics:posts')
         
         # Prepare data for parallel extraction (now includes post_id)
         posts_data = [
@@ -422,7 +422,7 @@ def run_extraction(request):
     except Exception as e:
         messages.error(request, f"Error during extraction: {str(e)}")
 
-    return redirect('analytics:extract')
+    return redirect('analytics:posts')
 
 
 @login_required
@@ -436,7 +436,7 @@ def delete_items(request):
         
         if not items_to_delete:
             messages.warning(request, "No items selected for deletion.")
-            return redirect('analytics:extract')
+            return redirect('analytics:posts')
         
         # Convert to integers
         items_to_delete = [int(idx) for idx in items_to_delete]
@@ -446,7 +446,7 @@ def delete_items(request):
         
         if not extracted_items:
             messages.error(request, "No extracted items found.")
-            return redirect('analytics:extract')
+            return redirect('analytics:posts')
         
         # Remove selected items
         extracted_items = [
@@ -461,7 +461,7 @@ def delete_items(request):
     except Exception as e:
         messages.error(request, f"Error deleting items: {str(e)}")
     
-    return redirect('analytics:extract')
+    return redirect('analytics:posts')
 
 
 @login_required
@@ -482,14 +482,14 @@ def save_content_set(request):
             publication = Publication.objects.get(pub_id=beehiiv_pub_id)
         except Publication.DoesNotExist:
             messages.error(request, "Publication not found. Please refresh your posts first.")
-            return redirect('analytics:extract')
+            return redirect('analytics:posts')
 
         # Get extracted items from session
         extracted_items = request.session.get('extracted_items', [])
 
         if not extracted_items:
             messages.error(request, "No extracted items to save.")
-            return redirect('analytics:extract')
+            return redirect('analytics:posts')
 
         if set_mode == 'create':
             # Create new content set
@@ -497,12 +497,12 @@ def save_content_set(request):
 
             if not content_set_name:
                 messages.error(request, "Please provide a name for the content set.")
-                return redirect('analytics:extract')
+                return redirect('analytics:posts')
 
             # Check if name already exists for this publication and user
             if ContentSet.objects.filter(name=content_set_name, publication=publication, user=request.user).exists():
                 messages.error(request, f"A content set named '{content_set_name}' already exists. Please choose a different name.")
-                return redirect('analytics:extract')
+                return redirect('analytics:posts')
 
             # Create ContentSet
             df = pd.DataFrame(extracted_items)
@@ -520,14 +520,14 @@ def save_content_set(request):
             
             if not existing_set_name:
                 messages.error(request, "Please select an existing content set.")
-                return redirect('analytics:extract')
+                return redirect('analytics:posts')
 
             # Get the existing content set (owned by this user)
             try:
                 existing_set = ContentSet.objects.get(name=existing_set_name, user=request.user)
             except ContentSet.DoesNotExist:
                 messages.error(request, f"Content set '{existing_set_name}' not found.")
-                return redirect('analytics:extract')
+                return redirect('analytics:posts')
             
             # Keep a copy of the old set if requested
             if keep_copy:
@@ -568,14 +568,14 @@ def save_content_set(request):
     except Exception as e:
         messages.error(request, f"Error saving content set: {str(e)}")
     
-    return redirect('analytics:extract')
+    return redirect('analytics:posts')
 
 
 @login_required
 @require_valid_api_credentials
-def analyze_view(request):
+def insights_view(request):
     """
-    Display the analyze page with content sets.
+    Display the insights page with content sets.
     """
     from .models import Publication
 
@@ -593,7 +593,7 @@ def analyze_view(request):
         'content_sets': content_sets,
     }
 
-    return render(request, 'analytics/analyze.html', context)
+    return render(request, 'analytics/insights.html', context)
 
 
 @login_required
@@ -993,10 +993,10 @@ def download_csv(request, set_name):
         
     except ContentSet.DoesNotExist:
         messages.error(request, f"Content set '{set_name}' not found.")
-        return redirect('analytics:analyze')
+        return redirect('analytics:insights')
     except Exception as e:
         messages.error(request, f"Error downloading CSV: {str(e)}")
-        return redirect('analytics:analyze')
+        return redirect('analytics:insights')
 
 
 @login_required
@@ -1028,7 +1028,7 @@ def refresh_posts(request):
 
         if posts_df is None:
             messages.error(request, result_message)
-            return redirect('analytics:extract')
+            return redirect('analytics:posts')
 
         # Update database with new posts
         created_count = 0
@@ -1071,7 +1071,7 @@ def refresh_posts(request):
     except Exception as e:
         messages.error(request, f"Error refreshing posts: {str(e)}")
     
-    return redirect('analytics:extract')
+    return redirect('analytics:posts')
 
 
 @login_required
@@ -1095,7 +1095,7 @@ def download_click_visualization(request):
 
         if not selected_indices:
             messages.error(request, "Please select at least one post.")
-            return redirect('analytics:extract')
+            return redirect('analytics:posts')
 
         # Convert indices to integers
         selected_indices = [int(idx) for idx in selected_indices]
@@ -1115,7 +1115,7 @@ def download_click_visualization(request):
         
         if not htmls:
             messages.error(request, "Failed to fetch content from Beehiiv.")
-            return redirect('analytics:extract')
+            return redirect('analytics:posts')
         
         # Build list of generated files
         generated_files = []
@@ -1151,7 +1151,7 @@ def download_click_visualization(request):
 
         if not generated_files:
             messages.error(request, "Failed to generate any visualizations.")
-            return redirect('analytics:extract')
+            return redirect('analytics:posts')
 
         # Single file: return HTML directly
         if len(generated_files) == 1:
@@ -1174,7 +1174,7 @@ def download_click_visualization(request):
         
     except Exception as e:
         messages.error(request, f"Error generating click visualizations: {str(e)}")
-        return redirect('analytics:extract')
+        return redirect('analytics:posts')
 
 
 @login_required
@@ -1199,11 +1199,11 @@ def download_annotated_posts(request):
 
         if not selected_indices:
             messages.error(request, "Please select at least one post.")
-            return redirect('analytics:extract')
+            return redirect('analytics:posts')
 
         if not selected_report_ids:
             messages.error(request, "Please select at least one report.")
-            return redirect('analytics:extract')
+            return redirect('analytics:posts')
 
         # Convert indices to integers
         selected_indices = [int(idx) for idx in selected_indices]
@@ -1222,7 +1222,7 @@ def download_annotated_posts(request):
 
         if not content_perf_evals:
             messages.error(request, "No valid reports found.")
-            return redirect('analytics:extract')
+            return redirect('analytics:posts')
 
         # Get post IDs (beehiiv post_id, not Django id)
         post_ids = posts_of_interest['id'].tolist()
@@ -1236,7 +1236,7 @@ def download_annotated_posts(request):
 
         if not annotated_htmls:
             messages.error(request, "Failed to generate any annotated posts.")
-            return redirect('analytics:extract')
+            return redirect('analytics:posts')
 
         # Build list of generated files
         generated_files = []
@@ -1298,11 +1298,15 @@ def download_annotated_posts(request):
         return response
 
     except NotEnoughCredits as e:
-        messages.error(request, str(e))
-        return redirect('analytics:extract')
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        }, status=402)
     except Exception as e:
-        messages.error(request, f"Error generating annotated posts: {str(e)}")
-        return redirect('analytics:extract')
+        return JsonResponse({
+            'success': False,
+            'error': f"Error generating annotated posts: {str(e)}"
+        }, status=500)
 
 
 @login_required

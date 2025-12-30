@@ -168,7 +168,7 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 DATA_DIR = BASE_DIR / 'data'
 
 # django-allauth settings
-LOGIN_REDIRECT_URL = 'analytics:extract'
+LOGIN_REDIRECT_URL = 'analytics:posts'
 LOGOUT_REDIRECT_URL = 'account_login'
 ACCOUNT_LOGIN_METHODS = {'email'}
 ACCOUNT_SIGNUP_FIELDS = ['email*', 'password1*', 'password2*']
