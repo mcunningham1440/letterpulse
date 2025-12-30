@@ -19,6 +19,7 @@
                 </div>
             </div>
             <div class="card-body">
+                {% if posts %}
                 <form method="post" action="{% url 'analytics:run_extraction' %}" id="extractionForm">
                     {% csrf_token %}
                     <input type="hidden" id="content_desc" name="content_desc" value="">
@@ -30,14 +31,14 @@
                                     <th style="width: 40px;">
                                         <input type="checkbox" id="selectAll" class="form-check-input">
                                     </th>
-                                    <th>Created</th>
-                                    <th>Status</th>
-                                    <th>Publish Date</th>
-                                    <th>Title</th>
+                                    <th data-bs-toggle="tooltip" title="When the post was created in Beehiiv (in your timezone)">Created</th>
+                                    <th data-bs-toggle="tooltip" title="Draft, Scheduled, or Published">Status</th>
+                                    <th data-bs-toggle="tooltip" title="When the post was or will be sent to subscribers (in your timezone)">Publish Date</th>
+                                    <th data-bs-toggle="tooltip" title="Title of the post">Title</th>
                                     <!-- <th>Subtitle</th> -->
-                                    <th class="text-end">Recipients</th>
-                                    <th class="text-end">Opens</th>
-                                    <th class="text-end">Clicks</th>
+                                    <th class="text-end" data-bs-toggle="tooltip" title="Number of subscribers who received this post by email">Recipients</th>
+                                    <th class="text-end" data-bs-toggle="tooltip" title="Unique subscribers who opened the email">Opens</th>
+                                    <th class="text-end" data-bs-toggle="tooltip" title="Unique subscribers who clicked any link">Clicks</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -101,7 +102,7 @@
                                             <div class="form-text small">Describe the content to extract</div>
                                         </div>
                                         <div class="d-flex justify-content-between align-items-center">
-                                            <small class="text-muted">1 credit/post</small>
+                                            <small class="text-muted">🧠 1 AI credit/post</small>
                                             <button type="button" class="btn btn-primary btn-sm" id="extractContentBtn">
                                                 <i class="bi bi-play-fill"></i> Run
                                             </button>
@@ -139,7 +140,7 @@
                                             </div>
                                         </div>
                                         <div class="d-flex justify-content-between align-items-center">
-                                            <small class="text-muted">1 credit/post</small>
+                                            <small class="text-muted">🧠 1 AI credit/post</small>
                                             <button type="button" class="btn btn-warning btn-sm" id="downloadAnnotatedBtn">
                                                 <i class="bi bi-play-fill"></i> Run
                                             </button>
@@ -150,6 +151,11 @@
                         </div>
                     </div>
                 </form>
+                {% else %}
+                <div class="alert alert-info mb-0 no-auto-dismiss">
+                    Welcome to LetterPulse! To get started, fetch your newsletter's posts from Beehiiv using the Refresh Posts button.
+                </div>
+                {% endif %}
             </div>
         </div>
 
@@ -170,12 +176,12 @@
                                     <th style="width: 40px;">
                                         <input type="checkbox" id="selectAllItems" class="form-check-input">
                                     </th>
-                                    <th>Post Title</th>
-                                    <th>Post Date</th>
-                                    <th>Item Text</th>
-                                    <th>Links</th>
-                                    <th class="text-end">Max Clicks</th>
-                                    <th class="text-end">Max CTR</th>
+                                    <th data-bs-toggle="tooltip" title="Title of the source post">Post Title</th>
+                                    <th data-bs-toggle="tooltip" title="When the source post was published (in your timezone)">Post Date</th>
+                                    <th data-bs-toggle="tooltip" title="Text of the extracted content">Item Text</th>
+                                    <th data-bs-toggle="tooltip" title="Number of links in this item">Links</th>
+                                    <th class="text-end" data-bs-toggle="tooltip" title="Highest unique click count among all links in this item">Max Clicks</th>
+                                    <th class="text-end" data-bs-toggle="tooltip" title="Highest unique click-through rate among all links in this item">Max CTR</th>
                                 </tr>
                             </thead>
                             <tbody>

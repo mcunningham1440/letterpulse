@@ -5,6 +5,16 @@
 {% block content %}
 <div class="row">
     <div class="col-12">
+        {% if not content_sets and not has_reports %}
+        <!-- Empty State -->
+        <div class="card">
+            <div class="card-body">
+                <div class="alert alert-info mb-0 no-auto-dismiss">
+                    No content sets or reports available. Please extract and save content in the Posts tab first.
+                </div>
+            </div>
+        </div>
+        {% else %}
         <!-- Content Set Card -->
         <div class="card" id="contentSetCard">
             <div class="card-header">
@@ -31,12 +41,12 @@
                             <thead>
                                 <tr>
                                     <th><input type="checkbox" id="selectAll"></th>
-                                    <th>Post Title</th>
-                                    <th>Post Date</th>
-                                    <th>Item Text</th>
-                                    <th>Links</th>
-                                    <th class="text-end">Max Clicks</th>
-                                    <th class="text-end">Max CTR</th>
+                                    <th data-bs-toggle="tooltip" title="Title of the source post">Post Title</th>
+                                    <th data-bs-toggle="tooltip" title="When the source post was published (in your timezone)">Post Date</th>
+                                    <th data-bs-toggle="tooltip" title="Text of the extracted content">Item Text</th>
+                                    <th data-bs-toggle="tooltip" title="Number of links in this item">Links</th>
+                                    <th class="text-end" data-bs-toggle="tooltip" title="Highest unique click count among all links in this item">Max Clicks</th>
+                                    <th class="text-end" data-bs-toggle="tooltip" title="Highest unique click-through rate among all links in this item">Max CTR</th>
                                 </tr>
                             </thead>
                             <tbody id="contentTableBody">
@@ -104,7 +114,7 @@
                                 </select>
                             </div>
                             <div class="d-flex justify-content-between align-items-center">
-                                <small class="text-muted">1 AI credit</small>
+                                <small class="text-muted">🧠 1 AI credit</small>
                                 <button type="button" class="btn btn-primary btn-sm" id="generateInsightsBtn">
                                     <i class="bi bi-play-fill"></i> Run
                                 </button>
@@ -157,6 +167,7 @@
                 </div>
             </div>
         </div>
+        {% endif %}
     </div>
 </div>
 {% endblock %}

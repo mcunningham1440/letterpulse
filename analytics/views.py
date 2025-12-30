@@ -586,11 +586,17 @@ def insights_view(request):
     try:
         publication = Publication.objects.get(pub_id=beehiiv_pub_id)
         content_sets = ContentSet.objects.filter(publication=publication, user=request.user).order_by('-created_at')
+        has_reports = Report.objects.filter(
+            content_set__publication=publication,
+            content_set__user=request.user
+        ).exists()
     except Publication.DoesNotExist:
         content_sets = ContentSet.objects.none()
+        has_reports = False
 
     context = {
         'content_sets': content_sets,
+        'has_reports': has_reports,
     }
 
     return render(request, 'analytics/insights.html', context)

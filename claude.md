@@ -1,10 +1,10 @@
+## LLM/AI agent instructions
+
+Any time you make a change to the code, determine whether it makes any information in this file obsolete. If so, update it; otherwise, state that no update to claude.md was necessary. This should ALWAYS be the last thing you do when editing the code.
+
 # LetterPulse
 
 A Django web application for analyzing newsletter engagement data from the Beehiiv platform. The app extracts content from newsletter posts, tracks click-through rates (CTR), generates AI-powered insights, and provides annotated HTML exports with improvement tips.
-
-## LLM/AI agent instructions
-
-Any time you make a change to the code, determine whether it makes any information in this file obsolete, and, if so, update it.
 
 ## Project Overview
 
@@ -72,7 +72,7 @@ Stores newsletter post metadata and engagement stats from Beehiiv:
 - `user`: ForeignKey to User (owner of the post data)
 - `publication`: ForeignKey to Publication (nullable)
 - `title`, `subtitle`
-- `status`: "Draft" or "Published"
+- `status`: "Draft", "Scheduled", or "Published"
 - `creation_date`: DateTime when post was created in Beehiiv (nullable, stored in UTC)
 - `publish_date`: DateTime when post was published (nullable for drafts, stored in UTC)
 - Engagement metrics: `recipients`, `delivered`, `email_opens`, `unique_email_opens`, `email_clicks`, `unique_email_clicks`, `unsubscribes`, `spam_reports`

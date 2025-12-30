@@ -183,6 +183,19 @@ EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
 DEFAULT_FROM_EMAIL = 'LetterPulse <noreply@letterpulse.app>'
 
 # =============================================================================
+# Messages Framework Configuration
+# =============================================================================
+# Map Django message levels to Bootstrap alert classes
+from django.contrib.messages import constants as messages
+MESSAGE_TAGS = {
+    messages.DEBUG: 'secondary',
+    messages.INFO: 'info',
+    messages.SUCCESS: 'success',
+    messages.WARNING: 'warning',
+    messages.ERROR: 'danger',
+}
+
+# =============================================================================
 # AI Credit System Configuration
 # =============================================================================
 # Default monthly credits for new users
