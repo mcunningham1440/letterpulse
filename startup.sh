@@ -1,4 +1,7 @@
 #!/bin/bash
+
+. /app/venv/bin/activate
+
 python3 manage.py collectstatic 
 
 exec gunicorn beehiiv_analytics.wsgi:application \

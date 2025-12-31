@@ -93,14 +93,15 @@ WSGI_APPLICATION = 'beehiiv_analytics.wsgi.application'
 
 # Database
 
-db = json.loads(os.environ["DATABASE_SECRET"])
+db_secret = json.loads(os.environ["DATABASE_SECRET"])
+db_host = os.environ["DB_HOST"] # letterpulse-dev.cluster-cwra7ijn7kej.us-east-1.rds.amazonaws.com
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql',
         'NAME': "letterpulse",
-        'USER': db['username'],
-        'PASSWORD': db['password'],
-        'HOST': "letterpulse-dev.cluster-cwra7ijn7kej.us-east-1.rds.amazonaws.com",
+        'USER': db_secret['username'],
+        'PASSWORD': db_secret['password'],
+        'HOST': db_host,
         'PORT': "5432",
     }
 }
