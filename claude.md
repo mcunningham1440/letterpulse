@@ -53,8 +53,9 @@ app/
 ├── data/                       # Runtime data (LLM call logs)
 ├── manage.py                   # Django management script
 ├── requirements.txt            # Python dependencies
-├── apprunner.yaml              # AWS App Runner configuration
-├── startup.sh                  # Cloud startup script (gunicorn)
+├── Dockerfile                  # Docker image definition for AWS App Runner
+├── .dockerignore               # Files excluded from Docker builds
+├── push_to_ecr.sh              # Deployment script (builds and pushes to ECR)
 └── .env / .env.example         # Environment variables (local mode)
 ```
 
@@ -212,23 +213,26 @@ Run locally with:
 python manage.py runserver
 ```
 
-### Cloud Mode (AWS App Runner)
+### Cloud Mode (AWS App Runner via ECR)
 
-For production, the app runs on AWS App Runner and reads secrets from AWS Secrets Manager as configured in `apprunner.yaml`:
+For production, the app runs on AWS App Runner using a Docker image stored in ECR. Secrets are configured in the App Runner service settings to pull from AWS Secrets Manager.
 
-```yaml
-run:
-  secrets:
-    - name: DATABASE_SECRET
-      value-from: arn:aws:secretsmanager:us-east-1:...:secret:rds!cluster-...
-    - name: OPENAI_API_KEY
-      value-from: arn:aws:secretsmanager:us-east-1:...:secret:openai-api-key-...
-  command: sh startup.sh
+**Dockerfile** builds a `python:3.11-slim` image that:
+1. Installs system dependencies (`gcc`, `python3-dev`)
+2. Installs Python dependencies from `requirements.txt`
+3. On startup: runs `migrate`, `collectstatic`, then starts gunicorn (1 worker, 4 threads, 120s timeout)
+
+**Deployment** via `push_to_ecr.sh`:
+```bash
+./push_to_ecr.sh dev    # Pushes to letterpulse:dev-latest
+./push_to_ecr.sh prod   # Pushes to letterpulse:prod-latest
 ```
 
-The `startup.sh` script:
-1. Runs `collectstatic` to gather static files
-2. Starts gunicorn with 1 worker, 4 threads, 120s timeout
+The script:
+1. Logs into ECR
+2. Builds the image for `linux/amd64` (required for App Runner)
+3. Tags and pushes to ECR
+4. App Runner auto-deploys when a new image is pushed
 
 ### Environment Variable Format
 

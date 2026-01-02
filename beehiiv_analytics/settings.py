@@ -25,10 +25,12 @@ DEBUG = True
 CSRF_TRUSTED_ORIGINS = [
     "https://qp4y3etffq.us-east-1.awsapprunner.com",
     "https://peyaih5jyd.us-east-1.awsapprunner.com",
+    "https://abceejrmag.us-east-1.awsapprunner.com",
     ]
 ALLOWED_HOSTS = [
     "qp4y3etffq.us-east-1.awsapprunner.com",
     "peyaih5jyd.us-east-1.awsapprunner.com",
+    "abceejrmag.us-east-1.awsapprunner.com",
     "127.0.0.1",
     ]
 

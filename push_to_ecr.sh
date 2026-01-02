@@ -7,6 +7,8 @@ ECR_REPO="letterpulse"
 
 # Parse environment flag (default: dev)
 ENV="${1:-dev}"
+ENV="${ENV#-}"   # Strip leading dash
+ENV="${ENV#-}"   # Strip second dash (for --prod)
 if [[ "$ENV" != "dev" && "$ENV" != "prod" ]]; then
     echo "Usage: $0 [dev|prod]"
     exit 1
