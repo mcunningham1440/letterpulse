@@ -22,13 +22,14 @@ SECRET_KEY = 'django-insecure-change-this-in-production'
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-APP_RUNNER_URL = "https://qp4y3etffq.us-east-1.awsapprunner.com"
 CSRF_TRUSTED_ORIGINS = [
-    APP_RUNNER_URL
+    "https://qp4y3etffq.us-east-1.awsapprunner.com",
+    "https://peyaih5jyd.us-east-1.awsapprunner.com",
     ]
 ALLOWED_HOSTS = [
     "qp4y3etffq.us-east-1.awsapprunner.com",
-    "127.0.0.1"
+    "peyaih5jyd.us-east-1.awsapprunner.com",
+    "127.0.0.1",
     ]
 
 
