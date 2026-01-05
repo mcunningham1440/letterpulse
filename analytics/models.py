@@ -6,6 +6,8 @@ from django.utils import timezone
 from calendar import monthrange
 import json
 
+from .fields import EncryptedCharField
+
 
 def get_default_monthly_credits():
     """Get default monthly credits from settings"""
@@ -30,12 +32,12 @@ class UsageAccount(models.Model):
     )
     period_start = models.DateField(help_text="Start of current billing period")
 
-    # Beehiiv API credentials
-    beehiiv_token = models.CharField(
-        max_length=255,
+    # Beehiiv API credentials (encrypted at rest)
+    beehiiv_token = EncryptedCharField(
+        max_length=500,  # Extra space for encryption overhead
         blank=True,
         default='',
-        help_text="Beehiiv API token"
+        help_text="Beehiiv API token (encrypted)"
     )
     beehiiv_pub_id = models.CharField(
         max_length=255,

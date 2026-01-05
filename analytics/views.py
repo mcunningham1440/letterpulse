@@ -2,6 +2,7 @@
 Views for the analytics app.
 """
 
+import re
 from django.shortcuts import render, redirect
 from django.http import JsonResponse, HttpResponse
 from django.views.decorators.http import require_POST
@@ -14,6 +15,76 @@ import ast
 from asgiref.sync import async_to_sync
 
 from .models import Post, ContentSet, Report, UsageAccount
+
+
+# =============================================================================
+# Security Helpers
+# =============================================================================
+
+def sanitize_filename(filename: str) -> str:
+    """
+    Sanitize a filename to prevent HTTP header injection and path traversal.
+
+    Removes or replaces characters that could be used for:
+    - HTTP header injection (newlines, carriage returns)
+    - Path traversal (slashes, backslashes)
+    - Shell injection (quotes, semicolons)
+    """
+    if not filename:
+        return "download"
+
+    # Remove any path components
+    filename = filename.replace('/', '_').replace('\\', '_')
+
+    # Remove characters that could cause header injection or other issues
+    # Keep only alphanumeric, spaces, hyphens, underscores, and periods
+    sanitized = re.sub(r'[^\w\s\-.]', '', filename)
+
+    # Collapse multiple spaces/underscores
+    sanitized = re.sub(r'[\s_]+', '_', sanitized)
+
+    # Remove leading/trailing underscores and periods
+    sanitized = sanitized.strip('_.')
+
+    # Ensure we have a valid filename
+    if not sanitized:
+        return "download"
+
+    # Limit length to prevent issues
+    return sanitized[:200]
+
+
+# Pattern for validating content set names
+# Allows alphanumeric, spaces, hyphens, underscores, and common punctuation
+VALID_SET_NAME_PATTERN = re.compile(r'^[\w\s\-.,()\']+$', re.UNICODE)
+
+def validate_set_name(name: str) -> tuple[bool, str]:
+    """
+    Validate a content set name for security and usability.
+
+    Returns:
+        (is_valid, error_message) tuple
+    """
+    if not name:
+        return False, "Name cannot be empty."
+
+    if len(name) > 200:
+        return False, "Name must be 200 characters or less."
+
+    if len(name) < 1:
+        return False, "Name must be at least 1 character."
+
+    # Check for newlines and other control characters
+    if any(c in name for c in '\n\r\t\x00'):
+        return False, "Name cannot contain control characters."
+
+    # Check against allowed pattern
+    if not VALID_SET_NAME_PATTERN.match(name):
+        return False, "Name can only contain letters, numbers, spaces, hyphens, underscores, periods, commas, parentheses, and apostrophes."
+
+    return True, ""
+
+
 from .utils import (
     load_posts_from_db,
     fetch_posts_html_and_clicks_parallel,
@@ -499,6 +570,12 @@ def save_content_set(request):
                 messages.error(request, "Please provide a name for the content set.")
                 return redirect('analytics:posts')
 
+            # Validate the content set name for security
+            is_valid, error_msg = validate_set_name(content_set_name)
+            if not is_valid:
+                messages.error(request, error_msg)
+                return redirect('analytics:posts')
+
             # Check if name already exists for this publication and user
             if ContentSet.objects.filter(name=content_set_name, publication=publication, user=request.user).exists():
                 messages.error(request, f"A content set named '{content_set_name}' already exists. Please choose a different name.")
@@ -748,6 +825,14 @@ def rename_set(request):
                 'error': 'Both old and new names are required.'
             }, status=400)
 
+        # Validate the new name for security
+        is_valid, error_msg = validate_set_name(new_name)
+        if not is_valid:
+            return JsonResponse({
+                'success': False,
+                'error': error_msg
+            }, status=400)
+
         # Check if new name already exists for this user
         if ContentSet.objects.filter(name=new_name, user=request.user).exists():
             return JsonResponse({
@@ -991,7 +1076,8 @@ def download_csv(request, set_name):
         
         # Create CSV response
         response = HttpResponse(content_type='text/csv')
-        response['Content-Disposition'] = f'attachment; filename="{set_name}.csv"'
+        safe_name = sanitize_filename(set_name)
+        response['Content-Disposition'] = f'attachment; filename="{safe_name}.csv"'
         
         df.to_csv(response, index=False)
         
@@ -1150,8 +1236,7 @@ def download_click_visualization(request):
             )
 
             # Create a safe filename from the post title
-            safe_title = "".join(c if c.isalnum() or c in (' ', '-', '_') else '_' for c in row['title'])
-            safe_title = safe_title[:50]  # Limit length
+            safe_title = sanitize_filename(row['title'])[:50]
 
             generated_files.append((f"{safe_title}.html", visualization_html))
 
@@ -1256,8 +1341,7 @@ def download_annotated_posts(request):
             annotated_html = annotated_htmls[post_id]
 
             # Create a safe filename from the post title
-            safe_title = "".join(c if c.isalnum() or c in (' ', '-', '_') else '_' for c in row['title'])
-            safe_title = safe_title[:50]  # Limit length
+            safe_title = sanitize_filename(row['title'])[:50]
 
             generated_files.append((f"{safe_title}.html", annotated_html))
 
