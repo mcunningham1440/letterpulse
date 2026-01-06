@@ -13,6 +13,7 @@ urlpatterns = [
     path('posts/refresh-posts/', views.refresh_posts, name='refresh_posts'),
     path('posts/download-click-viz/', views.download_click_visualization, name='download_click_visualization'),
     path('posts/download-annotated/', views.download_annotated_posts, name='download_annotated_posts'),
+    path('posts/download-csv/', views.download_extracted_csv, name='download_extracted_csv'),
     path('insights/', views.insights_view, name='insights'),
     path('insights/load-content-set/<str:set_name>/', views.load_content_set, name='load_content_set'),
     path('insights/generate-insights/', views.generate_insights, name='generate_insights'),

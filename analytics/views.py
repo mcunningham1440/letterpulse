@@ -548,8 +548,52 @@ def delete_items(request):
         
     except Exception as e:
         messages.error(request, f"Error deleting items: {str(e)}")
-    
+
     return redirect('analytics:posts')
+
+
+@login_required
+def download_extracted_csv(request):
+    """
+    Download the current extracted items from session as CSV.
+    """
+    extracted_items = request.session.get('extracted_items', [])
+
+    if not extracted_items:
+        messages.error(request, "No extracted items to download.")
+        return redirect('analytics:posts')
+
+    try:
+        df = pd.DataFrame(extracted_items)
+
+        # Calculate max clicks and max click rate before formatting
+        if 'clicks' in df.columns:
+            df['max_clicks'] = df['clicks'].apply(lambda x: max(x) if x else 0)
+        else:
+            df['max_clicks'] = 0
+
+        if 'click_rate' in df.columns:
+            df['max_click_rate'] = df['click_rate'].apply(
+                lambda x: f"{max(x) * 100:.2f}%" if x and max(x) > 0 else "0.00%"
+            )
+            # Format click rates as percentages
+            df['click_rate'] = df['click_rate'].apply(
+                lambda x: [f"{rate * 100:.2f}%" for rate in x] if x else []
+            )
+        else:
+            df['max_click_rate'] = "0.00%"
+
+        # Create CSV response
+        response = HttpResponse(content_type='text/csv')
+        response['Content-Disposition'] = 'attachment; filename="extracted_items.csv"'
+
+        df.to_csv(response, index=False)
+
+        return response
+
+    except Exception as e:
+        messages.error(request, f"Error downloading CSV: {str(e)}")
+        return redirect('analytics:posts')
 
 
 @login_required

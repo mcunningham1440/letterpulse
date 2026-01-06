@@ -2,6 +2,15 @@
 
 {% block title %}Posts - LetterPulse{% endblock %}
 
+{% block extra_css %}
+<style>
+    .extract-tooltip .tooltip-inner {
+        max-width: 350px;
+        text-align: left;
+    }
+</style>
+{% endblock %}
+
 {% block content %}
 <div class="row">
     <div class="col-12">
@@ -98,8 +107,19 @@
                                             <input type="text"
                                                    class="form-control form-control-sm"
                                                    id="content_desc_input"
-                                                   placeholder="Events in the New Events section">
+                                                   placeholder="Items in the Quick Bites section">
                                             <div class="form-text small">Describe the content to extract</div>
+                                            <div class="form-text small mt-2">
+                                                <span class="text-primary"
+                                                      data-bs-toggle="tooltip"
+                                                      data-bs-placement="bottom"
+                                                      data-bs-html="true"
+                                                      data-bs-custom-class="extract-tooltip"
+                                                      title="This feature enables you to analyze how individual pieces of content in your newsletter are performing.<br><br>For example, if you have a section called Quick Bites that consists of a series of news links, you can enter the description <b>&quot;Items in the Quick Bites section&quot;</b> to extract these to a table, along with how many clicks the links got.<br><br>For sections whose name varies, or that don't have a name, you can get more creative with descriptions like <b>&quot;the 4-5 bullet points below the title and above the Quick Bites section&quot;</b>."
+                                                      style="cursor: help;">
+                                                    <i class="bi bi-info-circle"></i> How to use this feature
+                                                </span>
+                                            </div>
                                         </div>
                                         <div class="d-flex justify-content-between align-items-center">
                                             <small class="text-muted">🧠 1 AI credit/post</small>
@@ -213,6 +233,11 @@
                         <!-- Remove Selected Items -->
                         <button type="button" class="btn btn-danger btn-sm" id="removeSelectedItemsBtn" style="min-width: 200px;">
                             <i class="bi bi-trash"></i> Remove Selected Items
+                        </button>
+
+                        <!-- Download CSV -->
+                        <button type="button" class="btn btn-info btn-sm" id="downloadExtractedCsvBtn" style="min-width: 200px;">
+                            <i class="bi bi-download"></i> Download CSV
                         </button>
 
                         <!-- Save Content Set -->
@@ -569,6 +594,14 @@
                 return;
             }
             document.getElementById('deleteForm').submit();
+        });
+    }
+
+    // Handle Download CSV button
+    const downloadExtractedCsvBtn = document.getElementById('downloadExtractedCsvBtn');
+    if (downloadExtractedCsvBtn) {
+        downloadExtractedCsvBtn.addEventListener('click', function() {
+            window.location.href = "{% url 'analytics:download_extracted_csv' %}";
         });
     }
 
