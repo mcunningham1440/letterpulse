@@ -6,6 +6,7 @@ sandboxes/
 code_dump/
 testing_data/
 .venv/
+consoles/
 
 .env
 *.pyc

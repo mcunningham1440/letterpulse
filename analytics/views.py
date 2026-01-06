@@ -287,6 +287,7 @@ def posts_view(request):
     Display the posts page with posts table.
     """
     from .utils import convert_to_user_timezone
+    # from .models import Publication
 
     # Get current publication for filtering
     _, beehiiv_pub_id, _ = get_user_api_credentials(request.user)
@@ -295,11 +296,27 @@ def posts_view(request):
     usage = UsageAccount.objects.get(user=request.user)
     user_tz = usage.timezone
 
+    # # Get publication name for demo mode check
+    # publication_name = None
+    # try:
+    #     publication = Publication.objects.get(pub_id=beehiiv_pub_id)
+    #     publication_name = publication.name
+    # except Publication.DoesNotExist:
+    #     pass
+
     # Load posts from database filtered by publication and user
     posts_df = load_posts_from_db(publication_id=beehiiv_pub_id, user=request.user)
 
     # Reverse order so newer posts appear first
     posts_df = posts_df.iloc[::-1].reset_index(drop=True)
+
+    # # Demo mode adjustments for "Building AI Agents" newsletter
+    # if publication_name == "Building AI Agents" and not posts_df.empty:
+    #     # Hide post titled "Farewell, and thank you"
+    #     posts_df = posts_df[posts_df['title'] != "Farewell, and thank you"].reset_index(drop=True)
+    #     # Multiply opens by 1.2 and clicks by 3, rounded to nearest int
+    #     posts_df['unique_email_opens'] = (posts_df['unique_email_opens'] * 1.2).round().astype(int)
+    #     posts_df['unique_email_clicks'] = (posts_df['unique_email_clicks'] * 3).round().astype(int)
 
     # Convert to list of dicts for template
     posts_data = posts_df.to_dict('records')

@@ -26,12 +26,15 @@ CSRF_TRUSTED_ORIGINS = [
     "https://qp4y3etffq.us-east-1.awsapprunner.com",
     "https://peyaih5jyd.us-east-1.awsapprunner.com",
     "https://abceejrmag.us-east-1.awsapprunner.com",
+    "https://letterpulse.com"
     ]
 ALLOWED_HOSTS = [
     "qp4y3etffq.us-east-1.awsapprunner.com",
     "peyaih5jyd.us-east-1.awsapprunner.com",
     "abceejrmag.us-east-1.awsapprunner.com",
     "127.0.0.1",
+    "localhost",
+    "letterpulse.com"
     ]
 
 
@@ -216,7 +219,7 @@ CREDITS_PER_ANNOTATION = 1      # Per post annotated with improvement tips
 # Base durations for time-based progress bars. Actual duration may vary
 # based on number of posts selected.
 PROGRESS_DURATIONS = {
-    'refresh_posts': 45,        # empirical
+    'refresh_posts': 10,        # empirical
     'download_annotated': 60,   # empirical
     'extract_content': 12,      # empirical
     'generate_report': 65,      # empirical

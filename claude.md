@@ -208,10 +208,22 @@ DATABASE_SECRET={"username":"your_db_user","password":"your_db_password"}
 OPENAI_API_KEY=your-openai-api-key
 ```
 
-Run locally with:
+Run locally with Django's dev server:
 ```bash
 python manage.py runserver
 ```
+
+Or run locally with Docker (mirrors production environment):
+```bash
+./run_local.sh
+```
+
+**`run_local.sh`** builds and runs the app in a Docker container:
+1. Stops and removes any existing `letterpulse_local` container
+2. Builds the Docker image for ARM64 (Apple Silicon)
+3. Runs the container on port 8000 with environment variables from `.env`
+
+The app will be available at `http://localhost:8000`. The script uses relative paths so it can be run from any directory.
 
 ### Cloud Mode (AWS App Runner via ECR)
 
