@@ -132,8 +132,11 @@ Uses django-allauth for email-based authentication:
 - Password-based login at `/accounts/login/`
 - Registration at `/accounts/signup/`
 - Password reset via email
-- All views are protected with `@login_required`
+- All views are protected with `@login_required` except the public about page
 - UsageAccount is auto-created for new users via signals
+
+### Public Pages
+- `/` - About page (unauthenticated users see landing page; authenticated users redirect to posts)
 
 ## Key Features & Workflows
 

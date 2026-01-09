@@ -137,10 +137,11 @@ def require_valid_api_credentials(view_func):
     return wrapper
 
 
-@login_required
 def index(request):
-    """Redirect to posts page"""
-    return redirect('analytics:posts')
+    """Show about page for unauthenticated users, redirect to posts for authenticated users"""
+    if request.user.is_authenticated:
+        return redirect('analytics:posts')
+    return render(request, 'analytics/about.html')
 
 
 @login_required
@@ -296,13 +297,18 @@ def posts_view(request):
     usage = UsageAccount.objects.get(user=request.user)
     user_tz = usage.timezone
 
-    # # Get publication name for demo mode check
-    # publication_name = None
-    # try:
-    #     publication = Publication.objects.get(pub_id=beehiiv_pub_id)
-    #     publication_name = publication.name
-    # except Publication.DoesNotExist:
-    #     pass
+    
+    ###
+    # Get publication name for demo mode check
+    from .models import Publication
+    publication_name = None
+    try:
+        publication = Publication.objects.get(pub_id=beehiiv_pub_id)
+        publication_name = publication.name
+    except Publication.DoesNotExist:
+        pass
+    ###
+
 
     # Load posts from database filtered by publication and user
     posts_df = load_posts_from_db(publication_id=beehiiv_pub_id, user=request.user)
@@ -310,13 +316,26 @@ def posts_view(request):
     # Reverse order so newer posts appear first
     posts_df = posts_df.iloc[::-1].reset_index(drop=True)
 
-    # # Demo mode adjustments for "Building AI Agents" newsletter
-    # if publication_name == "Building AI Agents" and not posts_df.empty:
-    #     # Hide post titled "Farewell, and thank you"
-    #     posts_df = posts_df[posts_df['title'] != "Farewell, and thank you"].reset_index(drop=True)
-    #     # Multiply opens by 1.2 and clicks by 3, rounded to nearest int
-    #     posts_df['unique_email_opens'] = (posts_df['unique_email_opens'] * 1.2).round().astype(int)
-    #     posts_df['unique_email_clicks'] = (posts_df['unique_email_clicks'] * 3).round().astype(int)
+
+    ###
+    # Demo mode adjustments for "Building AI Agents" newsletter
+    if publication_name == "Building AI Agents" and not posts_df.empty:
+        # Hide post titled "Farewell, and thank you"
+        posts_df = posts_df[posts_df['title'] != "Farewell, and thank you"].reset_index(drop=True)
+        # Multiply opens by 1.2 and clicks by 3, rounded to nearest int
+        posts_df['unique_email_opens'] = (posts_df['unique_email_opens'] * 1.2).round().astype(int)
+        posts_df['unique_email_clicks'] = (posts_df['unique_email_clicks'] * 3).round().astype(int)
+        # Apply growth factor based on days since November 1, 2025 for each post
+        from datetime import datetime
+        baseline = datetime(2025, 11, 1, tzinfo=pd.Timestamp.now('UTC').tzinfo)
+        posts_df['days_elapsed'] = (pd.to_datetime(posts_df['publish_date']) - baseline).dt.days.fillna(0).clip(lower=0)
+        posts_df['growth_factor'] = (1.006 ** posts_df['days_elapsed']).clip(lower=1.0)
+        posts_df['recipients'] = (posts_df['recipients'].fillna(0) * posts_df['growth_factor']).round().astype(int)
+        posts_df['unique_email_opens'] = (posts_df['unique_email_opens'].fillna(0) * posts_df['growth_factor']).round().astype(int)
+        posts_df['unique_email_clicks'] = (posts_df['unique_email_clicks'].fillna(0) * posts_df['growth_factor']).round().astype(int)
+        posts_df = posts_df.drop(columns=['days_elapsed', 'growth_factor'])
+    ###
+
 
     # Convert to list of dicts for template
     posts_data = posts_df.to_dict('records')
