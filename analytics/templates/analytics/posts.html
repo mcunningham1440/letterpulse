@@ -1,4 +1,5 @@
 {% extends 'analytics/base.html' %}
+{% load humanize %}
 
 {% block title %}Posts - LetterPulse{% endblock %}
 
@@ -70,9 +71,9 @@
                                     <td data-order="{{ post.publish_date_sortable }}">{{ post.publish_date_display }}</td>
                                     <td>{{ post.title }}</td>
                                     <!-- <td>{{ post.subtitle|default:"-" }}</td> -->
-                                    <td class="text-end">{{ post.recipients|default:0 }}</td>
-                                    <td class="text-end">{{ post.unique_email_opens|default:0 }}</td>
-                                    <td class="text-end">{{ post.unique_email_clicks|default:0 }}</td>
+                                    <td class="text-end">{{ post.recipients|default:0|intcomma }}</td>
+                                    <td class="text-end">{{ post.unique_email_opens|default:0|intcomma }}</td>
+                                    <td class="text-end">{{ post.unique_email_clicks|default:0|intcomma }}</td>
                                 </tr>
                                 {% endfor %}
                             </tbody>
@@ -217,7 +218,7 @@
                                     <td>
                                         <span class="badge bg-secondary">{{ item.links|length }} link{{ item.links|length|pluralize }}</span>
                                     </td>
-                                    <td class="text-end">{{ item.max_clicks }}</td>
+                                    <td class="text-end">{{ item.max_clicks|intcomma }}</td>
                                     <td class="text-end">{{ item.max_click_rate }}</td>
                                 </tr>
                                 {% endfor %}
@@ -388,6 +389,10 @@
             // Copy value to hidden field
             contentDescHidden.value = contentDescInput.value.trim();
 
+            // Close the dropdown
+            const dropdown = bootstrap.Dropdown.getInstance(document.getElementById('extractContentDropdown'));
+            if (dropdown) dropdown.hide();
+
             const numPosts = selectedPosts.length;
             const baseDuration = {{ progress_durations.extract_content }};
             const estimatedDuration = Math.min(baseDuration, 60);
@@ -494,6 +499,10 @@
                 alert('Please select at least one report.');
                 return;
             }
+
+            // Close the dropdown
+            const dropdown = bootstrap.Dropdown.getInstance(document.getElementById('improvementTipsDropdown'));
+            if (dropdown) dropdown.hide();
 
             const numPosts = selectedPostCheckboxes.length;
             const baseDuration = {{ progress_durations.download_annotated }};

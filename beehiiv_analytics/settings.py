@@ -20,7 +20,9 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 SECRET_KEY = 'v5/HHf3gec^4B4*'
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+# ENVIRONMENT should be 'dev', 'prod', or 'local' (defaults to 'local' for local development)
+ENVIRONMENT = os.environ.get('ENVIRONMENT', 'local')
+DEBUG = ENVIRONMENT != 'prod'
 
 CSRF_TRUSTED_ORIGINS = [
     "https://qp4y3etffq.us-east-1.awsapprunner.com",
@@ -48,6 +50,7 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     'django.contrib.sites',  # Required by allauth
+    'django.contrib.humanize',  # For number formatting (intcomma)
     'analytics',  # Must come before allauth to override its templates
     'allauth',
     'allauth.account',

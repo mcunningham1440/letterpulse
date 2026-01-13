@@ -278,7 +278,7 @@
                 <td data-order="${postDateSortable}">${postDateDisplay}</td>
                 <td>${truncateText(item.text, 50)}</td>
                 <td><span class="badge bg-secondary">${item.links.length} link${item.links.length !== 1 ? 's' : ''}</span></td>
-                <td class="text-end">${item.max_clicks}</td>
+                <td class="text-end">${Number(item.max_clicks).toLocaleString()}</td>
                 <td class="text-end">${item.max_click_rate}</td>
             `;
             tbody.appendChild(row);

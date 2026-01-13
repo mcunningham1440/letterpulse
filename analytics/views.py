@@ -298,7 +298,7 @@ def posts_view(request):
     user_tz = usage.timezone
 
     
-    ###
+    ### Demo mode custom BAIA adjustments
     # Get publication name for demo mode check
     from .models import Publication
     publication_name = None
@@ -317,11 +317,19 @@ def posts_view(request):
     posts_df = posts_df.iloc[::-1].reset_index(drop=True)
 
 
-    ###
-    # Demo mode adjustments for "Building AI Agents" newsletter
+    ### Demo mode custom BAIA adjustments
     if publication_name == "Building AI Agents" and not posts_df.empty:
         # Hide post titled "Farewell, and thank you"
         posts_df = posts_df[posts_df['title'] != "Farewell, and thank you"].reset_index(drop=True)
+        # Make "Amazon's Shopping Agent Controversy" appear as Scheduled with tomorrow's date and zero stats
+        amazon_mask = posts_df['title'].str.contains("Amazon.*Shopping Agent Controversy", regex=True, na=False)
+        posts_df.loc[amazon_mask, 'status'] = "Scheduled"
+        from datetime import timedelta
+        tomorrow = pd.Timestamp.now('UTC') + timedelta(days=1)
+        posts_df.loc[amazon_mask, 'publish_date'] = tomorrow
+        posts_df.loc[amazon_mask, 'recipients'] = 0
+        posts_df.loc[amazon_mask, 'unique_email_opens'] = 0
+        posts_df.loc[amazon_mask, 'unique_email_clicks'] = 0
         # Multiply opens by 1.2 and clicks by 3, rounded to nearest int
         posts_df['unique_email_opens'] = (posts_df['unique_email_opens'] * 1.2).round().astype(int)
         posts_df['unique_email_clicks'] = (posts_df['unique_email_clicks'] * 3).round().astype(int)
