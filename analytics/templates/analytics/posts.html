@@ -104,12 +104,12 @@
                                     </button>
                                     <div class="dropdown-menu p-3" aria-labelledby="extractContentDropdown" style="min-width: 320px;">
                                         <div class="mb-3">
-                                            <label for="content_desc_input" class="form-label small fw-bold">Item Description</label>
+                                            <label for="content_desc_input" class="form-label small fw-bold">Describe Content to Extract</label>
                                             <input type="text"
                                                    class="form-control form-control-sm"
                                                    id="content_desc_input"
                                                    placeholder="Items in the Quick Bites section">
-                                            <div class="form-text small">Describe the content to extract</div>
+                                            <!-- <div class="form-text small">Describe the content to extract</div> -->
                                             <div class="form-text small mt-2">
                                                 <span class="text-primary"
                                                       data-bs-toggle="tooltip"
@@ -158,6 +158,17 @@
                                                 {% else %}
                                                     <span class="text-muted small">No reports generated yet, use the Generate Report functionality in the Insights tab to start</span>
                                                 {% endif %}
+                                            </div>
+                                            <div class="form-text small mt-2">
+                                                <span class="text-primary"
+                                                      data-bs-toggle="tooltip"
+                                                      data-bs-placement="bottom"
+                                                      data-bs-html="true"
+                                                      data-bs-custom-class="extract-tooltip"
+                                                      title="This feature lets you download a copy of your post(s) with suggestions on how to improve the content to increase engagement.<br><br>First, use the <b>Extract Content</b> button to get and save tables with content from your past issues. Next, use the <b>Insights</b> tab to generate reports analyzing what attracts high engagement. Then select posts you want to get suggestions for here (hint: try one you haven't published yet) along with the reports you want our AI to base its suggestions on.<br><br>The AI will annotate each post with specific suggestions based on your report findings, highlighting what can be improved."
+                                                      style="cursor: help;">
+                                                    <i class="bi bi-info-circle"></i> How to use this feature
+                                                </span>
                                             </div>
                                         </div>
                                         <div class="d-flex justify-content-between align-items-center">
@@ -269,7 +280,7 @@
                                             <input type="text"
                                                    class="form-control form-control-sm"
                                                    id="content_set_name_input"
-                                                   placeholder="e.g., 'Quick links'">
+                                                   placeholder="e.g., 'Quick Bites'">
                                         </div>
                                     </div>
 

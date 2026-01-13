@@ -2,6 +2,15 @@
 
 {% block title %}Insights - LetterPulse{% endblock %}
 
+{% block extra_css %}
+<style>
+    .extract-tooltip .tooltip-inner {
+        max-width: 350px;
+        text-align: left;
+    }
+</style>
+{% endblock %}
+
 {% block content %}
 <div class="row">
     <div class="col-12">
@@ -112,6 +121,17 @@
                                     </option>
                                     {% endfor %}
                                 </select>
+                                <div class="form-text small mt-2">
+                                    <span class="text-primary"
+                                          data-bs-toggle="tooltip"
+                                          data-bs-placement="bottom"
+                                          data-bs-html="true"
+                                          data-bs-custom-class="extract-tooltip"
+                                          title="This feature allows you to generate insights about your content's performance.<br><br>First, use the <b>Extract Content</b> button in <b>Posts</b> to extract content items and save them as a Content Set. Then select that set here before generating a report.<br><br>The report will identify patterns in what content performs best, highlight top and bottom performers, and provide actionable recommendations."
+                                          style="cursor: help;">
+                                        <i class="bi bi-info-circle"></i> How to use this feature
+                                    </span>
+                                </div>
                             </div>
                             <div class="d-flex justify-content-between align-items-center">
                                 <small class="text-muted">🧠 1 AI credit</small>
@@ -152,7 +172,7 @@
                                     <input type="text"
                                            class="form-control form-control-sm"
                                            id="report_name"
-                                           placeholder="e.g., 'Quick links analysis'">
+                                           placeholder="e.g., 'Quick Bites analysis'">
                                 </div>
                                 <div class="d-flex justify-content-end">
                                     <button type="button" class="btn btn-success btn-sm" id="saveReportBtn">
