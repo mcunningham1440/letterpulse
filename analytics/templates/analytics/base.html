@@ -200,6 +200,12 @@
             align-items: center;
             gap: 0.5rem;
             overflow: hidden;
+            text-decoration: none;
+            transition: color 0.15s ease-in-out;
+        }
+
+        .user-email:hover {
+            color: white;
         }
 
         .user-email span {
@@ -414,10 +420,10 @@
         <div class="sidebar-footer">
             <!-- User Menu -->
             <div class="user-menu">
-                <div class="user-email">
+                <a href="{% url 'analytics:account' %}" class="user-email" title="Account settings">
                     <i class="bi bi-person-circle"></i>
                     <span>{{ user.email }}</span>
-                </div>
+                </a>
                 <a href="{% url 'account_logout' %}" class="logout-link">
                     <i class="bi bi-box-arrow-right"></i>
                     <span>Sign Out</span>

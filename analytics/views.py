@@ -318,7 +318,7 @@ def posts_view(request):
 
 
     ### Demo mode custom BAIA adjustments
-    if publication_name == "Building AI Agents" and not posts_df.empty:
+    if publication_name == "Building AI Agents" and not posts_df.empty and request.user.username == "jackstone":
         # Hide post titled "Farewell, and thank you"
         posts_df = posts_df[posts_df['title'] != "Farewell, and thank you"].reset_index(drop=True)
         # Make "Amazon's Shopping Agent Controversy" appear as Scheduled with tomorrow's date and zero stats

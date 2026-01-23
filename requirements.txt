@@ -12,3 +12,4 @@ Levenshtein>=0.25      # String matching
 gunicorn>=21.0         # WSGI HTTP server for production
 whitenoise>=6.7        # Static file serving for production
 cryptography>=42.0     # For encrypting sensitive data at rest
+pytz>=2024.1          # Timezone handling for migrations

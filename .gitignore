@@ -16,3 +16,4 @@ consoles/
 db.sqlite3
 media
 staticfiles
+open_worktree.sh
