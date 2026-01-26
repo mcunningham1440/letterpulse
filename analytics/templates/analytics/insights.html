@@ -87,6 +87,37 @@
                         </button>
                     </div>
                 </div>
+                <div class="card-body border-top d-none" id="phraseAnalysisSection">
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <h5 class="mb-0" id="phraseAnalysisHeader">Best Performing Phrases</h5>
+                        <div class="d-flex gap-3 align-items-center">
+                            <div class="btn-group btn-group-sm" role="group">
+                                <input type="radio" class="btn-check" name="phraseMode" id="phraseBest" value="best" checked>
+                                <label class="btn btn-outline-success" for="phraseBest">Best</label>
+                                <input type="radio" class="btn-check" name="phraseMode" id="phraseWorst" value="worst">
+                                <label class="btn btn-outline-danger" for="phraseWorst">Worst</label>
+                            </div>
+                            <div class="d-flex align-items-center gap-2">
+                                <label for="minAppearances" class="form-label mb-0 small text-muted">Min appearances:</label>
+                                <input type="number" class="form-control form-control-sm" id="minAppearances"
+                                       value="3" min="1" max="50" style="width: 70px;">
+                            </div>
+                        </div>
+                    </div>
+                    <div class="table-responsive">
+                        <table class="table table-hover table-sm" id="phraseTable">
+                            <thead>
+                                <tr>
+                                    <th data-bs-toggle="tooltip" title="Word or two-word phrase found in the content items, excluding very common words like 'it'">Phrase</th>
+                                    <th class="text-end" data-bs-toggle="tooltip" title="Average of maximum click-through rates across all items containing this phrase">Avg Max CTR</th>
+                                    <th class="text-end" data-bs-toggle="tooltip" title="Difference from the overall average CTR across all items">vs All Items</th>
+                                    <th class="text-end" data-bs-toggle="tooltip" title="Number of content items containing this phrase">Appearances</th>
+                                </tr>
+                            </thead>
+                            <tbody id="phraseTableBody"></tbody>
+                        </table>
+                    </div>
+                </div>
             </div>
         </div>
 
@@ -197,7 +228,107 @@
     let currentContentSet = null;
     let currentReportText = null;
     let isViewingSavedReport = false;
-    
+    let currentPhraseData = [];
+    let overallAvgCtr = 0;
+
+    // Stopwords loaded from english_lemma_frequencies.csv (top 200 most common words)
+    const EXCLUDED_WORDS = new Set({{ stopwords_json|safe }});
+
+    function getNgrams(text, n) {
+        const words = text.toLowerCase().match(/\b\w+\b/g) || [];
+        if (words.length < n) return [];
+        const ngrams = [];
+        for (let i = 0; i <= words.length - n; i++) {
+            ngrams.push(words.slice(i, i + n).join(' '));
+        }
+        return ngrams;
+    }
+
+    function isAllDigits(str) {
+        return /^\d+$/.test(str);
+    }
+
+    function containsExcludedWord(ngram) {
+        const words = ngram.split(' ');
+        // Exclude if any word is a stopword
+        if (words.some(word => EXCLUDED_WORDS.has(word))) return true;
+        // Exclude if the entire ngram consists only of digits (any length)
+        if (words.every(word => isAllDigits(word))) return true;
+        // Exclude if any word is a single letter
+        if (words.some(word => word.length === 1)) return true;
+        return false;
+    }
+
+    function calculatePhraseStats(items) {
+        const ngramStats = {};
+        const allMaxCtrs = [];
+
+        items.forEach(item => {
+            const text = item.text || '';
+            // Use click_rate_raw (numeric values) instead of formatted click_rate
+            const clickRates = item.click_rate_raw || [];
+            const maxCtr = clickRates.length > 0 ? Math.max(...clickRates) : 0;
+            allMaxCtrs.push(maxCtr);
+
+            [1, 2].forEach(n => {
+                getNgrams(text, n).forEach(ngram => {
+                    if (!containsExcludedWord(ngram)) {
+                        if (!ngramStats[ngram]) ngramStats[ngram] = [];
+                        ngramStats[ngram].push(maxCtr);
+                    }
+                });
+            });
+        });
+
+        // Calculate overall average CTR across all items
+        overallAvgCtr = allMaxCtrs.length > 0 ? allMaxCtrs.reduce((a, b) => a + b, 0) / allMaxCtrs.length : 0;
+
+        return Object.entries(ngramStats).map(([ngram, ctrs]) => ({
+            ngram,
+            avgCtr: ctrs.reduce((a, b) => a + b, 0) / ctrs.length,
+            count: ctrs.length
+        }));
+    }
+
+    function updatePhraseTable() {
+        const mode = document.querySelector('input[name="phraseMode"]:checked').value;
+        const minAppearances = parseInt(document.getElementById('minAppearances').value) || 3;
+
+        // Filter by min appearances and above/below average based on mode
+        let filtered = currentPhraseData.filter(p => {
+            if (p.count < minAppearances) return false;
+            if (mode === 'best') return p.avgCtr >= overallAvgCtr;
+            return p.avgCtr <= overallAvgCtr;
+        });
+
+        filtered.sort((a, b) => mode === 'best' ? b.avgCtr - a.avgCtr : a.avgCtr - b.avgCtr);
+        const top15 = filtered.slice(0, 15);
+
+        const tbody = document.getElementById('phraseTableBody');
+        tbody.innerHTML = '';
+
+        if (top15.length === 0) {
+            tbody.innerHTML = `<tr><td colspan="4" class="text-center text-muted">
+                No phrases found with at least ${minAppearances} appearances</td></tr>`;
+            return;
+        }
+
+        const colorClass = mode === 'best' ? 'text-success' : 'text-danger';
+
+        top15.forEach(item => {
+            const diff = item.avgCtr - overallAvgCtr;
+            const diffStr = (diff >= 0 ? '+' : '') + (diff * 100).toFixed(2) + '%';
+            const row = document.createElement('tr');
+            row.innerHTML = `
+                <td><code>${item.ngram}</code></td>
+                <td class="text-end">${(item.avgCtr * 100).toFixed(2)}%</td>
+                <td class="text-end ${colorClass}">${diffStr}</td>
+                <td class="text-end">${item.count}</td>
+            `;
+            tbody.appendChild(row);
+        });
+    }
+
     // Load all reports on page load
     async function loadAllReports() {
         try {
@@ -257,6 +388,9 @@
             document.getElementById('contentTableBody').innerHTML = '';
             currentContentSet = null;
             document.getElementById('insightsContent').classList.add('d-none');
+            document.getElementById('phraseAnalysisSection').classList.add('d-none');
+            currentPhraseData = [];
+            overallAvgCtr = 0;
             return;
         }
 
@@ -316,6 +450,11 @@
         setTimeout(() => {
             table.columns.adjust().draw();
         }, 0);
+
+        // Calculate and display phrase performance analysis
+        currentPhraseData = calculatePhraseStats(data.data);
+        updatePhraseTable();
+        document.getElementById('phraseAnalysisSection').classList.remove('d-none');
     }
     
     // Truncate text helper
@@ -756,5 +895,20 @@
             alert('Error deleting report: ' + error.message);
         }
     });
+
+    // Phrase analysis event listeners
+    function updatePhraseHeader() {
+        const mode = document.querySelector('input[name="phraseMode"]:checked').value;
+        document.getElementById('phraseAnalysisHeader').textContent =
+            mode === 'best' ? 'Best Performing Phrases' : 'Worst Performing Phrases';
+    }
+
+    document.querySelectorAll('input[name="phraseMode"]').forEach(radio => {
+        radio.addEventListener('change', () => {
+            updatePhraseHeader();
+            updatePhraseTable();
+        });
+    });
+    document.getElementById('minAppearances').addEventListener('input', updatePhraseTable);
 </script>
 {% endblock %}

@@ -736,6 +736,36 @@ def save_content_set(request):
     return redirect('analytics:posts')
 
 
+def _load_stopwords(num_words=200):
+    """
+    Load top N most common words from english_word_frequencies.csv.
+    The file is pre-sorted by rank, so we just read the first N rows.
+    """
+    import csv
+    import os
+    csv_path = os.path.join(os.path.dirname(__file__), 'data', 'english_word_frequencies.csv')
+
+    stopwords = []
+    with open(csv_path, 'r', encoding='utf-8') as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            word = row.get('word', '').lower().strip()
+            if word:
+                stopwords.append(word)
+                if len(stopwords) >= num_words:
+                    break
+    return stopwords
+
+# Cache stopwords at module level (loaded once at app startup)
+_CACHED_STOPWORDS = None
+
+def get_stopwords():
+    global _CACHED_STOPWORDS
+    if _CACHED_STOPWORDS is None:
+        _CACHED_STOPWORDS = _load_stopwords()
+    return _CACHED_STOPWORDS
+
+
 @login_required
 @require_valid_api_credentials
 def insights_view(request):
@@ -743,6 +773,7 @@ def insights_view(request):
     Display the insights page with content sets.
     """
     from .models import Publication
+    import json
 
     # Get current publication for filtering
     _, beehiiv_pub_id, _ = get_user_api_credentials(request.user)
@@ -762,6 +793,7 @@ def insights_view(request):
     context = {
         'content_sets': content_sets,
         'has_reports': has_reports,
+        'stopwords_json': json.dumps(get_stopwords()),
     }
 
     return render(request, 'analytics/insights.html', context)
@@ -787,6 +819,9 @@ def load_content_set(request, set_name):
             df['max_click_rate'] = df['click_rate'].apply(
                 lambda x: f"{max(x) * 100:.2f}%" if x and max(x) > 0 else "0.00%"
             )
+
+            # Preserve raw click_rate for phrase analysis before formatting
+            df['click_rate_raw'] = df['click_rate'].apply(lambda x: x if x else [])
 
             # Format click rates as percentages
             df['click_rate'] = df['click_rate'].apply(

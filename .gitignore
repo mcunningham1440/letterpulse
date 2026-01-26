@@ -1,6 +1,6 @@
 config.py
 sandbox.ipynb
-data/
+/data/
 __pycache__/
 sandboxes/
 code_dump/
