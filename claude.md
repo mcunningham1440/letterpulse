@@ -204,12 +204,17 @@ For local development, the app reads environment variables from the `.env` file 
 
 Required in `.env`:
 ```
+# Django
+SECRET_KEY=your-secret-key-here
+
 # Database credentials as JSON (matches AWS Secrets Manager format)
 DATABASE_SECRET={"username":"your_db_user","password":"your_db_password"}
 
 # API Keys
 OPENAI_API_KEY=your-openai-api-key
 ```
+
+**Important:** `SECRET_KEY` is used to derive the encryption key for user beehiiv tokens (via `EncryptedCharField`). Changing the SECRET_KEY will make existing encrypted tokens unreadable. Always backup the SECRET_KEY alongside database backups.
 
 Run locally with Django's dev server:
 ```bash
