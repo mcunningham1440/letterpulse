@@ -27,4 +27,5 @@ urlpatterns = [
     path('insights/load-report/<int:report_id>/', views.load_report, name='load_report'),
     path('insights/get-all-reports/', views.get_all_reports, name='get_all_reports'),
     path('insights/delete-report/<int:report_id>/', views.delete_report, name='delete_report'),
+    path('survey/submit/', views.submit_survey, name='submit_survey'),
 ]

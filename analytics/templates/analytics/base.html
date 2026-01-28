@@ -541,5 +541,129 @@
     </script>
 
     {% block extra_js %}{% endblock %}
+
+    <!-- Signup Survey Modal -->
+    {% if show_survey and user.is_authenticated %}
+    <div class="survey-overlay" id="surveyOverlay">
+        <div class="survey-modal">
+            <h4 class="mb-4">Thanks for signing up for LetterPulse!</h4>
+            <p class="text-muted mb-4">Just three quick questions so we can help the app better meet your needs:</p>
+
+            <form id="surveyForm">
+                {% csrf_token %}
+
+                <div class="mb-4">
+                    <label class="form-label fw-semibold">1. Do you feel the existing analytics tools provided by Beehiiv are inadequate?</label>
+                    <div class="d-flex gap-3 mt-2">
+                        <div class="form-check">
+                            <input class="form-check-input" type="radio" name="beehiiv_inadequate" id="beehiivYes" value="yes" required>
+                            <label class="form-check-label" for="beehiivYes">Yes</label>
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input" type="radio" name="beehiiv_inadequate" id="beehiivNo" value="no">
+                            <label class="form-check-label" for="beehiivNo">No</label>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="mb-4">
+                    <label class="form-label fw-semibold" for="missingFeatures">2. What analytics features do you most feel are missing from Beehiiv?</label>
+                    <textarea class="form-control" id="missingFeatures" name="missing_features" rows="3" placeholder="Type your answer here..."></textarea>
+                </div>
+
+                <div class="mb-4">
+                    <label class="form-label fw-semibold" for="otherTools">3. Do you use any other third-party tools for your newsletter analytics?</label>
+                    <textarea class="form-control" id="otherTools" name="other_tools" rows="3" placeholder="Type your answer here..."></textarea>
+                </div>
+
+                <div class="text-end">
+                    <button type="submit" class="btn btn-primary px-4" id="surveySubmitBtn">Submit</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <style>
+        .survey-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: rgba(0, 0, 0, 0.6);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 9999;
+        }
+
+        .survey-modal {
+            background: white;
+            border-radius: 0.5rem;
+            padding: 2rem;
+            max-width: 600px;
+            width: 90%;
+            max-height: 90vh;
+            overflow-y: auto;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+        }
+
+        .survey-modal h4 {
+            color: #212529;
+        }
+
+        .survey-modal .form-check-input:checked {
+            background-color: var(--primary-green);
+            border-color: var(--primary-green);
+        }
+    </style>
+
+    <script>
+        (function() {
+            const surveyForm = document.getElementById('surveyForm');
+            const surveyOverlay = document.getElementById('surveyOverlay');
+            const submitBtn = document.getElementById('surveySubmitBtn');
+
+            if (surveyForm) {
+                surveyForm.addEventListener('submit', function(e) {
+                    e.preventDefault();
+
+                    // Disable submit button
+                    submitBtn.disabled = true;
+                    submitBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Submitting...';
+
+                    // Get form data
+                    const formData = new FormData(surveyForm);
+
+                    // Submit to server
+                    fetch('{% url "analytics:submit_survey" %}', {
+                        method: 'POST',
+                        body: formData,
+                        headers: {
+                            'X-Requested-With': 'XMLHttpRequest'
+                        }
+                    })
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.success) {
+                            // Close the modal
+                            surveyOverlay.style.display = 'none';
+                        } else {
+                            alert('Error submitting survey: ' + (data.error || 'Unknown error'));
+                            submitBtn.disabled = false;
+                            submitBtn.textContent = 'Submit';
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Survey submission error:', error);
+                        alert('Error submitting survey. Please try again.');
+                        submitBtn.disabled = false;
+                        submitBtn.textContent = 'Submit';
+                    });
+                });
+            }
+        })();
+    </script>
+    {% endif %}
 </body>
 </html>

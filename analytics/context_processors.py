@@ -23,10 +23,11 @@ def usage_context(request):
                 'usage_quota': usage.monthly_quota,
                 'usage_remaining': usage.remaining,
                 'usage_percentage': usage.usage_percentage,
+                'show_survey': not usage.survey_completed,
             }
         except UsageAccount.DoesNotExist:
-            return {}
-    return {}
+            return {'show_survey': False}
+    return {'show_survey': False}
 
 
 def progress_context(request):

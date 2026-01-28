@@ -14,7 +14,7 @@ import json
 import ast
 from asgiref.sync import async_to_sync
 
-from .models import Post, ContentSet, Report, UsageAccount
+from .models import Post, ContentSet, Report, UsageAccount, SurveyResponse
 
 
 # =============================================================================
@@ -1678,6 +1678,56 @@ def delete_report(request, report_id):
             'success': False,
             'error': 'Report not found.'
         }, status=404)
+    except Exception as e:
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        }, status=500)
+
+
+@login_required
+@require_POST
+def submit_survey(request):
+    """
+    Submit the signup survey response.
+    """
+    try:
+        # Parse the response
+        beehiiv_inadequate = request.POST.get('beehiiv_inadequate')
+        missing_features = request.POST.get('missing_features', '').strip()
+        other_tools = request.POST.get('other_tools', '').strip()
+
+        # Convert yes/no to boolean
+        if beehiiv_inadequate == 'yes':
+            beehiiv_inadequate_bool = True
+        elif beehiiv_inadequate == 'no':
+            beehiiv_inadequate_bool = False
+        else:
+            beehiiv_inadequate_bool = None
+
+        # Create or update survey response
+        SurveyResponse.objects.update_or_create(
+            user=request.user,
+            defaults={
+                'beehiiv_analytics_inadequate': beehiiv_inadequate_bool,
+                'missing_features': missing_features,
+                'other_tools': other_tools,
+            }
+        )
+
+        # Mark survey as completed in UsageAccount
+        try:
+            usage = UsageAccount.objects.get(user=request.user)
+            usage.survey_completed = True
+            usage.save(update_fields=['survey_completed'])
+        except UsageAccount.DoesNotExist:
+            pass
+
+        return JsonResponse({
+            'success': True,
+            'message': 'Survey submitted successfully!'
+        })
+
     except Exception as e:
         return JsonResponse({
             'success': False,

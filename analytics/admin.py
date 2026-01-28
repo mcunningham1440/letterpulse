@@ -1,15 +1,15 @@
 from django.contrib import admin
-from .models import Post, ContentSet, Report, UsageAccount, Publication, ExecutionLog
+from .models import Post, ContentSet, Report, UsageAccount, Publication, ExecutionLog, SurveyResponse
 
 
 @admin.register(UsageAccount)
 class UsageAccountAdmin(admin.ModelAdmin):
     list_display = (
         'user', 'monthly_quota', 'used_this_period', 'period_start',
-        'beehiiv_token', 'beehiiv_pub_id', 'api_key_valid',
+        'beehiiv_token', 'beehiiv_pub_id', 'api_key_valid', 'survey_completed',
         'created_at', 'updated_at'
     )
-    list_filter = ('period_start', 'api_key_valid')
+    list_filter = ('period_start', 'api_key_valid', 'survey_completed')
     search_fields = ('user__email', 'beehiiv_pub_id')
     ordering = ('-period_start',)
     readonly_fields = ('remaining_display', 'created_at', 'updated_at')
@@ -82,3 +82,27 @@ class ExecutionLogAdmin(admin.ModelAdmin):
     def has_change_permission(self, request, obj=None):
         # Logs should be immutable
         return False
+
+
+@admin.register(SurveyResponse)
+class SurveyResponseAdmin(admin.ModelAdmin):
+    list_display = (
+        'user', 'beehiiv_analytics_inadequate', 'missing_features_preview',
+        'other_tools_preview', 'created_at'
+    )
+    list_filter = ('beehiiv_analytics_inadequate', 'created_at')
+    search_fields = ('user__email', 'missing_features', 'other_tools')
+    ordering = ('-created_at',)
+    readonly_fields = ('user', 'created_at')
+
+    def missing_features_preview(self, obj):
+        if obj.missing_features:
+            return obj.missing_features[:50] + '...' if len(obj.missing_features) > 50 else obj.missing_features
+        return '-'
+    missing_features_preview.short_description = 'Missing Features'
+
+    def other_tools_preview(self, obj):
+        if obj.other_tools:
+            return obj.other_tools[:50] + '...' if len(obj.other_tools) > 50 else obj.other_tools
+        return '-'
+    other_tools_preview.short_description = 'Other Tools'

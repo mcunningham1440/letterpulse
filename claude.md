@@ -35,7 +35,7 @@ app/
 │   ├── wsgi.py / asgi.py       # WSGI/ASGI entry points
 │   └── __init__.py
 ├── analytics/                  # Main Django app
-│   ├── models.py               # Post, ContentSet, Report, UsageAccount, ExecutionLog models
+│   ├── models.py               # Post, ContentSet, Report, UsageAccount, ExecutionLog, SurveyResponse models
 │   ├── views.py                # All view logic (login-protected)
 │   ├── urls.py                 # App URL patterns (analytics namespace)
 │   ├── utils.py                # Core utility functions (API calls, AI extraction, credit charging)
@@ -104,6 +104,7 @@ Tracks AI usage credits and API credentials per user:
 - `api_key_valid`: Boolean indicating if the API key has been validated
 - `available_publications`: JSON list of publications available to the user
 - `timezone`: User's preferred timezone for date display (IANA timezone string, default 'America/Chicago')
+- `survey_completed`: Boolean indicating if the user has completed the signup survey
 
 Billing cycle: Credits reset on the same day of the month as the user's signup date (e.g., signup on the 15th means credits renew on the 15th of each month). For months with fewer days, renewal occurs on the last day of the month.
 
@@ -124,6 +125,15 @@ Low-overhead execution logging for HTTP requests and function calls:
 - Indexes on: `created_at`, `(kind, name)`, `request_id`, `success`
 
 Uses queue-based async logging via `logsink.py` with a background worker thread for batch inserts.
+
+### SurveyResponse
+Stores user responses to the signup survey (displayed on first login):
+- `user`: OneToOneField to User
+- `beehiiv_analytics_inadequate`: Boolean (nullable) - whether user feels Beehiiv analytics are inadequate
+- `missing_features`: Text field for features the user feels are missing from Beehiiv
+- `other_tools`: Text field for other third-party tools the user uses for newsletter analytics
+
+The survey modal appears automatically on first login and is dismissed once submitted. Survey completion is tracked via `UsageAccount.survey_completed`.
 
 ## Authentication
 
@@ -168,6 +178,14 @@ Uses django-allauth for email-based authentication:
 
 **User Scoping**: Posts and ContentSets are scoped to both publication AND user. This means two different users can use the same publication without seeing each other's data.
 
+### 4. Signup Survey
+A modal survey appears on first login for new users, collecting feedback about:
+1. Whether they feel Beehiiv's existing analytics tools are inadequate (yes/no)
+2. What analytics features they feel are missing from Beehiiv (freeform text)
+3. What other third-party tools they use for newsletter analytics (freeform text)
+
+The survey is required (modal blocks interaction until submitted) and responses are stored in the `SurveyResponse` model. Once submitted, `UsageAccount.survey_completed` is set to `True` and the survey won't appear again.
+
 ## API Endpoints
 
 All routes use the `analytics:` namespace.
@@ -193,6 +211,9 @@ All routes use the `analytics:` namespace.
 ### Account Routes
 - `GET /account/` - Account settings page
 - `POST /account/` - Update API credentials
+
+### Survey Routes
+- `POST /survey/submit/` - Submit signup survey response
 
 ## Deployment Modes
 

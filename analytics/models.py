@@ -59,6 +59,10 @@ class UsageAccount(models.Model):
         default='America/Chicago',
         help_text="User's preferred timezone for date display"
     )
+    survey_completed = models.BooleanField(
+        default=False,
+        help_text="Whether the user has completed the signup survey"
+    )
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -416,3 +420,36 @@ class ExecutionLog(models.Model):
     def __str__(self):
         status = "OK" if self.success else "ERROR"
         return f"[{self.kind}] {self.name} - {status} ({self.duration_ms}ms)"
+
+
+class SurveyResponse(models.Model):
+    """Stores user responses to the signup survey"""
+
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='survey_response'
+    )
+    beehiiv_analytics_inadequate = models.BooleanField(
+        null=True,
+        help_text="Does the user feel Beehiiv analytics are inadequate?"
+    )
+    missing_features = models.TextField(
+        blank=True,
+        default='',
+        help_text="What analytics features does the user feel are missing from Beehiiv?"
+    )
+    other_tools = models.TextField(
+        blank=True,
+        default='',
+        help_text="What other third-party tools does the user use for newsletter analytics?"
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "Survey Response"
+        verbose_name_plural = "Survey Responses"
+
+    def __str__(self):
+        return f"Survey response from {self.user.email}"
