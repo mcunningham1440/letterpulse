@@ -241,6 +241,7 @@ For production, the app runs on AWS App Runner using a Docker image stored in EC
 ```bash
 ./push_to_ecr.sh dev    # Pushes to letterpulse:dev-latest
 ./push_to_ecr.sh prod   # Pushes to letterpulse:prod-latest
+./push_to_ecr.sh both   # Pushes to both dev and prod
 ```
 
 The script:
