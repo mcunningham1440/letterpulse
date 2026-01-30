@@ -1043,7 +1043,7 @@ def generate_click_visualization_html(post_html, clicks_dict, unique_email_opens
         
         # Create a highlighted span with click info
         if click_count > 0:
-            click_info = soup.new_tag('span', style='background-color: yellow; color: black; padding: 10px; margin: 10px 0; border-left: 4px solid orange; font-weight: bold; font-family: Arial, sans-serif; font-size: 14px;')
+            click_info = soup.new_tag('span', style='background-color: yellow; color: black; padding: 10px; margin: 10px 0; border-left: 4px solid orange; font-weight: bold; font-family: Arial, sans-serif; font-size: 14px; white-space: nowrap; display: inline-block;')
             has_s = "s" if click_count != 1 else ""
             click_info.string = f"{click_count} click{has_s} ({ctr:.1f}% CTR)"
             

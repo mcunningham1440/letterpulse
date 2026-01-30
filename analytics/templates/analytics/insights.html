@@ -8,6 +8,45 @@
         max-width: 350px;
         text-align: left;
     }
+
+    /* Confirmation Modal (same style as survey) */
+    .confirm-overlay {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background-color: rgba(0, 0, 0, 0.6);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 9999;
+    }
+
+    .confirm-modal {
+        background: white;
+        border-radius: 0.5rem;
+        padding: 2rem;
+        max-width: 500px;
+        width: 90%;
+        box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+    }
+
+    .confirm-modal h5 {
+        color: #212529;
+        margin-bottom: 1rem;
+    }
+
+    .confirm-modal p {
+        color: #6c757d;
+        margin-bottom: 1.5rem;
+    }
+
+    .confirm-modal .btn-group-confirm {
+        display: flex;
+        gap: 0.75rem;
+        justify-content: flex-end;
+    }
 </style>
 {% endblock %}
 
@@ -90,7 +129,7 @@
                 <div class="card-body border-top d-none" id="phraseAnalysisSection">
                     <div class="d-flex justify-content-between align-items-center mb-3">
                         <h5 class="mb-0" id="phraseAnalysisHeader">Best Performing Phrases</h5>
-                        <div class="d-flex gap-3 align-items-center">
+                        <div class="d-flex gap-3 align-items-center" id="phraseAnalysisControls">
                             <div class="btn-group btn-group-sm" role="group">
                                 <input type="radio" class="btn-check" name="phraseMode" id="phraseBest" value="best" checked>
                                 <label class="btn btn-outline-success" for="phraseBest">Best</label>
@@ -104,7 +143,12 @@
                             </div>
                         </div>
                     </div>
-                    <div class="table-responsive">
+                    <!-- Message shown when fewer than 10 items -->
+                    <div class="alert alert-info mb-0 d-none no-auto-dismiss" id="phraseAnalysisMinItemsMessage">
+                        At least 10 items in content set required to perform phrase analysis.
+                    </div>
+                    <!-- Table shown when 10+ items -->
+                    <div class="table-responsive" id="phraseAnalysisTableContainer">
                         <table class="table table-hover table-sm" id="phraseTable">
                             <thead>
                                 <tr>
@@ -128,11 +172,12 @@
             </div>
             <div class="card-body">
                 <!-- Mode Toggle Switch -->
-                <div class="form-check form-switch mb-4">
-                    <input class="form-check-input" type="checkbox" id="reportModeSwitch">
-                    <label class="form-check-label" for="reportModeSwitch">
-                        <span id="reportModeLabel">Create content report</span>
-                    </label>
+                <div class="d-flex align-items-center gap-2 mb-4">
+                    <span class="form-label mb-0">Create report</span>
+                    <div class="form-check form-switch mb-0" style="padding-left: 0;">
+                        <input class="form-check-input" type="checkbox" id="reportModeSwitch" role="switch" style="margin-left: 0;">
+                    </div>
+                    <span class="form-label mb-0">View report</span>
                 </div>
 
                 <!-- Create Report Mode -->
@@ -147,7 +192,7 @@
                                 <select class="form-select form-select-sm" id="reportContentSetSelect">
                                     <option value="">-- Choose a content set --</option>
                                     {% for content_set in content_sets %}
-                                    <option value="{{ content_set.name }}">
+                                    <option value="{{ content_set.name }}" data-item-count="{{ content_set.get_items_count }}">
                                         {{ content_set.name }} ({{ content_set.get_items_count }} items)
                                     </option>
                                     {% endfor %}
@@ -221,6 +266,18 @@
         {% endif %}
     </div>
 </div>
+
+<!-- Low Item Count Confirmation Modal -->
+<div class="confirm-overlay" id="lowItemCountModal" style="display: none;">
+    <div class="confirm-modal">
+        <h5>Generate Report?</h5>
+        <p id="lowItemCountMessage">Report generation works best with content sets with at least 10 items. Are you sure you want to proceed with only <span id="lowItemCountNum">0</span>?</p>
+        <div class="btn-group-confirm">
+            <button type="button" class="btn btn-secondary" id="lowItemCountCancel">Cancel</button>
+            <button type="button" class="btn btn-primary" id="lowItemCountProceed">Proceed</button>
+        </div>
+    </div>
+</div>
 {% endblock %}
 
 {% block extra_js %}
@@ -230,6 +287,36 @@
     let isViewingSavedReport = false;
     let currentPhraseData = [];
     let overallAvgCtr = 0;
+
+    // Show toast notification (similar to Django messages)
+    function showToast(message, type = 'success') {
+        const container = document.querySelector('.main-content');
+
+        // Create or get the messages container
+        let messagesDiv = container.querySelector('.toast-messages');
+        if (!messagesDiv) {
+            messagesDiv = document.createElement('div');
+            messagesDiv.className = 'toast-messages mb-4';
+            container.insertBefore(messagesDiv, container.firstChild);
+        }
+
+        // Create the alert element
+        const alertDiv = document.createElement('div');
+        alertDiv.className = `alert alert-${type} alert-dismissible fade show`;
+        alertDiv.setAttribute('role', 'alert');
+        alertDiv.innerHTML = `
+            ${message}
+            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        `;
+
+        messagesDiv.appendChild(alertDiv);
+
+        // Auto-dismiss after 8 seconds
+        setTimeout(() => {
+            const bsAlert = bootstrap.Alert.getOrCreateInstance(alertDiv);
+            bsAlert.close();
+        }, 8000);
+    }
 
     // Stopwords loaded from english_lemma_frequencies.csv (top 200 most common words)
     const EXCLUDED_WORDS = new Set({{ stopwords_json|safe }});
@@ -359,18 +446,15 @@
     document.getElementById('reportModeSwitch').addEventListener('change', function() {
         const createMode = document.getElementById('createReportMode');
         const viewMode = document.getElementById('viewReportMode');
-        const modeLabel = document.getElementById('reportModeLabel');
 
         if (this.checked) {
             // View mode
             createMode.style.display = 'none';
             viewMode.style.display = 'block';
-            modeLabel.textContent = 'View content report';
         } else {
             // Create mode
             createMode.style.display = 'block';
             viewMode.style.display = 'none';
-            modeLabel.textContent = 'Create content report';
         }
 
         // Hide insights content when switching modes
@@ -452,9 +536,23 @@
         }, 0);
 
         // Calculate and display phrase performance analysis
-        currentPhraseData = calculatePhraseStats(data.data);
-        updatePhraseTable();
         document.getElementById('phraseAnalysisSection').classList.remove('d-none');
+
+        if (data.data.length < 10) {
+            // Show minimum items message, hide controls and table
+            document.getElementById('phraseAnalysisMinItemsMessage').classList.remove('d-none');
+            document.getElementById('phraseAnalysisTableContainer').classList.add('d-none');
+            document.getElementById('phraseAnalysisControls').classList.add('d-none');
+            document.getElementById('phraseAnalysisHeader').textContent = 'Phrase Analysis';
+            currentPhraseData = [];
+        } else {
+            // Show table and controls, hide message
+            document.getElementById('phraseAnalysisMinItemsMessage').classList.add('d-none');
+            document.getElementById('phraseAnalysisTableContainer').classList.remove('d-none');
+            document.getElementById('phraseAnalysisControls').classList.remove('d-none');
+            currentPhraseData = calculatePhraseStats(data.data);
+            updatePhraseTable();
+        }
     }
     
     // Truncate text helper
@@ -497,16 +595,9 @@
         }
     });
     
-    // Generate report
-    document.getElementById('generateInsightsBtn').addEventListener('click', async function() {
-        const selectedSet = document.getElementById('reportContentSetSelect').value;
-
-        if (!selectedSet) {
-            alert('Please select a content set.');
-            return;
-        }
-
-        const button = this;
+    // Generate report - actual execution
+    async function executeReportGeneration(selectedSet) {
+        const button = document.getElementById('generateInsightsBtn');
         button.disabled = true;
 
         // Close the dropdown
@@ -566,6 +657,45 @@
         } finally {
             button.disabled = false;
         }
+    }
+
+    // Generate report - click handler with confirmation for low item count
+    document.getElementById('generateInsightsBtn').addEventListener('click', function() {
+        const select = document.getElementById('reportContentSetSelect');
+        const selectedSet = select.value;
+
+        if (!selectedSet) {
+            alert('Please select a content set.');
+            return;
+        }
+
+        // Get item count from selected option
+        const selectedOption = select.options[select.selectedIndex];
+        const itemCount = parseInt(selectedOption.dataset.itemCount) || 0;
+
+        if (itemCount < 10) {
+            // Show confirmation modal
+            document.getElementById('lowItemCountNum').textContent = itemCount;
+            document.getElementById('lowItemCountModal').style.display = 'flex';
+            // Store selected set for later use
+            document.getElementById('lowItemCountModal').dataset.selectedSet = selectedSet;
+        } else {
+            // Proceed directly
+            executeReportGeneration(selectedSet);
+        }
+    });
+
+    // Low item count modal - Cancel button
+    document.getElementById('lowItemCountCancel').addEventListener('click', function() {
+        document.getElementById('lowItemCountModal').style.display = 'none';
+    });
+
+    // Low item count modal - Proceed button
+    document.getElementById('lowItemCountProceed').addEventListener('click', function() {
+        const modal = document.getElementById('lowItemCountModal');
+        const selectedSet = modal.dataset.selectedSet;
+        modal.style.display = 'none';
+        executeReportGeneration(selectedSet);
     });
     
 
@@ -604,8 +734,8 @@
             const data = await response.json();
             
             if (data.success) {
-                alert('Content set renamed successfully!');
-                location.reload();
+                showToast('Content set renamed successfully!');
+                window.location.href = '/insights/?selected=' + encodeURIComponent(newName);
             } else {
                 alert('Error renaming set: ' + data.error);
             }
@@ -613,7 +743,7 @@
             alert('Error renaming set: ' + error.message);
         }
     });
-    
+
     // Make copy
     document.getElementById('copyBtn').addEventListener('click', async function() {
         if (!currentContentSet) return;
@@ -635,8 +765,9 @@
             const data = await response.json();
             
             if (data.success) {
-                alert('Content set copied successfully!');
-                location.reload();
+                showToast('Content set copied successfully!');
+                const copyName = data.copy_name || (currentContentSet + ' copy');
+                window.location.href = '/insights/?selected=' + encodeURIComponent(copyName);
             } else {
                 alert('Error copying set: ' + data.error);
             }
@@ -644,7 +775,7 @@
             alert('Error copying set: ' + error.message);
         }
     });
-    
+
     // Merge with another set
     document.getElementById('mergeBtn').addEventListener('click', async function() {
         if (!currentContentSet) return;
@@ -726,8 +857,8 @@
                 const data = await response.json();
                 
                 if (data.success) {
-                    alert(`Successfully merged! ${data.items_added} items added to "${targetSet}".`);
-                    location.reload();
+                    showToast(`Successfully merged! ${data.items_added} items added to "${targetSet}".`);
+                    window.location.href = '/insights/?selected=' + encodeURIComponent(targetSet);
                 } else {
                     alert('Error merging sets: ' + data.error);
                 }
@@ -736,7 +867,7 @@
             }
         });
     });
-    
+
     // Delete selected items
     document.getElementById('deleteItemsBtn').addEventListener('click', async function() {
         if (!currentContentSet) return;
@@ -765,9 +896,9 @@
             const data = await response.json();
             
             if (data.success) {
-                alert(`Successfully deleted ${indices.length} item(s)!`);
-                // Reload the page to update both the content and the dropdown
-                location.reload();
+                showToast(`Successfully deleted ${indices.length} item(s)!`);
+                // Reload the page with the current set selected
+                window.location.href = '/insights/?selected=' + encodeURIComponent(currentContentSet);
             } else {
                 alert('Error deleting items: ' + data.error);
             }
@@ -775,7 +906,7 @@
             alert('Error deleting items: ' + error.message);
         }
     });
-    
+
     // Delete set
     document.getElementById('deleteSetBtn').addEventListener('click', async function() {
         if (!currentContentSet) return;
@@ -795,7 +926,7 @@
             const data = await response.json();
             
             if (data.success) {
-                alert('Content set deleted successfully!');
+                showToast('Content set deleted successfully!');
                 location.reload();
             } else {
                 alert('Error deleting set: ' + data.error);
@@ -882,7 +1013,7 @@
             const data = await response.json();
             
             if (data.success) {
-                alert('Report deleted successfully!');
+                showToast('Report deleted successfully!');
                 // Hide insights content and delete button
                 document.getElementById('insightsContent').classList.add('d-none');
                 document.getElementById('deleteReportBtn').classList.add('d-none');
@@ -910,5 +1041,22 @@
         });
     });
     document.getElementById('minAppearances').addEventListener('input', updatePhraseTable);
+
+    // Check for ?selected= parameter to auto-select a content set after operations
+    // This must run AFTER all event listeners are attached
+    (function() {
+        const urlParams = new URLSearchParams(window.location.search);
+        const selectedSet = urlParams.get('selected');
+        if (selectedSet) {
+            const select = document.getElementById('contentSetSelect');
+            if (select) {
+                select.value = selectedSet;
+                // Trigger the change event to load the content set
+                select.dispatchEvent(new Event('change'));
+            }
+            // Clean up the URL (remove the parameter without reloading)
+            window.history.replaceState({}, document.title, window.location.pathname);
+        }
+    })();
 </script>
 {% endblock %}

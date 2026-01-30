@@ -400,14 +400,14 @@
         {% if user.is_authenticated %}
         {% if usage.beehiiv_token and not usage.api_key_valid %}
         <div class="px-3 mb-3">
-            <a href="{% url 'analytics:account' %}" class="alert alert-danger d-flex align-items-center py-2 px-3 mb-0 text-decoration-none" style="font-size: 0.8rem;">
+            <a href="{% url 'analytics:account' %}" class="alert alert-danger no-auto-dismiss d-flex align-items-center py-2 px-3 mb-0 text-decoration-none" style="font-size: 0.8rem;">
                 <i class="bi bi-exclamation-triangle-fill me-2"></i>
                 <span>Invalid API Key</span>
             </a>
         </div>
         {% elif not usage.has_api_credentials %}
         <div class="px-3 mb-3">
-            <a href="{% url 'analytics:account' %}" class="alert alert-warning d-flex align-items-center py-2 px-3 mb-0 text-decoration-none" style="font-size: 0.8rem;">
+            <a href="{% url 'analytics:account' %}" class="alert alert-warning no-auto-dismiss d-flex align-items-center py-2 px-3 mb-0 text-decoration-none" style="font-size: 0.8rem;">
                 <i class="bi bi-exclamation-triangle me-2"></i>
                 <span>Configure API</span>
             </a>
@@ -493,7 +493,7 @@
     <!-- Alert Auto-Dismiss -->
     <script>
         (function() {
-            const AUTO_DISMISS_DELAY = 5000;
+            const AUTO_DISMISS_DELAY = 8000;
 
             function dismissAllAlerts() {
                 document.querySelectorAll('.alert').forEach(function(alert) {
