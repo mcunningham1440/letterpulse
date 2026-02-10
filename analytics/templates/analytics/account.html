@@ -2,6 +2,15 @@
 
 {% block title %}Account - LetterPulse{% endblock %}
 
+{% block extra_css %}
+<style>
+    .extract-tooltip .tooltip-inner {
+        max-width: 350px;
+        text-align: left;
+    }
+</style>
+{% endblock %}
+
 {% block content %}
 <div class="row">
     <div class="col-12">
@@ -91,7 +100,7 @@
                     API key is invalid. Please enter a valid key below.
                 </div>
                 {% else %}
-                <div class="alert alert-warning d-flex align-items-center mb-4">
+                <div class="alert alert-warning d-flex align-items-center mb-4 no-auto-dismiss">
                     <i class="bi bi-exclamation-triangle-fill me-2"></i>
                     API credentials not configured. Add them below to fetch your newsletter data.
                 </div>
@@ -116,11 +125,19 @@
                             </button>
                         </div>
                         <div class="form-text">
-                            {% if usage.beehiiv_token %}
-                            We store your token in an encrypted database and never sell or share your data with third parties.
-                            {% else %}
-                            Generate an API key in your Beehiiv dashboard under Settings &gt; Integrations &gt; API.
+                            {% if not usage.beehiiv_token %}
+                            Generate an API key in your Beehiiv dashboard under Settings → Integrations → API.
+                            <br>
                             {% endif %}
+                            <span class="text-primary"
+                                  data-bs-toggle="tooltip"
+                                  data-bs-placement="bottom"
+                                  data-bs-html="true"
+                                  data-bs-custom-class="extract-tooltip"
+                                  title="<b>We take your privacy and security seriously.</b><br><br>Your API token is stored in an encrypted database. You can delete it from our system at any time, or deactivate it in the API page on the Beehiiv website.<br><br>We will never sell or share your data with third parties."
+                                  style="cursor: help;">
+                                <i class="bi bi-info-circle"></i> How we ensure your privacy and security
+                            </span>
                         </div>
                     </div>
 
