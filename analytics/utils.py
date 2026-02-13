@@ -19,7 +19,6 @@ from bs4 import BeautifulSoup
 from django.conf import settings
 from django.db import transaction
 from django.db.models import F
-import numpy as np
 from Levenshtein import distance as levenshtein_distance
 from dotenv import load_dotenv
 
@@ -350,7 +349,7 @@ async def fetch_post_clicks(session, post_id, semaphore, beehiiv_token, beehiiv_
                     clicks_dict = {}
                     for link_data in clicks_data:
                         url_link = link_data['url']
-                        if link_data['email']['unique_clicks'] > 0:
+                        if link_data['email']['unique_clicks'] > 0 and url_link != "https://www.beehiiv.com/":
                             clicks_dict[url_link] = max(
                                 link_data['email']['unique_clicks'],
                                 clicks_dict.get(url_link, 0)
@@ -410,59 +409,48 @@ async def fetch_posts_html_and_clicks_parallel(post_ids, beehiiv_token, beehiiv_
     return htmls, clicks_by_id
 
 
-def match_links_with_clicks(html_links_raw, clicks_dict, relative_distance_cutoff=0.4):
+def match_links_with_clicks(html_links_raw, clicks_dict):
     """
-    Match HTML links with click report links using exact matching first,
-    then Levenshtein distance for unmatched links.
-    
+    Match click report URLs to HTML links using normalized Levenshtein distance.
+
+    Each click URL is matched to the HTML URL(s) with the smallest normalized
+    Levenshtein distance. If multiple HTML URLs share the same minimum distance,
+    the click URL's clicks are added to each of them. Each HTML URL's final click
+    count is the sum of clicks from all click URLs that include it among their
+    closest matches.
+
     Args:
-        html_links_raw: List of raw HTML links (may contain jwt_token)
+        html_links_raw: List of raw HTML link hrefs (as-is from the HTML)
         clicks_dict: Dictionary mapping click report URLs to click counts
-        relative_distance_cutoff: Maximum relative Levenshtein distance for fuzzy matching (default 0.4)
-    
+
     Returns:
-        Dictionary mapping cleaned HTML links to their click counts
+        Dictionary mapping raw HTML links to their accumulated click counts
     """
-    # Step 1: Clean HTML links by removing jwt_token
-    html_links_cleaned = [link.replace("&jwt_token={{jwt_token}}", "") for link in html_links_raw]
-    
-    # Track which HTML links are still available for matching
-    available_html_links = set(html_links_cleaned)
-    
-    # Result dictionary: HTML link -> click count
+    if not clicks_dict or not html_links_raw:
+        return {}
+
+    # Process HTML links by stripping &_bhlid= and everything after (for matching only)
+    html_links_processed = [link.split("&_bhlid=")[0] for link in html_links_raw]
+
+    # Result: raw HTML link -> click count
     link_to_clicks = {}
-    
-    # Step 2: Exact matching pass
-    for click_link, click_count in clicks_dict.items():
-        if click_link in available_html_links:
-            link_to_clicks[click_link] = click_count
-            available_html_links.remove(click_link)
-    
-    # Step 3: Fuzzy matching with Levenshtein distance for unmatched click report links
-    unmatched_click_links = [link for link in clicks_dict.keys() if link not in link_to_clicks]
-    
-    if unmatched_click_links and available_html_links:
-        available_html_links_list = list(available_html_links)
-        
-        for click_link in unmatched_click_links:
-            # Calculate distances to all remaining HTML links
-            distances = [levenshtein_distance(click_link, html_link) for html_link in available_html_links_list]
-            
-            # Find the closest match
-            min_idx = np.argmin(distances)
-            closest_html_link = available_html_links_list[min_idx]
-            min_distance = distances[min_idx]
-            
-            # Calculate relative distance
-            max_length = max(len(click_link), len(closest_html_link))
-            relative_distance = min_distance / max_length if max_length > 0 else 0
-            
-            # Only match if relative distance is below cutoff
-            if relative_distance <= relative_distance_cutoff:
-                link_to_clicks[closest_html_link] = clicks_dict[click_link]
-                # Remove from available list to prevent duplicate matching
-                available_html_links_list.pop(min_idx)
-    
+
+    for click_url, click_count in clicks_dict.items():
+        # Compute normalized Levenshtein distance to each processed HTML URL
+        distances = []
+        for processed_url in html_links_processed:
+            dist = levenshtein_distance(click_url, processed_url)
+            max_len = max(len(click_url), len(processed_url))
+            distances.append(dist / max_len if max_len > 0 else 0)
+
+        min_dist = min(distances)
+
+        # Add clicks to every HTML URL tied at the minimum distance
+        for i, dist in enumerate(distances):
+            if dist == min_dist:
+                raw_url = html_links_raw[i]
+                link_to_clicks[raw_url] = link_to_clicks.get(raw_url, 0) + click_count
+
     return link_to_clicks
 
 
@@ -555,8 +543,7 @@ Use your judgement and the content description to determine whether to extract m
         # Extract text
         text = soup.get_text(" ", strip=True)
                         
-        # Clean HTML links for output
-        selected_links = [link['href'].replace("&jwt_token={{jwt_token}}", "") for link in soup.find_all('a') if link.has_attr('href')]
+        selected_links = [link['href'] for link in soup.find_all('a') if link.has_attr('href')]
         
         # Get clicks for each link using the matched results
         clicks = [link_to_clicks.get(link, 0) for link in selected_links]
@@ -1032,11 +1019,7 @@ def generate_click_visualization_html(post_html, clicks_dict, unique_email_opens
     link_to_clicks = match_links_with_clicks(html_links_raw, clicks_dict)
     
     for link in html_links:
-        # Clean the href to match against link_to_clicks
-        href = link['href'].replace("&jwt_token={{jwt_token}}", "")
-        
-        # Get click count for this link
-        click_count = link_to_clicks.get(href, 0)
+        click_count = link_to_clicks.get(link['href'], 0)
         
         # Calculate CTR
         ctr = (click_count / unique_email_opens * 100) if unique_email_opens > 0 else 0
