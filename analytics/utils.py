@@ -589,10 +589,14 @@ async def extract_sections(post_html, sections, clicks_dict, title, post_date,
     # Step 1: Get line numbers for sections matching descriptions
     section_names = [s['name'] for s in sections]
 
-    # Build user message with sections
+    # Build user message with sections (description is optional)
     sections_xml = "<Sections>\n"
     for s in sections:
-        sections_xml += f'<Section name="{s["name"]}">{s["description"]}</Section>\n'
+        desc = s.get("description", "").strip()
+        if desc:
+            sections_xml += f'<Section name="{s["name"]}">{desc}</Section>\n'
+        else:
+            sections_xml += f'<Section name="{s["name"]}">Items in the {s["name"]} section</Section>\n'
     sections_xml += "</Sections>"
 
     if custom_instructions:

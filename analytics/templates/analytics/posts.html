@@ -28,6 +28,16 @@
         overflow-y: auto;
         box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
     }
+    .review-modal {
+        background: white;
+        border-radius: 0.5rem;
+        padding: 2rem;
+        max-width: 900px;
+        width: 95%;
+        max-height: 90vh;
+        overflow-y: auto;
+        box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+    }
     .section-pair {
         border: 1px solid #dee2e6;
         border-radius: 0.375rem;
@@ -71,6 +81,7 @@
                                 <th class="text-end" data-bs-toggle="tooltip" title="Number of subscribers who received this post by email">Recipients</th>
                                 <th class="text-end" data-bs-toggle="tooltip" title="Unique subscribers who opened the email">Opens</th>
                                 <th class="text-end" data-bs-toggle="tooltip" title="Unique subscribers who clicked any link">Clicks</th>
+                                <th class="text-center" data-bs-toggle="tooltip" title="Whether this post has been processed and saved">Processed</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -78,7 +89,9 @@
                             <tr>
                                 <td>
                                     <input type="checkbox" name="selected_posts" value="{{ forloop.counter0 }}"
-                                           class="form-check-input post-checkbox">
+                                           class="form-check-input post-checkbox"
+                                           data-post-id="{{ post.id }}"
+                                           data-processed="{% if post.id in processed_post_ids %}true{% else %}false{% endif %}">
                                 </td>
                                 <td data-order="{{ post.creation_date_sortable }}">{{ post.creation_date_display }}</td>
                                 <td>
@@ -95,6 +108,13 @@
                                 <td class="text-end">{{ post.recipients|default:0|intcomma }}</td>
                                 <td class="text-end">{{ post.unique_email_opens|default:0|intcomma }}</td>
                                 <td class="text-end">{{ post.unique_email_clicks|default:0|intcomma }}</td>
+                                <td class="text-center">
+                                    {% if post.id in processed_post_ids %}
+                                        <i class="bi bi-check-circle-fill text-success"></i>
+                                    {% else %}
+                                        <i class="bi bi-dash text-muted"></i>
+                                    {% endif %}
+                                </td>
                             </tr>
                             {% endfor %}
                         </tbody>
@@ -183,60 +203,6 @@
                 {% endif %}
             </div>
         </div>
-
-        <!-- Review Section (hidden by default, shown during review flow) -->
-        <div class="card" id="reviewSection" style="display: none;">
-            <div class="card-header d-flex justify-content-between align-items-center">
-                <h5 class="mb-0" id="reviewPostTitle">Reviewing: Post Title</h5>
-                <span class="badge bg-secondary fs-6" id="reviewCounter">1 of 1</span>
-            </div>
-            <div class="card-body">
-                <div id="reviewSections">
-                    <!-- Dynamically populated with section tables -->
-                </div>
-
-                <!-- Review Action Bar -->
-                <div class="bg-light border-top py-3 mt-3">
-                    <div class="d-flex justify-content-between align-items-center">
-                        <div class="d-flex gap-2">
-                            <button type="button" class="btn btn-success btn-sm" id="approveBtn">
-                                <i class="bi bi-check-lg"></i> Approve
-                            </button>
-                            <button type="button" class="btn btn-danger btn-sm" id="deleteSelectedReviewBtn">
-                                <i class="bi bi-trash"></i> Delete Selected Items
-                            </button>
-                        </div>
-                        <div class="d-flex gap-2">
-                            <!-- Re-process dropdown -->
-                            <div class="dropdown">
-                                <button class="btn btn-warning btn-sm dropdown-toggle" type="button"
-                                        id="reprocessDropdown" data-bs-toggle="dropdown"
-                                        aria-expanded="false" data-bs-auto-close="outside">
-                                    <i class="bi bi-arrow-clockwise"></i> Re-process
-                                </button>
-                                <div class="dropdown-menu dropdown-menu-end p-3" aria-labelledby="reprocessDropdown" style="min-width: 360px;">
-                                    <div class="mb-3">
-                                        <label class="form-label small fw-bold">Custom Instructions (optional)</label>
-                                        <input type="text" class="form-control form-control-sm"
-                                               id="reprocessInstructions"
-                                               placeholder="Quick Bites section should not include the 'Quick bites for this week...' text at the top">
-                                    </div>
-                                    <div class="d-flex justify-content-between align-items-center">
-                                        <small class="text-muted">1 AI credit</small>
-                                        <button type="button" class="btn btn-warning btn-sm" id="reprocessBtn">
-                                            <i class="bi bi-play-fill"></i> Run
-                                        </button>
-                                    </div>
-                                </div>
-                            </div>
-                            <button type="button" class="btn btn-outline-danger btn-sm" id="deletePostBtn">
-                                <i class="bi bi-x-lg"></i> Delete
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
     </div>
 </div>
 
@@ -252,7 +218,7 @@
                         <input type="text" class="form-control form-control-sm mb-1 section-name"
                                placeholder="Section name">
                         <input type="text" class="form-control form-control-sm section-desc"
-                               placeholder="Section description (e.g., Items in the Quick Bites section)">
+                               placeholder="Section description (optional)">
                     </div>
                 </div>
             </div>
@@ -283,6 +249,76 @@
         </div>
     </div>
 </div>
+
+<!-- Overwrite Warning Modal -->
+<div class="processing-overlay" id="overwriteOverlay" style="display: none;">
+    <div class="processing-modal" style="max-width: 450px;">
+        <h5 class="mb-3">Overwrite Warning</h5>
+        <p id="overwriteMessage" class="mb-4"></p>
+        <div class="d-flex justify-content-end gap-2">
+            <button type="button" class="btn btn-secondary btn-sm" id="overwriteCancelBtn">Cancel</button>
+            <button type="button" class="btn btn-danger btn-sm" id="overwriteConfirmBtn">Proceed</button>
+        </div>
+    </div>
+</div>
+
+<!-- Review Modal (overlay popup) -->
+<div class="processing-overlay" id="reviewOverlay" style="display: none;">
+    <div class="review-modal">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+            <h5 class="mb-0" id="reviewPostTitle">Reviewing: Post Title</h5>
+            <span class="badge bg-secondary fs-6" id="reviewCounter">1 of 1</span>
+        </div>
+
+        <div id="reviewSections">
+            <!-- Dynamically populated with section tables -->
+        </div>
+
+        <!-- Re-process progress bar container -->
+        <div id="reprocessProgress"></div>
+
+        <!-- Review Action Bar -->
+        <div class="bg-light border-top py-3 mt-3">
+            <div class="d-flex justify-content-between align-items-center">
+                <div class="d-flex gap-2">
+                    <button type="button" class="btn btn-success btn-sm" id="approveBtn">
+                        <i class="bi bi-check-lg"></i> Approve
+                    </button>
+                    <button type="button" class="btn btn-danger btn-sm" id="deleteSelectedReviewBtn">
+                        <i class="bi bi-trash"></i> Delete Selected Items
+                    </button>
+                </div>
+                <div class="d-flex gap-2">
+                    <!-- Re-process dropdown -->
+                    <div class="dropdown">
+                        <button class="btn btn-warning btn-sm dropdown-toggle" type="button"
+                                id="reprocessDropdown" data-bs-toggle="dropdown"
+                                aria-expanded="false" data-bs-auto-close="outside">
+                            <i class="bi bi-arrow-clockwise"></i> Re-process
+                        </button>
+                        <div class="dropdown-menu dropdown-menu-end p-3" aria-labelledby="reprocessDropdown" style="min-width: 360px;">
+                            <div class="mb-3">
+                                <label class="form-label small fw-bold">Custom Instructions (optional)</label>
+                                <input type="text" class="form-control form-control-sm"
+                                       id="reprocessInstructions"
+                                       placeholder="Quick Bites section should not include the 'Quick bites for this week...' text at the top">
+                            </div>
+                            <div class="d-flex justify-content-between align-items-center">
+                                <small class="text-muted">1 AI credit</small>
+                                <button type="button" class="btn btn-warning btn-sm" id="reprocessBtn">
+                                    <i class="bi bi-play-fill"></i> Run
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                    <button type="button" class="btn btn-outline-danger btn-sm" id="deletePostBtn">
+                        <i class="bi bi-x-lg"></i> Delete
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
 {% endblock %}
 
 {% block extra_js %}
@@ -297,7 +333,8 @@
             scrollY: '400px',
             scrollCollapse: true,
             columnDefs: [
-                { orderable: false, targets: 0 }
+                { orderable: false, targets: 0 },
+                { orderable: false, targets: 8 }
             ]
         });
     });
@@ -335,6 +372,10 @@
         document.getElementById('removeSectionBtn').style.display = count > 1 ? '' : 'none';
     }
 
+    // Pending processing data (used when overwrite confirmation is needed)
+    let pendingSections = null;
+    let pendingIndices = null;
+
     // Open modal
     document.getElementById('processPostsBtn').addEventListener('click', function() {
         const selectedPosts = document.querySelectorAll('.post-checkbox:checked');
@@ -367,7 +408,7 @@
                     <input type="text" class="form-control form-control-sm mb-1 section-name"
                            placeholder="Section name">
                     <input type="text" class="form-control form-control-sm section-desc"
-                           placeholder="Section description">
+                           placeholder="Section description (optional)">
                 </div>
             </div>
         `;
@@ -385,40 +426,23 @@
         }
     });
 
-    // Run processing
-    document.getElementById('runProcessingBtn').addEventListener('click', async function() {
-        const pairs = document.querySelectorAll('.section-pair');
-        const sections = [];
-        const seenNames = new Set();
-
-        for (const pair of pairs) {
-            const name = pair.querySelector('.section-name').value.trim();
-            const desc = pair.querySelector('.section-desc').value.trim();
-
-            if (!name) {
-                alert('Please fill in all section names.');
-                return;
-            }
-            if (!desc) {
-                alert('Please fill in all section descriptions.');
-                return;
-            }
-            if (seenNames.has(name.toLowerCase())) {
-                alert('Duplicate section name: "' + name + '"');
-                return;
-            }
-            seenNames.add(name.toLowerCase());
-            sections.push({ name: name, description: desc });
-        }
-
-        const selectedPosts = document.querySelectorAll('.post-checkbox:checked');
-        const selectedIndices = Array.from(selectedPosts).map(cb => cb.value);
-
-        // Disable Run button and show loading
+    // Actually run processing (called after overwrite check passes)
+    async function executeProcessing(sections, selectedIndices) {
         const runBtn = document.getElementById('runProcessingBtn');
         runBtn.disabled = true;
         const originalBtnHtml = runBtn.innerHTML;
         runBtn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Processing...';
+
+        // Start progress bar
+        const numPosts = selectedIndices.length;
+        const baseDuration = {{ progress_durations.process_posts }};
+        const estimatedDuration = Math.max(baseDuration, numPosts * 4);
+
+        ProgressBar.start({
+            containerId: 'processPostsProgress',
+            expectedDuration: estimatedDuration,
+            subtext: 'Processing ' + numPosts + ' post' + (numPosts !== 1 ? 's' : '') + '...'
+        });
 
         try {
             const response = await fetch("{% url 'analytics:run_processing' %}", {
@@ -436,6 +460,7 @@
             const data = await response.json();
 
             if (!data.success) {
+                ProgressBar.complete({ containerId: 'processPostsProgress', success: false, message: data.error || 'Error' });
                 alert(data.error || 'An error occurred during processing.');
                 return;
             }
@@ -443,17 +468,79 @@
             // Update credits in sidebar
             updateCreditsDisplay(data.credits_used, data.credits_quota);
 
-            // Close modal and start review
+            ProgressBar.complete({ containerId: 'processPostsProgress', success: true, message: 'Done!' });
+
+            // Close processing modal and start review
             document.getElementById('processingOverlay').style.display = 'none';
             startReview(data.review_data);
 
         } catch (error) {
             console.error('Error:', error);
+            ProgressBar.complete({ containerId: 'processPostsProgress', success: false, message: 'Error' });
             alert('An error occurred during processing.');
         } finally {
             runBtn.disabled = false;
             runBtn.innerHTML = originalBtnHtml;
         }
+    }
+
+    // Run processing (with overwrite check)
+    document.getElementById('runProcessingBtn').addEventListener('click', function() {
+        const pairs = document.querySelectorAll('.section-pair');
+        const sections = [];
+        const seenNames = new Set();
+
+        for (const pair of pairs) {
+            const name = pair.querySelector('.section-name').value.trim();
+            const desc = pair.querySelector('.section-desc').value.trim();
+
+            if (!name) {
+                alert('Please fill in all section names.');
+                return;
+            }
+            if (seenNames.has(name.toLowerCase())) {
+                alert('Duplicate section name: "' + name + '"');
+                return;
+            }
+            seenNames.add(name.toLowerCase());
+            sections.push({ name: name, description: desc });
+        }
+
+        const selectedPosts = document.querySelectorAll('.post-checkbox:checked');
+        const selectedIndices = Array.from(selectedPosts).map(cb => cb.value);
+
+        // Check how many selected posts are already processed
+        const processedCount = Array.from(selectedPosts).filter(cb => cb.dataset.processed === 'true').length;
+
+        if (processedCount > 0) {
+            // Show overwrite warning
+            pendingSections = sections;
+            pendingIndices = selectedIndices;
+            const msg = processedCount + ' of the post' + (processedCount !== 1 ? 's' : '') +
+                        ' you\'re processing already ha' + (processedCount !== 1 ? 've' : 's') +
+                        ' saved data. Re-processing will overwrite it. Do you wish to proceed?';
+            document.getElementById('overwriteMessage').textContent = msg;
+            document.getElementById('overwriteOverlay').style.display = 'flex';
+        } else {
+            executeProcessing(sections, selectedIndices);
+        }
+    });
+
+    // Overwrite confirm
+    document.getElementById('overwriteConfirmBtn').addEventListener('click', function() {
+        document.getElementById('overwriteOverlay').style.display = 'none';
+        if (pendingSections && pendingIndices) {
+            executeProcessing(pendingSections, pendingIndices);
+            pendingSections = null;
+            pendingIndices = null;
+        }
+    });
+
+    // Overwrite cancel
+    document.getElementById('overwriteCancelBtn').addEventListener('click', function() {
+        document.getElementById('overwriteOverlay').style.display = 'none';
+        pendingSections = null;
+        pendingIndices = null;
     });
 
     // =========================================================================
@@ -486,8 +573,7 @@
     function startReview(data) {
         reviewData = data;
         currentReviewIndex = 0;
-        document.getElementById('postsCard').style.display = 'none';
-        document.getElementById('reviewSection').style.display = '';
+        document.getElementById('reviewOverlay').style.display = 'flex';
         renderCurrentPost();
     }
 
@@ -570,12 +656,13 @@
     function advanceToNext() {
         currentReviewIndex++;
         if (currentReviewIndex >= reviewData.total_posts) {
-            // Review complete
-            document.getElementById('reviewSection').style.display = 'none';
-            document.getElementById('postsCard').style.display = '';
+            // Review complete — close overlay
+            document.getElementById('reviewOverlay').style.display = 'none';
             showToast('Review complete! All posts have been processed.', 'success');
             reviewData = null;
             currentReviewIndex = 0;
+            // Reload to update Processed column
+            window.location.reload();
         } else {
             renderCurrentPost();
         }
@@ -659,6 +746,13 @@
         const dropdown = bootstrap.Dropdown.getInstance(document.getElementById('reprocessDropdown'));
         if (dropdown) dropdown.hide();
 
+        // Start progress bar for re-processing
+        ProgressBar.start({
+            containerId: 'reprocessProgress',
+            expectedDuration: {{ progress_durations.process_posts }},
+            subtext: 'Re-processing post...'
+        });
+
         try {
             const response = await fetch("{% url 'analytics:reprocess_post' %}", {
                 method: 'POST',
@@ -675,6 +769,7 @@
 
             const data = await response.json();
             if (!data.success) {
+                ProgressBar.complete({ containerId: 'reprocessProgress', success: false, message: data.error || 'Error' });
                 alert(data.error || 'Error re-processing post.');
                 return;
             }
@@ -686,10 +781,12 @@
             // Update credits
             updateCreditsDisplay(data.credits_used, data.credits_quota);
 
+            ProgressBar.complete({ containerId: 'reprocessProgress', success: true, message: 'Done!' });
             showToast('Post re-processed successfully.', 'success');
 
         } catch (error) {
             console.error('Error:', error);
+            ProgressBar.complete({ containerId: 'reprocessProgress', success: false, message: 'Error' });
             alert('An error occurred during re-processing.');
         } finally {
             btn.disabled = false;

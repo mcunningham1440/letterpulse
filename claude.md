@@ -182,15 +182,19 @@ Uses django-allauth for email-based authentication:
 ### 1. Posts Page (`/posts/`)
 - **Refresh Posts**: Fetches all posts from Beehiiv API with pagination
 - **Select Posts**: DataTable with sorting by date, opens, clicks
-- **Process Selected Posts**: Opens a modal to define named sections (up to 10), each with a description
+- **Process Selected Posts**: Opens a modal to define named sections (up to 10), each with a name and optional description
   - Uses GPT-5.1 to identify HTML line ranges for each section
   - Extracts text and links from each item, grouped by section
   - Matches links with click data using Levenshtein fuzzy matching
-  - Enters a post-by-post review flow where users can:
+  - Shows progress bar during extraction
+  - If any selected posts already have saved ProcessedPost data, shows an overwrite warning before proceeding
+  - Opens a review overlay popup (post-by-post) where users can:
     - **Approve**: Save the post's sections to the `ProcessedPost` table
     - **Delete Selected Items**: Remove specific items from section tables
-    - **Re-process**: Re-run extraction with custom instructions (costs 1 additional credit)
+    - **Re-process**: Re-run extraction with custom instructions (costs 1 additional credit, shows progress bar)
     - **Delete**: Skip the post without saving
+  - On review completion, page reloads to update the Processed column
+- **Processed Column**: Shows a green checkmark for posts that have been processed and saved
 - **Download Click Visualization**: ZIP of HTML files with click counts overlaid on links
 - **Download Improvement Tips**: ZIP of HTML files with AI-generated improvement tips
 

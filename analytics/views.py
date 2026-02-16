@@ -373,57 +373,6 @@ def posts_view(request):
             post['creation_date_display'] = '-'
             post['creation_date_sortable'] = ''
     
-    # Get extracted items from session if available
-    extracted_items = request.session.get('extracted_items', None)
-    extracted_items_data = None
-    
-    if extracted_items:
-        df = pd.DataFrame(extracted_items)
-        # Parse lists if they're stored as strings
-        for col in ['clicks', 'links', 'click_rate']:
-            if col in df.columns:
-                df[col] = df[col].apply(
-                    lambda x: ast.literal_eval(x) if isinstance(x, str) else x
-                )
-        
-        # Calculate max clicks and max click rate before formatting
-        df['max_clicks'] = df['clicks'].apply(lambda x: max(x) if x else 0)
-        df['max_click_rate'] = df['click_rate'].apply(
-            lambda x: f"{max(x) * 100:.2f}%" if x and max(x) > 0 else "0.00%"
-        )
-        
-        # Format click rates as percentages
-        df['click_rate'] = df['click_rate'].apply(
-            lambda x: [f"{rate * 100:.2f}%" for rate in x] if x else []
-        )
-
-        # Format post_date for display (stored as string in session)
-        if 'post_date' in df.columns:
-            from datetime import datetime as dt
-
-            def format_post_date(date_str):
-                if not date_str or date_str == 'None' or date_str == 'NaT':
-                    return '-', ''
-                try:
-                    # Parse the date string (may be in various formats)
-                    if 'T' in str(date_str) or '+' in str(date_str):
-                        # ISO format with time/timezone
-                        parsed = pd.to_datetime(date_str, utc=True)
-                        local_dt = convert_to_user_timezone(parsed, user_tz)
-                    else:
-                        # Simple date format
-                        parsed = dt.strptime(str(date_str)[:10], '%Y-%m-%d')
-                        local_dt = parsed
-                    return local_dt.strftime('%b %d, %Y'), local_dt.strftime('%Y-%m-%d')
-                except Exception:
-                    return str(date_str), str(date_str)
-
-            formatted = df['post_date'].apply(format_post_date)
-            df['post_date_display'] = formatted.apply(lambda x: x[0])
-            df['post_date_sortable'] = formatted.apply(lambda x: x[1])
-
-        extracted_items_data = df.to_dict('records')
-    
     # Get content sets for current publication and user only
     from .models import Publication
     try:
@@ -433,13 +382,20 @@ def posts_view(request):
     except Publication.DoesNotExist:
         all_content_sets = ContentSet.objects.none()
         all_reports = Report.objects.none()
-    
+
+    # Get set of post_ids that have been processed by this user
+    processed_post_ids = set(
+        ProcessedPost.objects.filter(user=request.user)
+        .values_list('post__post_id', flat=True)
+    )
+
     context = {
         'posts': posts_data,
         'all_content_sets': all_content_sets,
         'all_reports': all_reports,
+        'processed_post_ids': processed_post_ids,
     }
-    
+
     return render(request, 'analytics/posts.html', context)
 
 
@@ -570,15 +526,13 @@ def run_processing(request):
         if len(sections) > 10:
             return JsonResponse({'success': False, 'error': 'Maximum 10 sections allowed.'}, status=400)
 
-        # Validate section names
+        # Validate section names (description is optional)
         seen_names = set()
         for s in sections:
             name = s.get('name', '').strip()
-            desc = s.get('description', '').strip()
+            s['description'] = s.get('description', '').strip()
             if not name:
                 return JsonResponse({'success': False, 'error': 'All section names must be filled in.'}, status=400)
-            if not desc:
-                return JsonResponse({'success': False, 'error': f'Please provide a description for section "{name}".'}, status=400)
             is_valid, error_msg = validate_set_name(name)
             if not is_valid:
                 return JsonResponse({'success': False, 'error': f'Invalid section name "{name}": {error_msg}'}, status=400)
