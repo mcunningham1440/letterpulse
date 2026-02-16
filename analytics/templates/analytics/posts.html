@@ -236,6 +236,49 @@
             <small class="text-muted" id="sectionCount">1 / 10 sections</small>
         </div>
 
+        <!-- Save/Load Template Row -->
+        <div class="d-flex justify-content-between align-items-center mb-3">
+            <small class="text-muted">Save this layout or load a saved one.</small>
+            <div class="d-flex gap-2">
+                <!-- Save Template Dropdown -->
+                <div class="dropdown">
+                    <button class="btn btn-outline-secondary btn-sm dropdown-toggle" type="button"
+                            id="saveTemplateDropdown" data-bs-toggle="dropdown"
+                            aria-expanded="false" data-bs-auto-close="outside">
+                        <i class="bi bi-save"></i> Save
+                    </button>
+                    <div class="dropdown-menu dropdown-menu-end p-3" aria-labelledby="saveTemplateDropdown" style="min-width: 280px;">
+                        <div class="mb-3">
+                            <label class="form-label small fw-bold">Template Name</label>
+                            <input type="text" class="form-control form-control-sm" id="templateNameInput"
+                                   placeholder="e.g. Weekly Newsletter">
+                        </div>
+                        <div class="d-flex justify-content-end">
+                            <button type="button" class="btn btn-primary btn-sm" id="saveTemplateBtn">
+                                <i class="bi bi-save"></i> Save
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Load Template Dropdown -->
+                <div class="dropdown">
+                    <button class="btn btn-outline-secondary btn-sm dropdown-toggle" type="button"
+                            id="loadTemplateDropdown" data-bs-toggle="dropdown"
+                            aria-expanded="false" data-bs-auto-close="outside">
+                        <i class="bi bi-folder2-open"></i> Load
+                    </button>
+                    <div class="dropdown-menu dropdown-menu-end p-3" aria-labelledby="loadTemplateDropdown" style="min-width: 280px;">
+                        <div id="templateList">
+                            <div class="text-center py-2">
+                                <span class="spinner-border spinner-border-sm"></span> Loading...
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <hr>
 
         <div class="d-flex justify-content-between align-items-center">
@@ -862,6 +905,172 @@
                 document.body.removeChild(form);
             }, 3000);
         });
+    }
+
+    // =========================================================================
+    // Processing Template Save/Load Logic
+    // =========================================================================
+
+    // Save template
+    document.getElementById('saveTemplateBtn').addEventListener('click', async function() {
+        const nameInput = document.getElementById('templateNameInput');
+        const name = nameInput.value.trim();
+        if (!name) {
+            alert('Please enter a template name.');
+            return;
+        }
+
+        // Collect current sections
+        const pairs = document.querySelectorAll('.section-pair');
+        const sections = [];
+        for (const pair of pairs) {
+            const sName = pair.querySelector('.section-name').value.trim();
+            const sDesc = pair.querySelector('.section-desc').value.trim();
+            if (!sName) {
+                alert('Please fill in all section names before saving.');
+                return;
+            }
+            sections.push({ name: sName, description: sDesc });
+        }
+
+        const btn = this;
+        btn.disabled = true;
+
+        try {
+            const response = await fetch("{% url 'analytics:save_processing_template' %}", {
+                method: 'POST',
+                headers: {
+                    'X-CSRFToken': csrfToken,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ name: name, sections: sections })
+            });
+
+            const data = await response.json();
+            if (data.success) {
+                showToast(data.message, 'success');
+                nameInput.value = '';
+                // Close dropdown
+                const dropdown = bootstrap.Dropdown.getInstance(document.getElementById('saveTemplateDropdown'));
+                if (dropdown) dropdown.hide();
+            } else {
+                alert(data.error || 'Error saving template.');
+            }
+        } catch (error) {
+            console.error('Error:', error);
+            alert('An error occurred while saving the template.');
+        } finally {
+            btn.disabled = false;
+        }
+    });
+
+    // Load templates when dropdown opens
+    document.getElementById('loadTemplateDropdown').addEventListener('show.bs.dropdown', async function() {
+        const listContainer = document.getElementById('templateList');
+        listContainer.innerHTML = '<div class="text-center py-2"><span class="spinner-border spinner-border-sm"></span> Loading...</div>';
+
+        try {
+            const response = await fetch("{% url 'analytics:load_processing_templates' %}");
+            const data = await response.json();
+
+            if (!data.success) {
+                listContainer.innerHTML = '<span class="text-danger small">Error loading templates.</span>';
+                return;
+            }
+
+            if (data.templates.length === 0) {
+                listContainer.innerHTML = '<span class="text-muted small">No saved templates.</span>';
+                return;
+            }
+
+            listContainer.innerHTML = '';
+            data.templates.forEach(function(tmpl) {
+                const row = document.createElement('div');
+                row.className = 'd-flex justify-content-between align-items-center py-1';
+                row.dataset.templateId = tmpl.id;
+
+                const nameLink = document.createElement('a');
+                nameLink.href = '#';
+                nameLink.className = 'text-decoration-none small flex-grow-1';
+                nameLink.textContent = tmpl.name;
+                nameLink.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    loadTemplate(tmpl.sections_data);
+                    // Close dropdown
+                    const dropdown = bootstrap.Dropdown.getInstance(document.getElementById('loadTemplateDropdown'));
+                    if (dropdown) dropdown.hide();
+                    showToast('Template "' + tmpl.name + '" loaded.', 'success');
+                });
+
+                const deleteBtn = document.createElement('button');
+                deleteBtn.className = 'btn btn-link btn-sm text-danger p-0 ms-2';
+                deleteBtn.innerHTML = '<i class="bi bi-x-lg"></i>';
+                deleteBtn.title = 'Delete template';
+                deleteBtn.addEventListener('click', async function(e) {
+                    e.stopPropagation();
+                    await deleteTemplate(tmpl.id, row);
+                });
+
+                row.appendChild(nameLink);
+                row.appendChild(deleteBtn);
+                listContainer.appendChild(row);
+            });
+        } catch (error) {
+            console.error('Error:', error);
+            listContainer.innerHTML = '<span class="text-danger small">Error loading templates.</span>';
+        }
+    });
+
+    function loadTemplate(sectionsData) {
+        const fields = document.getElementById('sectionFields');
+        fields.innerHTML = '';
+
+        sectionsData.forEach(function(section, idx) {
+            const div = document.createElement('div');
+            div.className = 'section-pair mb-3';
+            div.dataset.index = idx;
+            div.innerHTML = `
+                <div class="d-flex gap-2 align-items-start">
+                    <div class="flex-grow-1">
+                        <input type="text" class="form-control form-control-sm mb-1 section-name"
+                               placeholder="Section name" value="${(section.name || '').replace(/"/g, '&quot;')}">
+                        <input type="text" class="form-control form-control-sm section-desc"
+                               placeholder="Section description (optional)" value="${(section.description || '').replace(/"/g, '&quot;')}">
+                    </div>
+                </div>
+            `;
+            fields.appendChild(div);
+        });
+
+        updateSectionUI();
+    }
+
+    async function deleteTemplate(templateId, rowElement) {
+        try {
+            const response = await fetch("{% url 'analytics:delete_processing_template' template_id=0 %}".replace('/0/', '/' + templateId + '/'), {
+                method: 'POST',
+                headers: {
+                    'X-CSRFToken': csrfToken,
+                    'Content-Type': 'application/json'
+                }
+            });
+
+            const data = await response.json();
+            if (data.success) {
+                rowElement.remove();
+                // Check if list is now empty
+                const listContainer = document.getElementById('templateList');
+                if (listContainer.children.length === 0) {
+                    listContainer.innerHTML = '<span class="text-muted small">No saved templates.</span>';
+                }
+                showToast(data.message, 'success');
+            } else {
+                alert(data.error || 'Error deleting template.');
+            }
+        } catch (error) {
+            console.error('Error:', error);
+            alert('An error occurred while deleting the template.');
+        }
     }
 
     // Handle select all reports checkbox

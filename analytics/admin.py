@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Post, ContentSet, Report, UsageAccount, Publication, ExecutionLog, SurveyResponse, ProcessedPost
+from .models import Post, ContentSet, Report, UsageAccount, Publication, ExecutionLog, SurveyResponse, ProcessedPost, ProcessingTemplate
 
 
 @admin.register(UsageAccount)
@@ -99,6 +99,15 @@ class ProcessedPostAdmin(admin.ModelAdmin):
     def total_items(self, obj):
         return obj.get_total_items_count()
     total_items.short_description = 'Total Items'
+
+
+@admin.register(ProcessingTemplate)
+class ProcessingTemplateAdmin(admin.ModelAdmin):
+    list_display = ('name', 'user', 'publication', 'created_at')
+    list_filter = ('publication', 'user', 'created_at')
+    search_fields = ('name', 'user__email')
+    ordering = ('-created_at',)
+    readonly_fields = ('created_at', 'updated_at')
 
 
 @admin.register(SurveyResponse)

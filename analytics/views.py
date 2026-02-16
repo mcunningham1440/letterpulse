@@ -15,7 +15,7 @@ import json
 import ast
 from asgiref.sync import async_to_sync
 
-from .models import Post, ContentSet, Report, UsageAccount, SurveyResponse, ProcessedPost
+from .models import Post, ContentSet, Report, UsageAccount, SurveyResponse, ProcessedPost, ProcessingTemplate
 
 logger = logging.getLogger(__name__)
 
@@ -1919,3 +1919,108 @@ def submit_survey(request):
             'success': False,
             'error': str(e)
         }, status=500)
+
+
+@login_required
+@require_POST
+def save_processing_template(request):
+    """
+    Save the current section layout as a named processing template.
+    If a template with the same name exists for this user+publication, it is overwritten.
+    """
+    from .models import Publication
+
+    try:
+        body = json.loads(request.body)
+        name = body.get('name', '').strip()
+        sections = body.get('sections', [])
+
+        if not name:
+            return JsonResponse({'success': False, 'error': 'Template name is required.'}, status=400)
+
+        is_valid, error_msg = validate_set_name(name)
+        if not is_valid:
+            return JsonResponse({'success': False, 'error': error_msg}, status=400)
+
+        if not sections or len(sections) == 0:
+            return JsonResponse({'success': False, 'error': 'At least one section is required.'}, status=400)
+
+        if len(sections) > 10:
+            return JsonResponse({'success': False, 'error': 'Maximum 10 sections allowed.'}, status=400)
+
+        for s in sections:
+            if not s.get('name', '').strip():
+                return JsonResponse({'success': False, 'error': 'All sections must have a name.'}, status=400)
+
+        # Get current publication
+        _, beehiiv_pub_id, _ = get_user_api_credentials(request.user)
+        try:
+            publication = Publication.objects.get(pub_id=beehiiv_pub_id)
+        except Publication.DoesNotExist:
+            publication = None
+
+        template, created = ProcessingTemplate.objects.update_or_create(
+            name=name,
+            user=request.user,
+            publication=publication,
+            defaults={'sections_data': sections}
+        )
+
+        msg = f'Template "{name}" saved.' if created else f'Template "{name}" updated.'
+        return JsonResponse({'success': True, 'template_id': template.id, 'message': msg})
+
+    except Exception as e:
+        return JsonResponse({'success': False, 'error': str(e)}, status=500)
+
+
+@login_required
+def load_processing_templates(request):
+    """
+    Return all processing templates for the current user and publication.
+    """
+    from .models import Publication
+
+    try:
+        _, beehiiv_pub_id, _ = get_user_api_credentials(request.user)
+        try:
+            publication = Publication.objects.get(pub_id=beehiiv_pub_id)
+        except Publication.DoesNotExist:
+            publication = None
+
+        templates = ProcessingTemplate.objects.filter(
+            user=request.user,
+            publication=publication
+        )
+
+        templates_data = [
+            {
+                'id': t.id,
+                'name': t.name,
+                'sections_data': t.sections_data,
+            }
+            for t in templates
+        ]
+
+        return JsonResponse({'success': True, 'templates': templates_data})
+
+    except Exception as e:
+        return JsonResponse({'success': False, 'error': str(e)}, status=500)
+
+
+@login_required
+@require_POST
+def delete_processing_template(request, template_id):
+    """
+    Delete a processing template by ID (must be owned by the requesting user).
+    """
+    try:
+        template = ProcessingTemplate.objects.get(id=template_id, user=request.user)
+        template_name = template.name
+        template.delete()
+
+        return JsonResponse({'success': True, 'message': f'Template "{template_name}" deleted.'})
+
+    except ProcessingTemplate.DoesNotExist:
+        return JsonResponse({'success': False, 'error': 'Template not found.'}, status=404)
+    except Exception as e:
+        return JsonResponse({'success': False, 'error': str(e)}, status=500)

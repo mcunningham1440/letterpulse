@@ -474,6 +474,35 @@ class ProcessedPost(models.Model):
         return sum(len(s.get('items', [])) for s in self.sections_data)
 
 
+class ProcessingTemplate(models.Model):
+    """Saved section layout template for the Process Selected Posts workflow."""
+    name = models.CharField(max_length=255)
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='processing_templates'
+    )
+    publication = models.ForeignKey(
+        Publication,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='processing_templates'
+    )
+    sections_data = models.JSONField(help_text="JSON array of {name, description} dicts")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        unique_together = [['name', 'publication', 'user']]
+        verbose_name = "Processing Template"
+        verbose_name_plural = "Processing Templates"
+
+    def __str__(self):
+        return f"{self.name} ({self.user})"
+
+
 class SurveyResponse(models.Model):
     """Stores user responses to the signup survey"""
 

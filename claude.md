@@ -164,6 +164,24 @@ Stores section-aware extracted content for a single post after user review/appro
 
 Created via the "Process Selected Posts" workflow on the Posts page. Each item within a section has the same fields as ContentSet items (`text`, `links`, `clicks`, `click_rate`, `post_title`, `post_date`).
 
+### ProcessingTemplate
+Saved section layout templates for the Process Selected Posts workflow:
+- `name`: Template name (unique per publication and user)
+- `user`: ForeignKey to User (owner)
+- `publication`: ForeignKey to Publication (nullable)
+- `sections_data`: JSON array of `{name, description}` dicts defining section layouts
+- Unique constraint: `(name, publication, user)`
+
+`sections_data` structure:
+```json
+[
+  {"name": "Quick Bites", "description": "Items in the Quick Bites section"},
+  {"name": "Deep Dives", "description": ""}
+]
+```
+
+Users can save/load templates from the processing modal to avoid re-entering section definitions for newsletters with a consistent layout.
+
 ## Authentication
 
 Uses django-allauth for email-based authentication:
@@ -183,6 +201,7 @@ Uses django-allauth for email-based authentication:
 - **Refresh Posts**: Fetches all posts from Beehiiv API with pagination
 - **Select Posts**: DataTable with sorting by date, opens, clicks
 - **Process Selected Posts**: Opens a modal to define named sections (up to 10), each with a name and optional description
+  - **Save/Load Templates**: Users can save the current section layout as a named template and load saved templates to pre-populate section fields (stored in `ProcessingTemplate` model, scoped to user + publication)
   - Uses GPT-5.1 to identify HTML line ranges for each section
   - Extracts text and links from each item, grouped by section
   - Matches links with click data using Levenshtein fuzzy matching
@@ -238,6 +257,9 @@ All routes use the `analytics:` namespace.
 - `POST /posts/refresh-posts/` - Fetch latest posts from Beehiiv
 - `POST /posts/download-click-viz/` - Generate click visualization ZIP
 - `POST /posts/download-annotated/` - Generate annotated HTML ZIP
+- `POST /posts/save-template/` - Save section layout as a named processing template (AJAX)
+- `GET /posts/load-templates/` - List saved processing templates for current publication (AJAX)
+- `POST /posts/delete-template/<id>/` - Delete a processing template (AJAX)
 
 ### Insights Routes
 - `GET /insights/` - Insights dashboard
