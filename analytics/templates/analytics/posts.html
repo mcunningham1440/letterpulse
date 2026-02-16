@@ -209,7 +209,7 @@
 <!-- Processing Modal (survey-style overlay) -->
 <div class="processing-overlay" id="processingOverlay" style="display: none;">
     <div class="processing-modal">
-        <h4 class="mb-4" id="processingTitle">Processing 0 Posts</h4>
+        <h4 class="mb-4" id="processingTitle">Processing 0 posts</h4>
 
         <div id="sectionFields">
             <div class="section-pair mb-3" data-index="0">
@@ -233,7 +233,7 @@
                     <i class="bi bi-dash"></i>
                 </button>
             </div>
-            <small class="text-muted" id="sectionCount">1 / 10 sections</small>
+            <small class="text-muted" id="sectionCount">1 / 15 sections</small>
         </div>
 
         <!-- Save/Load Template Row -->
@@ -280,6 +280,9 @@
         </div>
 
         <hr>
+
+        <!-- Progress bar inside processing modal -->
+        <div id="processModalProgress" class="mb-3"></div>
 
         <div class="d-flex justify-content-between align-items-center">
             <small class="text-muted">1 AI credit per post</small>
@@ -410,8 +413,8 @@
     function updateSectionUI() {
         const fields = document.getElementById('sectionFields');
         const count = fields.querySelectorAll('.section-pair').length;
-        document.getElementById('sectionCount').textContent = count + ' / 10 sections';
-        document.getElementById('addSectionBtn').disabled = count >= 10;
+        document.getElementById('sectionCount').textContent = count + ' / 15 sections';
+        document.getElementById('addSectionBtn').disabled = count >= 15;
         document.getElementById('removeSectionBtn').style.display = count > 1 ? '' : 'none';
     }
 
@@ -427,7 +430,7 @@
             return;
         }
         const n = selectedPosts.length;
-        document.getElementById('processingTitle').textContent = 'Processing ' + n + ' Post' + (n !== 1 ? 's' : '');
+        document.getElementById('processingTitle').textContent = 'Processing ' + n + ' post' + (n !== 1 ? 's' : '');
         document.getElementById('processingOverlay').style.display = 'flex';
     });
 
@@ -440,7 +443,7 @@
     document.getElementById('addSectionBtn').addEventListener('click', function() {
         const fields = document.getElementById('sectionFields');
         const count = fields.querySelectorAll('.section-pair').length;
-        if (count >= 10) return;
+        if (count >= 15) return;
 
         const div = document.createElement('div');
         div.className = 'section-pair mb-3';
@@ -482,7 +485,7 @@
         const estimatedDuration = Math.max(baseDuration, numPosts * 4);
 
         ProgressBar.start({
-            containerId: 'processPostsProgress',
+            containerId: 'processModalProgress',
             expectedDuration: estimatedDuration,
             subtext: 'Processing ' + numPosts + ' post' + (numPosts !== 1 ? 's' : '') + '...'
         });
@@ -503,7 +506,7 @@
             const data = await response.json();
 
             if (!data.success) {
-                ProgressBar.complete({ containerId: 'processPostsProgress', success: false, message: data.error || 'Error' });
+                ProgressBar.complete({ containerId: 'processModalProgress', success: false, message: data.error || 'Error' });
                 alert(data.error || 'An error occurred during processing.');
                 return;
             }
@@ -511,7 +514,7 @@
             // Update credits in sidebar
             updateCreditsDisplay(data.credits_used, data.credits_quota);
 
-            ProgressBar.complete({ containerId: 'processPostsProgress', success: true, message: 'Done!' });
+            ProgressBar.complete({ containerId: 'processModalProgress', success: true, message: 'Done!' });
 
             // Close processing modal and start review
             document.getElementById('processingOverlay').style.display = 'none';
@@ -519,7 +522,7 @@
 
         } catch (error) {
             console.error('Error:', error);
-            ProgressBar.complete({ containerId: 'processPostsProgress', success: false, message: 'Error' });
+            ProgressBar.complete({ containerId: 'processModalProgress', success: false, message: 'Error' });
             alert('An error occurred during processing.');
         } finally {
             runBtn.disabled = false;
@@ -641,12 +644,14 @@
             const header = document.createElement('h6');
             header.className = 'fw-bold mb-2';
             header.textContent = section.section_name;
-            if (section.items.length === 0) {
-                header.textContent += ' (no items found)';
-            }
             sectionDiv.appendChild(header);
 
-            if (section.items.length > 0) {
+            if (section.items.length === 0) {
+                const noItems = document.createElement('p');
+                noItems.className = 'text-muted mb-3';
+                noItems.textContent = 'No items found';
+                sectionDiv.appendChild(noItems);
+            } else {
                 const tableId = 'reviewTable_' + sIdx;
                 const tableHtml = `
                     <div class="table-responsive">

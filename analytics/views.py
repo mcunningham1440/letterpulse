@@ -61,6 +61,26 @@ def sanitize_filename(filename: str) -> str:
 # Allows alphanumeric, spaces, hyphens, underscores, and common punctuation
 VALID_SET_NAME_PATTERN = re.compile(r'^[\w\s\-.,()\']+$', re.UNICODE)
 
+def validate_section_name(name: str) -> tuple[bool, str]:
+    """
+    Validate a section name. More permissive than content set names —
+    allows most printable characters except control characters.
+
+    Returns:
+        (is_valid, error_message) tuple
+    """
+    if not name:
+        return False, "Name cannot be empty."
+
+    if len(name) > 200:
+        return False, "Name must be 200 characters or less."
+
+    # Check for newlines and other control characters
+    if any(c in name for c in '\n\r\t\x00'):
+        return False, "Name cannot contain control characters."
+
+    return True, ""
+
 def validate_set_name(name: str) -> tuple[bool, str]:
     """
     Validate a content set name for security and usability.
@@ -523,8 +543,8 @@ def run_processing(request):
         if not sections or len(sections) == 0:
             return JsonResponse({'success': False, 'error': 'Please add at least one section.'}, status=400)
 
-        if len(sections) > 10:
-            return JsonResponse({'success': False, 'error': 'Maximum 10 sections allowed.'}, status=400)
+        if len(sections) > 15:
+            return JsonResponse({'success': False, 'error': 'Maximum 15 sections allowed.'}, status=400)
 
         # Validate section names (description is optional)
         seen_names = set()
@@ -533,7 +553,7 @@ def run_processing(request):
             s['description'] = s.get('description', '').strip()
             if not name:
                 return JsonResponse({'success': False, 'error': 'All section names must be filled in.'}, status=400)
-            is_valid, error_msg = validate_set_name(name)
+            is_valid, error_msg = validate_section_name(name)
             if not is_valid:
                 return JsonResponse({'success': False, 'error': f'Invalid section name "{name}": {error_msg}'}, status=400)
             if name.lower() in seen_names:
@@ -1945,8 +1965,8 @@ def save_processing_template(request):
         if not sections or len(sections) == 0:
             return JsonResponse({'success': False, 'error': 'At least one section is required.'}, status=400)
 
-        if len(sections) > 10:
-            return JsonResponse({'success': False, 'error': 'Maximum 10 sections allowed.'}, status=400)
+        if len(sections) > 15:
+            return JsonResponse({'success': False, 'error': 'Maximum 15 sections allowed.'}, status=400)
 
         for s in sections:
             if not s.get('name', '').strip():

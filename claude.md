@@ -200,7 +200,7 @@ Uses django-allauth for email-based authentication:
 ### 1. Posts Page (`/posts/`)
 - **Refresh Posts**: Fetches all posts from Beehiiv API with pagination
 - **Select Posts**: DataTable with sorting by date, opens, clicks
-- **Process Selected Posts**: Opens a modal to define named sections (up to 10), each with a name and optional description
+- **Process Selected Posts**: Opens a modal to define named sections (up to 15), each with a name and optional description
   - **Save/Load Templates**: Users can save the current section layout as a named template and load saved templates to pre-populate section fields (stored in `ProcessingTemplate` model, scoped to user + publication)
   - Uses GPT-5.1 to identify HTML line ranges for each section
   - Extracts text and links from each item, grouped by section
