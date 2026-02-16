@@ -471,9 +471,7 @@ async def extract_items(post_html, content_desc, clicks_dict, title, post_date, 
     Returns:
         DataFrame containing extracted items
     """
-    # Step 1: Get line numbers for sections matching the content description
-    parsing_prompt = PARSING_PROMPT
-    
+    # Step 1: Get line numbers for sections matching the content description    
     content_description = f"""<ContentDescription>
 {content_desc}
 </ContentDescription>"""
@@ -490,7 +488,7 @@ async def extract_items(post_html, content_desc, clicks_dict, title, post_date, 
         Items: List[Item]
 
     messages = [
-        {"role": "system", "content": parsing_prompt},
+        {"role": "system", "content": PARSING_PROMPT},
         {"role": "user", "content": '\n'.join(numbered_lines)},
         {"role": "user", "content": content_description}
     ]
@@ -581,8 +579,6 @@ async def generate_content_insights(items_display, user=None):
     Returns:
         OpenAI response object containing structured insights with 3 tags
     """
-    analysis_prompt = ANALYSIS_PROMPT
-
     # Use the items with clicks formatted as string
     items_display["max_click_rate"] = items_display["click_rate"].apply(max)
     items_display["max_click_rate_percentile"] = items_display["max_click_rate"].rank(pct=True)
@@ -595,7 +591,7 @@ async def generate_content_insights(items_display, user=None):
         newsletter_items += f"CTR: {round(row['max_click_rate'] * 100, 2)}% (percentile {row['max_click_rate_percentile']:.0%})\n\n"
         
     messages = [
-        {"role": "user", "content": analysis_prompt},
+        {"role": "user", "content": ANALYSIS_PROMPT},
         {"role": "user", "content": newsletter_items}
     ]
 
@@ -899,8 +895,6 @@ async def annotate_post_html(post_id, content_perf_evals, beehiiv_token, beehiiv
         tips: List[Tip]
     
     # Step 4: Prompt LLM for tips
-    tip_prompt = TIP_PROMPT
-
     # Combine all performance evaluations with XML tags
     combined_perf_eval = "\n\n".join([
         f"<performance_evaluation_{i+1}>\n{eval_text}\n</performance_evaluation_{i+1}>"
@@ -910,7 +904,7 @@ async def annotate_post_html(post_id, content_perf_evals, beehiiv_token, beehiiv
     messages = [
         {"role": "user", "content": f"{combined_perf_eval}"},
         {"role": "user", "content": "<html_document>\n" + '\n'.join(numbered_lines) + "\n</html_document>"},
-        {"role": "system", "content": tip_prompt},
+        {"role": "system", "content": TIP_PROMPT},
     ]
 
     response = await llm_call("annotate_post_html", messages, "gpt-5.1", "medium", response_format=AllTips, user=user)
