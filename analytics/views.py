@@ -3,6 +3,7 @@ Views for the analytics app.
 """
 
 import re
+import logging
 from django.shortcuts import render, redirect
 from django.http import JsonResponse, HttpResponse
 from django.views.decorators.http import require_POST
@@ -14,7 +15,9 @@ import json
 import ast
 from asgiref.sync import async_to_sync
 
-from .models import Post, ContentSet, Report, UsageAccount, SurveyResponse
+from .models import Post, ContentSet, Report, UsageAccount, SurveyResponse, ProcessedPost
+
+logger = logging.getLogger(__name__)
 
 
 # =============================================================================
@@ -89,6 +92,8 @@ from .utils import (
     load_posts_from_db,
     fetch_posts_html_and_clicks_parallel,
     extract_items_parallel,
+    extract_sections,
+    extract_sections_parallel,
     generate_content_insights,
     refresh_posts_data,
     annotate_posts_parallel,
@@ -431,7 +436,6 @@ def posts_view(request):
     
     context = {
         'posts': posts_data,
-        'extracted_items': extracted_items_data,
         'all_content_sets': all_content_sets,
         'all_reports': all_reports,
     }
@@ -538,6 +542,234 @@ def run_extraction(request):
         messages.error(request, f"Error during extraction: {str(e)}")
 
     return redirect('analytics:posts')
+
+
+@login_required
+@require_POST
+def run_processing(request):
+    """
+    Run multi-section content extraction on selected posts.
+    Returns JSON with extraction results for client-side review flow.
+    """
+    try:
+        beehiiv_token, beehiiv_pub_id, is_valid = get_user_api_credentials(request.user)
+        if not beehiiv_token or not beehiiv_pub_id or not is_valid:
+            return JsonResponse({'success': False, 'error': 'Please configure valid API credentials in Account settings.'}, status=400)
+
+        # Parse JSON body
+        body = json.loads(request.body)
+        selected_indices = body.get('selected_posts', [])
+        sections = body.get('sections', [])
+
+        if not selected_indices:
+            return JsonResponse({'success': False, 'error': 'Please select at least one post.'}, status=400)
+
+        if not sections or len(sections) == 0:
+            return JsonResponse({'success': False, 'error': 'Please add at least one section.'}, status=400)
+
+        if len(sections) > 10:
+            return JsonResponse({'success': False, 'error': 'Maximum 10 sections allowed.'}, status=400)
+
+        # Validate section names
+        seen_names = set()
+        for s in sections:
+            name = s.get('name', '').strip()
+            desc = s.get('description', '').strip()
+            if not name:
+                return JsonResponse({'success': False, 'error': 'All section names must be filled in.'}, status=400)
+            if not desc:
+                return JsonResponse({'success': False, 'error': f'Please provide a description for section "{name}".'}, status=400)
+            is_valid, error_msg = validate_set_name(name)
+            if not is_valid:
+                return JsonResponse({'success': False, 'error': f'Invalid section name "{name}": {error_msg}'}, status=400)
+            if name.lower() in seen_names:
+                return JsonResponse({'success': False, 'error': f'Duplicate section name: "{name}".'}, status=400)
+            seen_names.add(name.lower())
+
+        # Convert indices to integers
+        selected_indices = [int(idx) for idx in selected_indices]
+
+        # Load posts from database
+        posts_df = load_posts_from_db(publication_id=beehiiv_pub_id, user=request.user)
+        posts_df = posts_df.iloc[::-1].reset_index(drop=True)
+
+        posts_of_interest = posts_df.iloc[selected_indices]
+        post_ids = posts_of_interest['id'].tolist()
+
+        # Fetch HTMLs and clicks
+        htmls, clicks_by_id = async_to_sync(fetch_posts_html_and_clicks_parallel)(
+            post_ids, beehiiv_token, beehiiv_pub_id
+        )
+
+        if not htmls:
+            return JsonResponse({'success': False, 'error': 'Failed to fetch content from Beehiiv.'}, status=500)
+
+        # Prepare posts data
+        posts_data = [
+            (row.id, row.title, f"{row.id}.html", row.publish_date, row.unique_email_opens)
+            for _, row in posts_of_interest.iterrows()
+        ]
+
+        # Charge credits
+        num_posts = len([p for p in posts_data if p[2] in htmls and p[0] in clicks_by_id])
+        credits_needed = num_posts * settings.CREDITS_PER_EXTRACTION
+        charge_credits(request.user, credits_needed)
+
+        # Run parallel section extraction
+        results_by_post = async_to_sync(extract_sections_parallel)(
+            posts_data, sections, htmls, clicks_by_id, user=request.user
+        )
+
+        # Build review data
+        review_posts = []
+        for post_id, title, html_filename, post_date, unique_email_opens in posts_data:
+            if post_id in results_by_post:
+                review_posts.append({
+                    'post_id': post_id,
+                    'post_title': title,
+                    'post_date': str(post_date) if post_date else None,
+                    'sections': results_by_post[post_id]
+                })
+
+        review_data = {
+            'posts': review_posts,
+            'current_index': 0,
+            'sections_config': sections,
+            'total_posts': len(review_posts)
+        }
+
+        # Store in session for re-process access
+        request.session['review_sections_config'] = sections
+
+        # Get updated credit info
+        usage = UsageAccount.objects.get(user=request.user)
+
+        return JsonResponse({
+            'success': True,
+            'review_data': review_data,
+            'credits_used': usage.used_this_period,
+            'credits_quota': usage.monthly_quota
+        })
+
+    except NotEnoughCredits as e:
+        return JsonResponse({'success': False, 'error': str(e)}, status=400)
+    except Exception as e:
+        logger.error(f"Error in run_processing: {str(e)}", exc_info=True)
+        return JsonResponse({'success': False, 'error': f'Error during processing: {str(e)}'}, status=500)
+
+
+@login_required
+@require_POST
+def approve_post(request):
+    """
+    Save reviewed post sections to the ProcessedPost table.
+    Called via AJAX from the review flow.
+    """
+    from .models import Publication
+    try:
+        body = json.loads(request.body)
+        post_id = body.get('post_id')
+        sections_data = body.get('sections_data')
+
+        if not post_id or sections_data is None:
+            return JsonResponse({'success': False, 'error': 'Missing post_id or sections_data.'}, status=400)
+
+        # Get the Post object
+        post = Post.objects.get(post_id=post_id, user=request.user)
+
+        # Get current publication
+        _, beehiiv_pub_id, _ = get_user_api_credentials(request.user)
+        try:
+            publication = Publication.objects.get(pub_id=beehiiv_pub_id)
+        except Publication.DoesNotExist:
+            publication = None
+
+        # Create or update ProcessedPost
+        ProcessedPost.objects.update_or_create(
+            post=post,
+            user=request.user,
+            defaults={
+                'publication': publication,
+                'sections_data': sections_data
+            }
+        )
+
+        return JsonResponse({'success': True})
+
+    except Post.DoesNotExist:
+        return JsonResponse({'success': False, 'error': 'Post not found.'}, status=404)
+    except Exception as e:
+        logger.error(f"Error in approve_post: {str(e)}", exc_info=True)
+        return JsonResponse({'success': False, 'error': str(e)}, status=500)
+
+
+@login_required
+@require_POST
+def reprocess_post(request):
+    """
+    Re-run section extraction for a single post with optional custom instructions.
+    Called via AJAX from the review flow. Charges 1 additional credit.
+    """
+    try:
+        beehiiv_token, beehiiv_pub_id, is_valid = get_user_api_credentials(request.user)
+        if not beehiiv_token or not beehiiv_pub_id or not is_valid:
+            return JsonResponse({'success': False, 'error': 'Please configure valid API credentials in Account settings.'}, status=400)
+
+        body = json.loads(request.body)
+        post_id = body.get('post_id')
+        sections_config = body.get('sections_config', [])
+        custom_instructions = body.get('custom_instructions', '')
+
+        if not post_id:
+            return JsonResponse({'success': False, 'error': 'Missing post_id.'}, status=400)
+
+        if not sections_config:
+            return JsonResponse({'success': False, 'error': 'Missing sections configuration.'}, status=400)
+
+        # Charge 1 credit for re-processing
+        charge_credits(request.user, settings.CREDITS_PER_EXTRACTION)
+
+        # Fetch HTML and clicks for this single post
+        htmls, clicks_by_id = async_to_sync(fetch_posts_html_and_clicks_parallel)(
+            [post_id], beehiiv_token, beehiiv_pub_id
+        )
+
+        html_filename = f"{post_id}.html"
+        if html_filename not in htmls or post_id not in clicks_by_id:
+            return JsonResponse({'success': False, 'error': 'Failed to fetch post data.'}, status=500)
+
+        # Get post info from database
+        post = Post.objects.get(post_id=post_id, user=request.user)
+
+        # Run extraction with custom instructions
+        sections_result = async_to_sync(extract_sections)(
+            htmls[html_filename],
+            sections_config,
+            clicks_by_id[post_id],
+            post.title,
+            post.publish_date,
+            post.unique_email_opens,
+            custom_instructions=custom_instructions,
+            user=request.user
+        )
+
+        # Get updated credit info
+        usage = UsageAccount.objects.get(user=request.user)
+
+        return JsonResponse({
+            'success': True,
+            'sections': sections_result,
+            'credits_used': usage.used_this_period,
+            'credits_quota': usage.monthly_quota
+        })
+
+    except NotEnoughCredits as e:
+        return JsonResponse({'success': False, 'error': str(e)}, status=400)
+    except Post.DoesNotExist:
+        return JsonResponse({'success': False, 'error': 'Post not found.'}, status=404)
+    except Exception as e:
+        logger.error(f"Error in reprocess_post: {str(e)}", exc_info=True)
+        return JsonResponse({'success': False, 'error': str(e)}, status=500)
 
 
 @login_required

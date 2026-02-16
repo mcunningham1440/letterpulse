@@ -2,9 +2,8 @@
 Prompt templates for LLM calls used throughout the analytics app.
 """
 
-# Used in extract_items() — system message instructing the LLM to identify
-# HTML line ranges matching a user's content description.
-PARSING_PROMPT = """You are given an HTML document with line numbers.
+# Legacy single-description prompt — used by extract_items() for backward compatibility.
+PARSING_PROMPT_SINGLE = """You are given an HTML document with line numbers.
 Your task is to identify items within the HTML that correspond to the ContentDescription at bottom.
 Provide the start and end line numbers (inclusive) for each item that matches the description.
 Make each discrete item a separate pair of start and end line numbers.
@@ -20,7 +19,7 @@ Sometimes, the user may be referring to a section which contains multiple simila
 -Rivian debuts the R1T TrailForge Edition, adding magnetically adjustable suspension plates and an onboard terrain-mapping assistant trained on 40M trail miles.
 </Example1>
 
-In this case, if the user asked for “new product releases”, you would make each one of the four news items into a separate item, unless specifically instructed otherwise.
+In this case, if the user asked for "new product releases", you would make each one of the four news items into a separate item, unless specifically instructed otherwise.
 Make sure to include all of them, for instance, in this case, you would return four pairs of start and end line numbers.
 
 In other cases, the user may be referring to a single item, as in Example2.
@@ -29,12 +28,58 @@ In other cases, the user may be referring to a single item, as in Example2.
 **New product release**
 Audi introduces the A7 NeoSport, a sleek fastback hybrid that pairs a 2.0L turbo engine with a next-gen ultracapacitor boost system, delivering instantaneous torque without relying on traditional lithium-ion packs. Early testers report near-zero lag during acceleration and a smoother handoff between electric assist and combustion power than any previous Audi hybrid.
 
-The NeoSport also debuts Audi’s new “HoloHUD” panoramic projection system, which layers 3D navigation cues, lane boundaries, and contextual alerts directly onto the windshield. The display dynamically adapts to sunlight, fog, and glare, giving drivers a floating augmented-reality interface that feels more like a fighter jet cockpit than a dashboard.
+The NeoSport also debuts Audi's new "HoloHUD" panoramic projection system, which layers 3D navigation cues, lane boundaries, and contextual alerts directly onto the windshield. The display dynamically adapts to sunlight, fog, and glare, giving drivers a floating augmented-reality interface that feels more like a fighter jet cockpit than a dashboard.
 </Example2>
 
-In this case, if the user asked for “new product release”, you would make it a single item, returning a single pair of start and end line numbers.
+In this case, if the user asked for "new product release", you would make it a single item, returning a single pair of start and end line numbers.
 
 Use your judgement and the content description to determine whether to extract multiple items or a single item.
+"""
+
+# Used in extract_items() for backward compatibility
+PARSING_PROMPT = PARSING_PROMPT_SINGLE
+
+# Used in extract_sections() — system message for multi-section extraction.
+SECTION_PARSING_PROMPT = """You are given an HTML document with line numbers.
+Your task is to identify items within the HTML that belong to each of the named sections listed at the bottom.
+Each section has a name and a description of the content to look for.
+
+For each section, provide the start and end line numbers (inclusive) for every item matching that section's description.
+Make each discrete item a separate pair of start and end line numbers.
+Do not include any items that do not match a section's description.
+Group items by section name.
+
+Sometimes, a section description may refer to multiple similar items, as in Example1.
+
+<Example1>
+Section: "Product Releases"
+Description: "New product release items"
+
+**New product releases**
+-Tesla unveils the Roadster X-Plus, a lightweight carbon-ceramic edition with a 0–60 time of 1.7 seconds and a 700-mile solid-state battery pack.
+-BMW releases the i5 Touring ActiveHybrid, featuring adaptive solar-roof charging and an AI-driven energy-routing system for long-distance commuters.
+-Toyota launches the Land Cruiser Micro-Hybrid, a compact off-road SUV aimed at urban explorers, with a detachable roof rack drone for scouting terrain.
+-Rivian debuts the R1T TrailForge Edition, adding magnetically adjustable suspension plates and an onboard terrain-mapping assistant trained on 40M trail miles.
+</Example1>
+
+In this case, for the "Product Releases" section, you would make each of the four news items into a separate item within that section.
+Make sure to include all of them.
+
+In other cases, a section description may refer to a single item, as in Example2.
+
+<Example2>
+Section: "Featured Release"
+Description: "The main featured product release"
+
+**New product release**
+Audi introduces the A7 NeoSport, a sleek fastback hybrid that pairs a 2.0L turbo engine with a next-gen ultracapacitor boost system.
+The NeoSport also debuts Audi's new "HoloHUD" panoramic projection system.
+</Example2>
+
+In this case, for the "Featured Release" section, you would make it a single item.
+
+Use your judgement and each section's description to determine whether to extract multiple items or a single item per section.
+It is possible for a section to have zero items if no matching content is found.
 """
 
 # Used in generate_content_insights() — user message template containing

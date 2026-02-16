@@ -422,6 +422,58 @@ class ExecutionLog(models.Model):
         return f"[{self.kind}] {self.name} - {status} ({self.duration_ms}ms)"
 
 
+class ProcessedPost(models.Model):
+    """Stores section-aware extracted content for a single post after review approval"""
+
+    post = models.ForeignKey(
+        'Post',
+        on_delete=models.CASCADE,
+        related_name='processed_posts',
+        help_text="The post this extraction belongs to"
+    )
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='processed_posts',
+        help_text="The user who owns this processed data"
+    )
+    publication = models.ForeignKey(
+        Publication,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='processed_posts',
+        help_text="The publication this processed post belongs to"
+    )
+    sections_data = models.JSONField(
+        help_text="JSON array of sections, each with section_name and items list"
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        unique_together = [['post', 'user']]
+        verbose_name = "Processed Post"
+        verbose_name_plural = "Processed Posts"
+
+    def __str__(self):
+        return f"{self.post.title} - {self.user.email}"
+
+    def get_section_count(self):
+        """Return the number of sections"""
+        if isinstance(self.sections_data, list):
+            return len(self.sections_data)
+        return 0
+
+    def get_total_items_count(self):
+        """Return total number of items across all sections"""
+        if not isinstance(self.sections_data, list):
+            return 0
+        return sum(len(s.get('items', [])) for s in self.sections_data)
+
+
 class SurveyResponse(models.Model):
     """Stores user responses to the signup survey"""
 

@@ -35,7 +35,7 @@ app/
 │   ├── wsgi.py / asgi.py       # WSGI/ASGI entry points
 │   └── __init__.py
 ├── analytics/                  # Main Django app
-│   ├── models.py               # Post, ContentSet, Report, UsageAccount, ExecutionLog, SurveyResponse models
+│   ├── models.py               # Post, ContentSet, Report, UsageAccount, ExecutionLog, SurveyResponse, ProcessedPost models
 │   ├── views.py                # All view logic (login-protected)
 │   ├── urls.py                 # App URL patterns (analytics namespace)
 │   ├── utils.py                # Core utility functions (API calls, AI extraction, credit charging)
@@ -135,6 +135,35 @@ Stores user responses to the signup survey (displayed on first login):
 
 The survey modal appears automatically on first login and is dismissed once submitted. Survey completion is tracked via `UsageAccount.survey_completed`.
 
+### ProcessedPost
+Stores section-aware extracted content for a single post after user review/approval:
+- `post`: ForeignKey to Post (the source post)
+- `user`: ForeignKey to User (owner)
+- `publication`: ForeignKey to Publication (nullable)
+- `sections_data`: JSON array of sections, each containing a `section_name` and `items` list
+- Unique constraint: `(post, user)` - one processed result per post per user
+
+`sections_data` structure:
+```json
+[
+  {
+    "section_name": "Quick Bites",
+    "items": [
+      {
+        "post_title": "Newsletter #42",
+        "post_date": "2025-12-01",
+        "text": "Extracted item text",
+        "links": ["https://example.com"],
+        "clicks": [45],
+        "click_rate": [0.03]
+      }
+    ]
+  }
+]
+```
+
+Created via the "Process Selected Posts" workflow on the Posts page. Each item within a section has the same fields as ContentSet items (`text`, `links`, `clicks`, `click_rate`, `post_title`, `post_date`).
+
 ## Authentication
 
 Uses django-allauth for email-based authentication:
@@ -153,13 +182,17 @@ Uses django-allauth for email-based authentication:
 ### 1. Posts Page (`/posts/`)
 - **Refresh Posts**: Fetches all posts from Beehiiv API with pagination
 - **Select Posts**: DataTable with sorting by date, opens, clicks
-- **Content Extraction**: Describe content to extract (e.g., "items in the quick links section")
-  - Uses GPT-5.1 to identify HTML line ranges matching the description
-  - Extracts text and links from each section
+- **Process Selected Posts**: Opens a modal to define named sections (up to 10), each with a description
+  - Uses GPT-5.1 to identify HTML line ranges for each section
+  - Extracts text and links from each item, grouped by section
   - Matches links with click data using Levenshtein fuzzy matching
+  - Enters a post-by-post review flow where users can:
+    - **Approve**: Save the post's sections to the `ProcessedPost` table
+    - **Delete Selected Items**: Remove specific items from section tables
+    - **Re-process**: Re-run extraction with custom instructions (costs 1 additional credit)
+    - **Delete**: Skip the post without saving
 - **Download Click Visualization**: ZIP of HTML files with click counts overlaid on links
 - **Download Improvement Tips**: ZIP of HTML files with AI-generated improvement tips
-- **Save Content Sets**: Create new or add to existing sets
 
 ### 2. Insights Page (`/insights/`)
 - **View Content Sets**: Browse extracted items with CTR data
@@ -192,7 +225,10 @@ All routes use the `analytics:` namespace.
 
 ### Posts Routes
 - `GET /posts/` - Main posts page
-- `POST /posts/run/` - Run AI content extraction
+- `POST /posts/run/` - Run AI content extraction (legacy single-description flow)
+- `POST /posts/process/` - Run multi-section extraction (returns JSON for review flow)
+- `POST /posts/review/approve/` - Save reviewed post sections to ProcessedPost (AJAX)
+- `POST /posts/review/reprocess/` - Re-run extraction for a single post with custom instructions (AJAX)
 - `POST /posts/save/` - Save extracted items as ContentSet
 - `POST /posts/delete-items/` - Remove items from session
 - `POST /posts/refresh-posts/` - Fetch latest posts from Beehiiv
@@ -321,7 +357,9 @@ Views use `get_user_api_credentials(user)` helper to retrieve credentials and re
 - `llm_call(user=None)`: Wrapper for OpenAI API with logging to CSV
 - `charge_credits(user, credits)`: Atomically charge credits against user quota
 - `NotEnoughCredits`: Exception raised when quota exceeded
-- `extract_items()`: AI-powered content extraction from HTML
+- `extract_items()`: AI-powered content extraction from HTML (single-description, legacy)
+- `extract_sections()`: AI-powered multi-section content extraction from HTML (used by Process Selected Posts)
+- `extract_sections_parallel()`: Parallel multi-section extraction across multiple posts
 - `generate_content_insights()`: Generate performance analysis report
 - `annotate_post_html(post_id, content_perf_evals, beehiiv_token, beehiiv_pub_id, user=None)`: Insert improvement tips into HTML
 - `annotate_posts_parallel(post_ids, content_perf_evals, beehiiv_token, beehiiv_pub_id, user=None)`: Parallel annotation of multiple posts
