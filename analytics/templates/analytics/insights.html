@@ -47,125 +47,164 @@
         gap: 0.75rem;
         justify-content: flex-end;
     }
+
+    /* Section checkbox colors */
+    .section-checkbox-label {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+        margin-right: 1rem;
+        margin-bottom: 0.25rem;
+        cursor: pointer;
+        font-size: 0.875rem;
+    }
+
+    .section-color-dot {
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+        display: inline-block;
+        flex-shrink: 0;
+    }
+
+    /* Chart container */
+    #trendChartContainer {
+        position: relative;
+        height: 350px;
+    }
 </style>
 {% endblock %}
 
 {% block content %}
 <div class="row">
     <div class="col-12">
-        {% if not content_sets and not has_reports %}
-        <!-- Empty State -->
+        {% if not has_processed_data and not content_sets and not has_reports %}
+        <!-- Fully empty state -->
         <div class="card">
             <div class="card-body">
                 <div class="alert alert-info mb-0 no-auto-dismiss">
-                    No content sets or reports available. Please extract and save content in the Posts tab first.
+                    No processed posts yet. Process posts on the Posts page to see trends here.
                 </div>
             </div>
         </div>
         {% else %}
-        <!-- Content Set Card -->
-        <div class="card" id="contentSetCard">
+
+        {% if not has_processed_data %}
+        <!-- No processed data but has content sets/reports -->
+        <div class="alert alert-info no-auto-dismiss">
+            No processed posts yet. Process posts on the Posts page to see trends here.
+        </div>
+        {% endif %}
+
+        {% if has_processed_data %}
+        <!-- Trend Chart Card -->
+        <div class="card" id="trendChartCard">
             <div class="card-header">
-                <h5 class="mb-3">Select a Content Set</h5>
-                {% if content_sets %}
-                <select class="form-select" id="contentSetSelect">
-                    <option value="">-- Select a content set --</option>
-                    {% for content_set in content_sets %}
-                    <option value="{{ content_set.name }}">
-                        {{ content_set.name }} ({{ content_set.get_items_count }} items, created {{ content_set.created_at|date:"M d, Y" }})
-                    </option>
-                    {% endfor %}
-                </select>
-                {% else %}
-                <div class="alert alert-info mb-0 no-auto-dismiss">
-                    No content sets available. Please extract and save content in the Posts tab first.
+                <h5 class="mb-3">Section Performance Over Time</h5>
+                <div class="d-flex flex-wrap gap-3 align-items-end">
+                    <!-- Metric selector -->
+                    <div>
+                        <label for="metricSelect" class="form-label small text-muted mb-1">Metric</label>
+                        <select class="form-select form-select-sm" id="metricSelect" style="width: auto; min-width: 220px;">
+                            <option value="avg_max_ctr" selected>Average max CTR</option>
+                            <option value="top_ctr">CTR of most clicked link</option>
+                            <option value="avg_max_clicks">Average max clicks</option>
+                            <option value="top_clicks">Clicks of most clicked link</option>
+                        </select>
+                    </div>
+                    <!-- Start date -->
+                    <div>
+                        <label for="startDate" class="form-label small text-muted mb-1">Start date</label>
+                        <div class="input-group input-group-sm" style="width: auto;">
+                            <input type="date" class="form-control form-control-sm" id="startDate">
+                            <button class="btn btn-outline-secondary btn-sm" type="button" id="clearStartDate">All</button>
+                        </div>
+                    </div>
+                    <!-- End date -->
+                    <div>
+                        <label for="endDate" class="form-label small text-muted mb-1">End date</label>
+                        <div class="input-group input-group-sm" style="width: auto;">
+                            <input type="date" class="form-control form-control-sm" id="endDate">
+                            <button class="btn btn-outline-secondary btn-sm" type="button" id="clearEndDate">All</button>
+                        </div>
+                    </div>
                 </div>
-                {% endif %}
             </div>
-            <div id="contentSetDetails" class="d-none">
-                <div class="card-body">
-                    <div class="table-responsive">
-                        <table class="table table-hover table-sm" id="contentTable">
-                            <thead>
-                                <tr>
-                                    <th><input type="checkbox" id="selectAll"></th>
-                                    <th data-bs-toggle="tooltip" title="Title of the source post">Post Title</th>
-                                    <th data-bs-toggle="tooltip" title="When the source post was published (in your timezone)">Post Date</th>
-                                    <th data-bs-toggle="tooltip" title="Text of the extracted content">Item Text</th>
-                                    <th data-bs-toggle="tooltip" title="Number of links in this item">Links</th>
-                                    <th class="text-end" data-bs-toggle="tooltip" title="Highest unique click count among all links in this item">Max Clicks</th>
-                                    <th class="text-end" data-bs-toggle="tooltip" title="Highest unique click-through rate among all links in this item">Max CTR</th>
-                                </tr>
-                            </thead>
-                            <tbody id="contentTableBody">
-                            </tbody>
-                        </table>
-                    </div>
+            <div class="card-body">
+                <div id="trendChartContainer">
+                    <canvas id="trendChart"></canvas>
                 </div>
-                <div class="card-footer">
-                    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
-                        <div class="d-flex gap-2 flex-wrap">
-                            <button class="btn btn-sm btn-info" id="renameBtn">
-                                <i class="bi bi-pencil"></i> Rename Set
-                            </button>
-                            <button class="btn btn-sm btn-success" id="copyBtn">
-                                <i class="bi bi-files"></i> Make Copy
-                            </button>
-                            <button class="btn btn-sm btn-secondary" id="mergeBtn">
-                                <i class="bi bi-union"></i> Merge With...
-                            </button>
-                            <button class="btn btn-sm btn-warning" id="deleteItemsBtn">
-                                <i class="bi bi-trash"></i> Delete Selected Items
-                            </button>
-                            <button class="btn btn-sm btn-danger" id="deleteSetBtn">
-                                <i class="bi bi-trash-fill"></i> Delete Set
-                            </button>
-                        </div>
-                        <button class="btn btn-sm btn-outline-primary" id="downloadBtn">
-                            <i class="bi bi-download"></i> Download CSV
-                        </button>
-                    </div>
-                </div>
-                <div class="card-body border-top d-none" id="phraseAnalysisSection">
-                    <div class="d-flex justify-content-between align-items-center mb-3">
-                        <h5 class="mb-0" id="phraseAnalysisHeader">Best Performing Phrases</h5>
-                        <div class="d-flex gap-3 align-items-center" id="phraseAnalysisControls">
-                            <div class="btn-group btn-group-sm" role="group">
-                                <input type="radio" class="btn-check" name="phraseMode" id="phraseBest" value="best" checked>
-                                <label class="btn btn-outline-success" for="phraseBest">Best</label>
-                                <input type="radio" class="btn-check" name="phraseMode" id="phraseWorst" value="worst">
-                                <label class="btn btn-outline-danger" for="phraseWorst">Worst</label>
-                            </div>
-                            <div class="d-flex align-items-center gap-2">
-                                <label for="minAppearances" class="form-label mb-0 small text-muted">Min appearances:</label>
-                                <input type="number" class="form-control form-control-sm" id="minAppearances"
-                                       value="3" min="1" max="50" style="width: 70px;">
-                            </div>
-                        </div>
-                    </div>
-                    <!-- Message shown when fewer than 10 items -->
-                    <div class="alert alert-info mb-0 d-none no-auto-dismiss" id="phraseAnalysisMinItemsMessage">
-                        At least 10 items in content set required to perform phrase analysis.
-                    </div>
-                    <!-- Table shown when 10+ items -->
-                    <div class="table-responsive" id="phraseAnalysisTableContainer">
-                        <table class="table table-hover table-sm" id="phraseTable">
-                            <thead>
-                                <tr>
-                                    <th data-bs-toggle="tooltip" title="Word or two-word phrase found in the content items, excluding very common words like 'it'">Phrase</th>
-                                    <th class="text-end" data-bs-toggle="tooltip" title="Average of maximum click-through rates across all items containing this phrase">Avg Max CTR</th>
-                                    <th class="text-end" data-bs-toggle="tooltip" title="Difference from the overall average CTR across all items">vs All Items</th>
-                                    <th class="text-end" data-bs-toggle="tooltip" title="Number of content items containing this phrase">Appearances</th>
-                                </tr>
-                            </thead>
-                            <tbody id="phraseTableBody"></tbody>
-                        </table>
-                    </div>
-                </div>
+                <!-- Section checkboxes -->
+                <div class="mt-3" id="sectionCheckboxes"></div>
             </div>
         </div>
 
-        <!-- AI Insights Card -->
+        <!-- Data Table Card -->
+        <div class="card mt-4" id="dataTableCard">
+            <div class="card-header">
+                <h5 class="mb-0">Processed Items</h5>
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-hover table-sm" id="contentTable">
+                        <thead>
+                            <tr>
+                                <th data-bs-toggle="tooltip" title="Title of the source post">Post Title</th>
+                                <th data-bs-toggle="tooltip" title="When the source post was published">Post Date</th>
+                                <th data-bs-toggle="tooltip" title="Section the item belongs to">Section</th>
+                                <th data-bs-toggle="tooltip" title="Text of the extracted content">Item Text</th>
+                                <th data-bs-toggle="tooltip" title="Number of links in this item">Links</th>
+                                <th class="text-end" data-bs-toggle="tooltip" title="Highest unique click count among all links in this item">Max Clicks</th>
+                                <th class="text-end" data-bs-toggle="tooltip" title="Highest unique click-through rate among all links in this item">Max CTR</th>
+                            </tr>
+                        </thead>
+                        <tbody id="contentTableBody">
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            <!-- Phrase Analysis -->
+            <div class="card-body border-top d-none" id="phraseAnalysisSection">
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <h5 class="mb-0" id="phraseAnalysisHeader">Best Performing Phrases</h5>
+                    <div class="d-flex gap-3 align-items-center" id="phraseAnalysisControls">
+                        <div class="btn-group btn-group-sm" role="group">
+                            <input type="radio" class="btn-check" name="phraseMode" id="phraseBest" value="best" checked>
+                            <label class="btn btn-outline-success" for="phraseBest">Best</label>
+                            <input type="radio" class="btn-check" name="phraseMode" id="phraseWorst" value="worst">
+                            <label class="btn btn-outline-danger" for="phraseWorst">Worst</label>
+                        </div>
+                        <div class="d-flex align-items-center gap-2">
+                            <label for="minAppearances" class="form-label mb-0 small text-muted">Min appearances:</label>
+                            <input type="number" class="form-control form-control-sm" id="minAppearances"
+                                   value="3" min="1" max="50" style="width: 70px;">
+                        </div>
+                    </div>
+                </div>
+                <!-- Message shown when fewer than 10 items -->
+                <div class="alert alert-info mb-0 d-none no-auto-dismiss" id="phraseAnalysisMinItemsMessage">
+                    At least 10 items required to perform phrase analysis.
+                </div>
+                <!-- Table shown when 10+ items -->
+                <div class="table-responsive" id="phraseAnalysisTableContainer">
+                    <table class="table table-hover table-sm" id="phraseTable">
+                        <thead>
+                            <tr>
+                                <th data-bs-toggle="tooltip" title="Word or two-word phrase found in the content items, excluding very common words like 'it'">Phrase</th>
+                                <th class="text-end" data-bs-toggle="tooltip" title="Average of maximum click-through rates across all items containing this phrase">Avg Max CTR</th>
+                                <th class="text-end" data-bs-toggle="tooltip" title="Difference from the overall average CTR across all items">vs All Items</th>
+                                <th class="text-end" data-bs-toggle="tooltip" title="Number of content items containing this phrase">Appearances</th>
+                            </tr>
+                        </thead>
+                        <tbody id="phraseTableBody"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- AI Insights Card (Report Generator) - unchanged -->
+        {% if has_processed_data or content_sets or has_reports %}
         <div class="card mt-4" id="insightsCard">
             <div class="card-header">
                 <h5 class="mb-0">Content Insights</h5>
@@ -210,7 +249,7 @@
                                 </div>
                             </div>
                             <div class="d-flex justify-content-between align-items-center">
-                                <small class="text-muted">🧠 1 AI credit</small>
+                                <small class="text-muted">&#x1f9e0; 1 AI credit</small>
                                 <button type="button" class="btn btn-primary btn-sm" id="generateInsightsBtn">
                                     <i class="bi bi-play-fill"></i> Run
                                 </button>
@@ -264,6 +303,8 @@
             </div>
         </div>
         {% endif %}
+
+        {% endif %}
     </div>
 </div>
 
@@ -281,44 +322,61 @@
 {% endblock %}
 
 {% block extra_js %}
+<!-- Chart.js -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+
 <script>
+    // =========================================================================
+    // Global state
+    // =========================================================================
+    let allItems = [];
+    let allSectionNames = [];
+    let filteredItems = [];
+    let trendChart = null;
     let currentContentSet = null;
     let currentReportText = null;
     let isViewingSavedReport = false;
     let currentPhraseData = [];
     let overallAvgCtr = 0;
 
-    // Show toast notification (similar to Django messages)
+    // Chart color palette (consistent by sorted index)
+    const CHART_COLORS = [
+        '#4e79a7', '#f28e2b', '#e15759', '#76b7b2', '#59a14f',
+        '#edc948', '#b07aa1', '#ff9da7', '#9c755f', '#bab0ac',
+        '#af7aa1', '#86bcb6', '#d4a6c8', '#8cd17d', '#499894'
+    ];
+
+    function getColorForSection(sectionName) {
+        const idx = allSectionNames.indexOf(sectionName);
+        return CHART_COLORS[idx % CHART_COLORS.length];
+    }
+
+    // =========================================================================
+    // Toast helper
+    // =========================================================================
     function showToast(message, type = 'success') {
         const container = document.querySelector('.main-content');
-
-        // Create or get the messages container
         let messagesDiv = container.querySelector('.toast-messages');
         if (!messagesDiv) {
             messagesDiv = document.createElement('div');
             messagesDiv.className = 'toast-messages mb-4';
             container.insertBefore(messagesDiv, container.firstChild);
         }
-
-        // Create the alert element
         const alertDiv = document.createElement('div');
         alertDiv.className = `alert alert-${type} alert-dismissible fade show`;
         alertDiv.setAttribute('role', 'alert');
-        alertDiv.innerHTML = `
-            ${message}
-            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
-        `;
-
+        alertDiv.innerHTML = `${message}<button type="button" class="btn-close" data-bs-dismiss="alert"></button>`;
         messagesDiv.appendChild(alertDiv);
-
-        // Auto-dismiss after 8 seconds
         setTimeout(() => {
             const bsAlert = bootstrap.Alert.getOrCreateInstance(alertDiv);
             bsAlert.close();
         }, 8000);
     }
 
-    // Stopwords loaded from english_lemma_frequencies.csv (top 200 most common words)
+    // =========================================================================
+    // Phrase analysis (same algorithm as before)
+    // =========================================================================
     const EXCLUDED_WORDS = new Set({{ stopwords_json|safe }});
 
     function getNgrams(text, n) {
@@ -331,17 +389,12 @@
         return ngrams;
     }
 
-    function isAllDigits(str) {
-        return /^\d+$/.test(str);
-    }
+    function isAllDigits(str) { return /^\d+$/.test(str); }
 
     function containsExcludedWord(ngram) {
         const words = ngram.split(' ');
-        // Exclude if any word is a stopword
         if (words.some(word => EXCLUDED_WORDS.has(word))) return true;
-        // Exclude if the entire ngram consists only of digits (any length)
         if (words.every(word => isAllDigits(word))) return true;
-        // Exclude if any word is a single letter
         if (words.some(word => word.length === 1)) return true;
         return false;
     }
@@ -352,7 +405,6 @@
 
         items.forEach(item => {
             const text = item.text || '';
-            // Use click_rate_raw (numeric values) instead of formatted click_rate
             const clickRates = item.click_rate_raw || [];
             const maxCtr = clickRates.length > 0 ? Math.max(...clickRates) : 0;
             allMaxCtrs.push(maxCtr);
@@ -367,7 +419,6 @@
             });
         });
 
-        // Calculate overall average CTR across all items
         overallAvgCtr = allMaxCtrs.length > 0 ? allMaxCtrs.reduce((a, b) => a + b, 0) / allMaxCtrs.length : 0;
 
         return Object.entries(ngramStats).map(([ngram, ctrs]) => ({
@@ -381,7 +432,6 @@
         const mode = document.querySelector('input[name="phraseMode"]:checked').value;
         const minAppearances = parseInt(document.getElementById('minAppearances').value) || 3;
 
-        // Filter by min appearances and above/below average based on mode
         let filtered = currentPhraseData.filter(p => {
             if (p.count < minAppearances) return false;
             if (mode === 'best') return p.avgCtr >= overallAvgCtr;
@@ -401,7 +451,6 @@
         }
 
         const colorClass = mode === 'best' ? 'text-success' : 'text-danger';
-
         top15.forEach(item => {
             const diff = item.avgCtr - overallAvgCtr;
             const diffStr = (diff >= 0 ? '+' : '') + (diff * 100).toFixed(2) + '%';
@@ -416,16 +465,335 @@
         });
     }
 
+    // =========================================================================
+    // Truncate text helper
+    // =========================================================================
+    function truncateText(text, maxLength) {
+        if (!text) return '';
+        if (text.length <= maxLength) return text;
+        return text.substring(0, maxLength) + '...';
+    }
+
+    // =========================================================================
+    // Filtering logic
+    // =========================================================================
+    function getSelectedSections() {
+        const checkboxes = document.querySelectorAll('.section-filter-cb:checked');
+        return Array.from(checkboxes).map(cb => cb.value);
+    }
+
+    function getFilteredItems() {
+        const selectedSections = getSelectedSections();
+        const startDate = document.getElementById('startDate').value;
+        const endDate = document.getElementById('endDate').value;
+
+        return allItems.filter(item => {
+            if (!selectedSections.includes(item.section_name)) return false;
+            if (startDate && item.post_date_sortable && item.post_date_sortable < startDate) return false;
+            if (endDate && item.post_date_sortable && item.post_date_sortable > endDate) return false;
+            return true;
+        });
+    }
+
+    // =========================================================================
+    // Chart logic
+    // =========================================================================
+    function calculateChartData(items, metric) {
+        const selectedSections = getSelectedSections();
+
+        // Group items by section, then by date, then by post_title
+        const sectionDateGroups = {};
+        items.forEach(item => {
+            if (!item.post_date_sortable) return; // exclude items with no date from chart
+            const key = item.section_name;
+            if (!sectionDateGroups[key]) sectionDateGroups[key] = {};
+            if (!sectionDateGroups[key][item.post_date_sortable])
+                sectionDateGroups[key][item.post_date_sortable] = {};
+            if (!sectionDateGroups[key][item.post_date_sortable][item.post_title])
+                sectionDateGroups[key][item.post_date_sortable][item.post_title] = [];
+            sectionDateGroups[key][item.post_date_sortable][item.post_title].push(item);
+        });
+
+        const datasets = [];
+
+        selectedSections.forEach(section => {
+            const dateGroups = sectionDateGroups[section] || {};
+            const dataPoints = [];
+
+            Object.keys(dateGroups).sort().forEach(date => {
+                const postGroups = dateGroups[date];
+                const perPostValues = [];
+
+                Object.values(postGroups).forEach(postItems => {
+                    let val;
+                    if (metric === 'avg_max_ctr') {
+                        const ctrs = postItems.map(i => i.max_click_rate_raw || 0);
+                        val = ctrs.reduce((a, b) => a + b, 0) / ctrs.length;
+                    } else if (metric === 'top_ctr') {
+                        val = Math.max(...postItems.map(i => i.max_click_rate_raw || 0));
+                    } else if (metric === 'avg_max_clicks') {
+                        const clicks = postItems.map(i => i.max_clicks || 0);
+                        val = clicks.reduce((a, b) => a + b, 0) / clicks.length;
+                    } else if (metric === 'top_clicks') {
+                        val = Math.max(...postItems.map(i => i.max_clicks || 0));
+                    }
+                    perPostValues.push(val);
+                });
+
+                // Average across posts sharing the same date
+                const avg = perPostValues.reduce((a, b) => a + b, 0) / perPostValues.length;
+                dataPoints.push({ x: date, y: avg });
+            });
+
+            datasets.push({
+                label: section,
+                data: dataPoints,
+                borderColor: getColorForSection(section),
+                backgroundColor: getColorForSection(section) + '33',
+                tension: 0.3,
+                pointRadius: 4,
+                pointHoverRadius: 6,
+            });
+        });
+
+        return datasets;
+    }
+
+    function isCtrMetric(metric) {
+        return metric === 'avg_max_ctr' || metric === 'top_ctr';
+    }
+
+    function getYAxisLabel(metric) {
+        const labels = {
+            'avg_max_ctr': 'Average Max CTR',
+            'top_ctr': 'CTR of Most Clicked Link',
+            'avg_max_clicks': 'Average Max Clicks',
+            'top_clicks': 'Clicks of Most Clicked Link',
+        };
+        return labels[metric] || '';
+    }
+
+    function renderChart() {
+        const metric = document.getElementById('metricSelect').value;
+        const datasets = calculateChartData(filteredItems, metric);
+        const isCtr = isCtrMetric(metric);
+
+        if (trendChart) {
+            trendChart.destroy();
+        }
+
+        const ctx = document.getElementById('trendChart').getContext('2d');
+        trendChart = new Chart(ctx, {
+            type: 'line',
+            data: { datasets },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: {
+                    mode: 'index',
+                    intersect: false,
+                },
+                scales: {
+                    x: {
+                        type: 'time',
+                        time: {
+                            unit: 'day',
+                            tooltipFormat: 'MMM d, yyyy',
+                            displayFormats: { day: 'MMM d' }
+                        },
+                        title: { display: true, text: 'Date' }
+                    },
+                    y: {
+                        beginAtZero: true,
+                        title: { display: true, text: getYAxisLabel(metric) },
+                        ticks: {
+                            callback: function(value) {
+                                return isCtr ? (value * 100).toFixed(1) + '%' : value;
+                            }
+                        }
+                    }
+                },
+                plugins: {
+                    tooltip: {
+                        callbacks: {
+                            label: function(ctx) {
+                                const val = ctx.parsed.y;
+                                const formatted = isCtr ? (val * 100).toFixed(2) + '%' : val.toFixed(1);
+                                return ctx.dataset.label + ': ' + formatted;
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    // =========================================================================
+    // Data Table
+    // =========================================================================
+    function renderTable(items) {
+        // Destroy existing DataTable if it exists
+        if ($.fn.DataTable.isDataTable('#contentTable')) {
+            $('#contentTable').DataTable().destroy();
+        }
+
+        const tbody = document.getElementById('contentTableBody');
+        tbody.innerHTML = '';
+
+        items.forEach(item => {
+            const row = document.createElement('tr');
+            row.innerHTML = `
+                <td>${item.post_title}</td>
+                <td data-order="${item.post_date_sortable}">${item.post_date_display}</td>
+                <td><span class="badge" style="background-color: ${getColorForSection(item.section_name)};">${item.section_name}</span></td>
+                <td>${truncateText(item.text, 50)}</td>
+                <td><span class="badge bg-secondary">${item.links.length} link${item.links.length !== 1 ? 's' : ''}</span></td>
+                <td class="text-end">${Number(item.max_clicks).toLocaleString()}</td>
+                <td class="text-end">${item.max_click_rate}</td>
+            `;
+            tbody.appendChild(row);
+        });
+
+        const table = $('#contentTable').DataTable({
+            order: [[1, 'desc']],
+            paging: false,
+            scrollY: '400px',
+            scrollCollapse: true
+        });
+
+        setTimeout(() => { table.columns.adjust().draw(); }, 0);
+    }
+
+    // =========================================================================
+    // Phrase analysis update
+    // =========================================================================
+    function updatePhraseAnalysis(items) {
+        const section = document.getElementById('phraseAnalysisSection');
+        section.classList.remove('d-none');
+
+        if (items.length < 10) {
+            document.getElementById('phraseAnalysisMinItemsMessage').classList.remove('d-none');
+            document.getElementById('phraseAnalysisTableContainer').classList.add('d-none');
+            document.getElementById('phraseAnalysisControls').classList.add('d-none');
+            document.getElementById('phraseAnalysisHeader').textContent = 'Phrase Analysis';
+            currentPhraseData = [];
+        } else {
+            document.getElementById('phraseAnalysisMinItemsMessage').classList.add('d-none');
+            document.getElementById('phraseAnalysisTableContainer').classList.remove('d-none');
+            document.getElementById('phraseAnalysisControls').classList.remove('d-none');
+            currentPhraseData = calculatePhraseStats(items);
+            updatePhraseTable();
+        }
+    }
+
+    // =========================================================================
+    // Master refresh: called on every filter change
+    // =========================================================================
+    function refreshAll() {
+        filteredItems = getFilteredItems();
+        renderChart();
+        renderTable(filteredItems);
+        updatePhraseAnalysis(filteredItems);
+    }
+
+    // =========================================================================
+    // Section checkboxes
+    // =========================================================================
+    function renderSectionCheckboxes() {
+        const container = document.getElementById('sectionCheckboxes');
+        container.innerHTML = '';
+
+        allSectionNames.forEach((name, idx) => {
+            const color = CHART_COLORS[idx % CHART_COLORS.length];
+            const label = document.createElement('label');
+            label.className = 'section-checkbox-label';
+            label.innerHTML = `
+                <input type="checkbox" class="section-filter-cb" value="${name}" checked>
+                <span class="section-color-dot" style="background-color: ${color};"></span>
+                ${name}
+            `;
+            container.appendChild(label);
+        });
+
+        // Attach change handlers
+        container.querySelectorAll('.section-filter-cb').forEach(cb => {
+            cb.addEventListener('change', refreshAll);
+        });
+    }
+
+    // =========================================================================
+    // Initialize processed data view
+    // =========================================================================
+    {% if has_processed_data %}
+    (async function loadProcessedData() {
+        try {
+            const response = await fetch('/insights/load-processed-data/');
+            const data = await response.json();
+
+            if (data.success) {
+                allItems = data.items;
+                allSectionNames = data.section_names;
+                filteredItems = allItems.slice();
+
+                renderSectionCheckboxes();
+                refreshAll();
+            } else {
+                console.error('Error loading processed data:', data.error);
+            }
+        } catch (error) {
+            console.error('Error loading processed data:', error);
+        }
+    })();
+    {% endif %}
+
+    // =========================================================================
+    // Filter event listeners
+    // =========================================================================
+    document.getElementById('metricSelect')?.addEventListener('change', refreshAll);
+    document.getElementById('startDate')?.addEventListener('change', refreshAll);
+    document.getElementById('endDate')?.addEventListener('change', refreshAll);
+
+    document.getElementById('clearStartDate')?.addEventListener('click', function() {
+        document.getElementById('startDate').value = '';
+        refreshAll();
+    });
+    document.getElementById('clearEndDate')?.addEventListener('click', function() {
+        document.getElementById('endDate').value = '';
+        refreshAll();
+    });
+
+    // Phrase analysis event listeners
+    function updatePhraseHeader() {
+        const mode = document.querySelector('input[name="phraseMode"]:checked')?.value;
+        const header = document.getElementById('phraseAnalysisHeader');
+        if (header && mode) {
+            header.textContent = mode === 'best' ? 'Best Performing Phrases' : 'Worst Performing Phrases';
+        }
+    }
+
+    document.querySelectorAll('input[name="phraseMode"]').forEach(radio => {
+        radio.addEventListener('change', () => {
+            updatePhraseHeader();
+            updatePhraseTable();
+        });
+    });
+    document.getElementById('minAppearances')?.addEventListener('input', updatePhraseTable);
+
+    // =========================================================================
+    // Report generator logic (unchanged from before)
+    // =========================================================================
+
     // Load all reports on page load
     async function loadAllReports() {
         try {
             const response = await fetch('/insights/get-all-reports/');
             const data = await response.json();
-            
+
             if (data.success) {
                 const reportSelect = document.getElementById('reportSelect');
+                if (!reportSelect) return;
                 reportSelect.innerHTML = '<option value="">-- Select a saved report --</option>';
-                
+
                 data.reports.forEach(report => {
                     const option = document.createElement('option');
                     option.value = report.id;
@@ -438,131 +806,29 @@
             console.error('Error loading reports:', error);
         }
     }
-    
-    // Call on page load
+
     loadAllReports();
-    
+
     // Handle report mode switch
-    document.getElementById('reportModeSwitch').addEventListener('change', function() {
+    document.getElementById('reportModeSwitch')?.addEventListener('change', function() {
         const createMode = document.getElementById('createReportMode');
         const viewMode = document.getElementById('viewReportMode');
 
         if (this.checked) {
-            // View mode
             createMode.style.display = 'none';
             viewMode.style.display = 'block';
         } else {
-            // Create mode
             createMode.style.display = 'block';
             viewMode.style.display = 'none';
         }
 
-        // Hide insights content when switching modes
         document.getElementById('insightsContent').classList.add('d-none');
         document.getElementById('deleteReportBtn').classList.add('d-none');
         document.getElementById('reportSelect').value = '';
     });
 
-    // Handle content set selection (for viewing content set data)
-    document.getElementById('contentSetSelect').addEventListener('change', async function() {
-        const setName = this.value;
-
-        if (!setName) {
-            document.getElementById('contentSetDetails').classList.add('d-none');
-            document.getElementById('contentTableBody').innerHTML = '';
-            currentContentSet = null;
-            document.getElementById('insightsContent').classList.add('d-none');
-            document.getElementById('phraseAnalysisSection').classList.add('d-none');
-            currentPhraseData = [];
-            overallAvgCtr = 0;
-            return;
-        }
-
-        // Load content set
-        try {
-            const response = await fetch(`/insights/load-content-set/${encodeURIComponent(setName)}/`);
-            const data = await response.json();
-
-            if (data.success) {
-                currentContentSet = setName;
-                displayContentSet(data);
-                document.getElementById('contentSetDetails').classList.remove('d-none');
-                document.getElementById('insightsContent').classList.add('d-none');
-            } else {
-                alert('Error loading content set: ' + data.error);
-            }
-        } catch (error) {
-            alert('Error loading content set: ' + error.message);
-        }
-    });
-    
-    // Display content set data
-    function displayContentSet(data) {
-        // Destroy existing DataTable if it exists
-        if ($.fn.DataTable.isDataTable('#contentTable')) {
-            $('#contentTable').DataTable().destroy();
-        }
-        
-        const tbody = document.getElementById('contentTableBody');
-        tbody.innerHTML = '';
-        
-        data.data.forEach((item, index) => {
-            const row = document.createElement('tr');
-            const postDateDisplay = item.post_date_display || item.post_date || '-';
-            const postDateSortable = item.post_date_sortable || item.post_date || '';
-            row.innerHTML = `
-                <td><input type="checkbox" class="item-checkbox" data-index="${index}"></td>
-                <td>${item.post_title}</td>
-                <td data-order="${postDateSortable}">${postDateDisplay}</td>
-                <td>${truncateText(item.text, 50)}</td>
-                <td><span class="badge bg-secondary">${item.links.length} link${item.links.length !== 1 ? 's' : ''}</span></td>
-                <td class="text-end">${Number(item.max_clicks).toLocaleString()}</td>
-                <td class="text-end">${item.max_click_rate}</td>
-            `;
-            tbody.appendChild(row);
-        });
-        
-        // Initialize DataTable
-        const table = $('#contentTable').DataTable({
-            order: [[2, 'desc']], // Sort by Post Date (column 2) descending by default
-            paging: false,
-            scrollY: '400px',
-            scrollCollapse: true
-        });
-        
-        // Adjust column widths after initialization
-        setTimeout(() => {
-            table.columns.adjust().draw();
-        }, 0);
-
-        // Calculate and display phrase performance analysis
-        document.getElementById('phraseAnalysisSection').classList.remove('d-none');
-
-        if (data.data.length < 10) {
-            // Show minimum items message, hide controls and table
-            document.getElementById('phraseAnalysisMinItemsMessage').classList.remove('d-none');
-            document.getElementById('phraseAnalysisTableContainer').classList.add('d-none');
-            document.getElementById('phraseAnalysisControls').classList.add('d-none');
-            document.getElementById('phraseAnalysisHeader').textContent = 'Phrase Analysis';
-            currentPhraseData = [];
-        } else {
-            // Show table and controls, hide message
-            document.getElementById('phraseAnalysisMinItemsMessage').classList.add('d-none');
-            document.getElementById('phraseAnalysisTableContainer').classList.remove('d-none');
-            document.getElementById('phraseAnalysisControls').classList.remove('d-none');
-            currentPhraseData = calculatePhraseStats(data.data);
-            updatePhraseTable();
-        }
-    }
-    
-    // Truncate text helper
-    function truncateText(text, maxLength) {
-        if (text.length <= maxLength) return text;
-        return text.substring(0, maxLength) + '...';
-    }
-    
     // Handle report selection (View mode)
-    document.getElementById('reportSelect').addEventListener('change', async function() {
+    document.getElementById('reportSelect')?.addEventListener('change', async function() {
         const reportId = this.value;
         const deleteReportBtn = document.getElementById('deleteReportBtn');
 
@@ -572,7 +838,6 @@
             return;
         }
 
-        // Show delete button when a report is selected
         deleteReportBtn.classList.remove('d-none');
 
         try {
@@ -580,7 +845,6 @@
             const data = await response.json();
 
             if (data.success) {
-                // Display the report
                 currentReportText = data.report_text;
                 currentContentSet = data.content_set_name;
                 isViewingSavedReport = true;
@@ -594,17 +858,15 @@
             alert('Error loading report: ' + error.message);
         }
     });
-    
+
     // Generate report - actual execution
     async function executeReportGeneration(selectedSet) {
         const button = document.getElementById('generateInsightsBtn');
         button.disabled = true;
 
-        // Close the dropdown
         const dropdown = bootstrap.Dropdown.getInstance(document.getElementById('generateReportDropdown'));
         if (dropdown) dropdown.hide();
 
-        // Start progress bar
         ProgressBar.start({
             containerId: 'generateReportProgress',
             expectedDuration: {{ progress_durations.generate_report }},
@@ -631,11 +893,8 @@
                 document.getElementById('insightsContent').classList.remove('d-none');
                 document.getElementById('saveReportSection').style.display = 'inline-block';
                 document.getElementById('report_name').value = '';
-
-                // Reset the report select dropdown
                 document.getElementById('reportSelect').value = '';
 
-                // Update sidebar credits display
                 if (data.credits_used !== undefined && data.credits_quota !== undefined) {
                     const usagePercentage = Math.round((data.credits_used / data.credits_quota) * 100);
                     const usageBar = document.querySelector('.usage-bar-fill');
@@ -646,7 +905,6 @@
                     }
                 }
 
-                // Complete progress bar
                 ProgressBar.complete({ containerId: 'generateReportProgress', success: true, message: 'Report generated!' });
             } else {
                 ProgressBar.forceClose({ containerId: 'generateReportProgress' });
@@ -660,7 +918,7 @@
     }
 
     // Generate report - click handler with confirmation for low item count
-    document.getElementById('generateInsightsBtn').addEventListener('click', function() {
+    document.getElementById('generateInsightsBtn')?.addEventListener('click', function() {
         const select = document.getElementById('reportContentSetSelect');
         const selectedSet = select.value;
 
@@ -669,275 +927,31 @@
             return;
         }
 
-        // Get item count from selected option
         const selectedOption = select.options[select.selectedIndex];
         const itemCount = parseInt(selectedOption.dataset.itemCount) || 0;
 
         if (itemCount < 10) {
-            // Show confirmation modal
             document.getElementById('lowItemCountNum').textContent = itemCount;
             document.getElementById('lowItemCountModal').style.display = 'flex';
-            // Store selected set for later use
             document.getElementById('lowItemCountModal').dataset.selectedSet = selectedSet;
         } else {
-            // Proceed directly
             executeReportGeneration(selectedSet);
         }
     });
 
-    // Low item count modal - Cancel button
-    document.getElementById('lowItemCountCancel').addEventListener('click', function() {
+    // Low item count modal buttons
+    document.getElementById('lowItemCountCancel')?.addEventListener('click', function() {
         document.getElementById('lowItemCountModal').style.display = 'none';
     });
-
-    // Low item count modal - Proceed button
-    document.getElementById('lowItemCountProceed').addEventListener('click', function() {
+    document.getElementById('lowItemCountProceed')?.addEventListener('click', function() {
         const modal = document.getElementById('lowItemCountModal');
         const selectedSet = modal.dataset.selectedSet;
         modal.style.display = 'none';
         executeReportGeneration(selectedSet);
     });
-    
 
-    
-    // Download CSV
-    document.getElementById('downloadBtn').addEventListener('click', function() {
-        if (currentContentSet) {
-            window.location.href = `/insights/download-csv/${encodeURIComponent(currentContentSet)}/`;
-        }
-    });
-    
-    // Select all checkbox handler
-    document.getElementById('selectAll').addEventListener('change', function() {
-        const checkboxes = document.querySelectorAll('.item-checkbox');
-        checkboxes.forEach(cb => cb.checked = this.checked);
-    });
-    
-    // Rename set
-    document.getElementById('renameBtn').addEventListener('click', async function() {
-        if (!currentContentSet) return;
-        
-        const newName = prompt('Enter new name for the content set:', currentContentSet);
-        if (!newName || newName === currentContentSet) return;
-        
-        try {
-            const formData = new FormData();
-            formData.append('old_name', currentContentSet);
-            formData.append('new_name', newName);
-            formData.append('csrfmiddlewaretoken', '{{ csrf_token }}');
-            
-            const response = await fetch('/insights/rename-set/', {
-                method: 'POST',
-                body: formData
-            });
-            
-            const data = await response.json();
-            
-            if (data.success) {
-                showToast('Content set renamed successfully!');
-                window.location.href = '/insights/?selected=' + encodeURIComponent(newName);
-            } else {
-                alert('Error renaming set: ' + data.error);
-            }
-        } catch (error) {
-            alert('Error renaming set: ' + error.message);
-        }
-    });
-
-    // Make copy
-    document.getElementById('copyBtn').addEventListener('click', async function() {
-        if (!currentContentSet) return;
-        
-        const copyName = currentContentSet + ' copy';
-        
-        if (!confirm(`Create a copy named "${copyName}"?`)) return;
-        
-        try {
-            const formData = new FormData();
-            formData.append('set_name', currentContentSet);
-            formData.append('csrfmiddlewaretoken', '{{ csrf_token }}');
-            
-            const response = await fetch('/insights/copy-set/', {
-                method: 'POST',
-                body: formData
-            });
-            
-            const data = await response.json();
-            
-            if (data.success) {
-                showToast('Content set copied successfully!');
-                const copyName = data.copy_name || (currentContentSet + ' copy');
-                window.location.href = '/insights/?selected=' + encodeURIComponent(copyName);
-            } else {
-                alert('Error copying set: ' + data.error);
-            }
-        } catch (error) {
-            alert('Error copying set: ' + error.message);
-        }
-    });
-
-    // Merge with another set
-    document.getElementById('mergeBtn').addEventListener('click', async function() {
-        if (!currentContentSet) return;
-        
-        // Get list of other content sets
-        const select = document.getElementById('contentSetSelect');
-        const otherSets = Array.from(select.options)
-            .map(opt => opt.value)
-            .filter(val => val && val !== currentContentSet);
-        
-        if (otherSets.length === 0) {
-            alert('No other content sets available to merge with.');
-            return;
-        }
-        
-        // Create a custom modal dialog with dropdown
-        const modalHtml = `
-            <div class="modal fade" id="mergeModal" tabindex="-1">
-                <div class="modal-dialog">
-                    <div class="modal-content">
-                        <div class="modal-header">
-                            <h5 class="modal-title">Merge Content Sets</h5>
-                            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-                        </div>
-                        <div class="modal-body">
-                            <p>Merge "<strong>${currentContentSet}</strong>" into:</p>
-                            <select class="form-select" id="mergeTargetSelect">
-                                <option value="">-- Select target set --</option>
-                                ${otherSets.map(set => `<option value="${set}">${set}</option>`).join('')}
-                            </select>
-                            <div class="alert alert-info mt-3 mb-0">
-                                <small>This will add all items from "${currentContentSet}" to the selected set.</small>
-                            </div>
-                        </div>
-                        <div class="modal-footer">
-                            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                            <button type="button" class="btn btn-primary" id="confirmMergeBtn">Merge</button>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        `;
-        
-        // Remove any existing modal
-        const existingModal = document.getElementById('mergeModal');
-        if (existingModal) existingModal.remove();
-        
-        // Add modal to page
-        document.body.insertAdjacentHTML('beforeend', modalHtml);
-        
-        // Show modal
-        const modal = new bootstrap.Modal(document.getElementById('mergeModal'));
-        modal.show();
-        
-        // Handle merge confirmation
-        document.getElementById('confirmMergeBtn').addEventListener('click', async function() {
-            const targetSet = document.getElementById('mergeTargetSelect').value;
-            
-            if (!targetSet) {
-                alert('Please select a target set.');
-                return;
-            }
-            
-            modal.hide();
-            
-            // Proceed with merge
-            
-            try {
-                const formData = new FormData();
-                formData.append('source_set', currentContentSet);
-                formData.append('target_set', targetSet);
-                formData.append('csrfmiddlewaretoken', '{{ csrf_token }}');
-                
-                const response = await fetch('/insights/merge-sets/', {
-                    method: 'POST',
-                    body: formData
-                });
-                
-                const data = await response.json();
-                
-                if (data.success) {
-                    showToast(`Successfully merged! ${data.items_added} items added to "${targetSet}".`);
-                    window.location.href = '/insights/?selected=' + encodeURIComponent(targetSet);
-                } else {
-                    alert('Error merging sets: ' + data.error);
-                }
-            } catch (error) {
-                alert('Error merging sets: ' + error.message);
-            }
-        });
-    });
-
-    // Delete selected items
-    document.getElementById('deleteItemsBtn').addEventListener('click', async function() {
-        if (!currentContentSet) return;
-        
-        const checkedBoxes = document.querySelectorAll('.item-checkbox:checked');
-        if (checkedBoxes.length === 0) {
-            alert('Please select items to delete.');
-            return;
-        }
-        
-        const indices = Array.from(checkedBoxes).map(cb => parseInt(cb.dataset.index));
-        
-        if (!confirm(`Delete ${indices.length} selected item(s) from "${currentContentSet}"?\n\nThis action cannot be undone.`)) return;
-        
-        try {
-            const formData = new FormData();
-            formData.append('set_name', currentContentSet);
-            formData.append('indices', JSON.stringify(indices));
-            formData.append('csrfmiddlewaretoken', '{{ csrf_token }}');
-            
-            const response = await fetch('/insights/delete-items/', {
-                method: 'POST',
-                body: formData
-            });
-            
-            const data = await response.json();
-            
-            if (data.success) {
-                showToast(`Successfully deleted ${indices.length} item(s)!`);
-                // Reload the page with the current set selected
-                window.location.href = '/insights/?selected=' + encodeURIComponent(currentContentSet);
-            } else {
-                alert('Error deleting items: ' + data.error);
-            }
-        } catch (error) {
-            alert('Error deleting items: ' + error.message);
-        }
-    });
-
-    // Delete set
-    document.getElementById('deleteSetBtn').addEventListener('click', async function() {
-        if (!currentContentSet) return;
-        
-        if (!confirm(`Delete the entire content set "${currentContentSet}"?\n\nThis action cannot be undone and will permanently delete all data in this set.`)) return;
-        
-        try {
-            const formData = new FormData();
-            formData.append('set_name', currentContentSet);
-            formData.append('csrfmiddlewaretoken', '{{ csrf_token }}');
-            
-            const response = await fetch('/insights/delete-set/', {
-                method: 'POST',
-                body: formData
-            });
-            
-            const data = await response.json();
-            
-            if (data.success) {
-                showToast('Content set deleted successfully!');
-                location.reload();
-            } else {
-                alert('Error deleting set: ' + data.error);
-            }
-        } catch (error) {
-            alert('Error deleting set: ' + error.message);
-        }
-    });
-    
     // Save report
-    document.getElementById('saveReportBtn').addEventListener('click', async function() {
+    document.getElementById('saveReportBtn')?.addEventListener('click', async function() {
         const reportName = document.getElementById('report_name').value.trim();
 
         if (!reportName) {
@@ -950,7 +964,6 @@
             return;
         }
 
-        // Close the dropdown
         const dropdown = bootstrap.Dropdown.getInstance(document.getElementById('saveReportDropdown'));
         if (dropdown) dropdown.hide();
 
@@ -970,11 +983,8 @@
 
             if (data.success) {
                 alert(data.message);
-                // Reload all reports dropdown
                 loadAllReports();
-                // Clear the report name input
                 document.getElementById('report_name').value = '';
-                // Hide the save button after saving
                 document.getElementById('saveReportSection').style.display = 'none';
             } else {
                 alert('Error saving report: ' + data.error);
@@ -983,41 +993,34 @@
             alert('Error saving report: ' + error.message);
         }
     });
-    
+
     // Delete report
-    document.getElementById('deleteReportBtn').addEventListener('click', async function() {
+    document.getElementById('deleteReportBtn')?.addEventListener('click', async function() {
         const reportSelect = document.getElementById('reportSelect');
         const reportId = reportSelect.value;
-        
-        if (!reportId) {
-            return;
-        }
-        
-        // Get the report name from the selected option
+
+        if (!reportId) return;
+
         const selectedOption = reportSelect.options[reportSelect.selectedIndex];
-        const reportName = selectedOption.textContent.split(' (')[0]; // Extract name without date
-        
-        if (!confirm(`Delete "${reportName}"?\n\nThis action cannot be undone and will permanently delete the report.`)) {
-            return;
-        }
-        
+        const reportName = selectedOption.textContent.split(' (')[0];
+
+        if (!confirm(`Delete "${reportName}"?\n\nThis action cannot be undone and will permanently delete the report.`)) return;
+
         try {
             const formData = new FormData();
             formData.append('csrfmiddlewaretoken', '{{ csrf_token }}');
-            
+
             const response = await fetch(`/insights/delete-report/${reportId}/`, {
                 method: 'POST',
                 body: formData
             });
-            
+
             const data = await response.json();
-            
+
             if (data.success) {
                 showToast('Report deleted successfully!');
-                // Hide insights content and delete button
                 document.getElementById('insightsContent').classList.add('d-none');
                 document.getElementById('deleteReportBtn').classList.add('d-none');
-                // Reload all reports dropdown
                 loadAllReports();
             } else {
                 alert('Error deleting report: ' + data.error);
@@ -1026,37 +1029,5 @@
             alert('Error deleting report: ' + error.message);
         }
     });
-
-    // Phrase analysis event listeners
-    function updatePhraseHeader() {
-        const mode = document.querySelector('input[name="phraseMode"]:checked').value;
-        document.getElementById('phraseAnalysisHeader').textContent =
-            mode === 'best' ? 'Best Performing Phrases' : 'Worst Performing Phrases';
-    }
-
-    document.querySelectorAll('input[name="phraseMode"]').forEach(radio => {
-        radio.addEventListener('change', () => {
-            updatePhraseHeader();
-            updatePhraseTable();
-        });
-    });
-    document.getElementById('minAppearances').addEventListener('input', updatePhraseTable);
-
-    // Check for ?selected= parameter to auto-select a content set after operations
-    // This must run AFTER all event listeners are attached
-    (function() {
-        const urlParams = new URLSearchParams(window.location.search);
-        const selectedSet = urlParams.get('selected');
-        if (selectedSet) {
-            const select = document.getElementById('contentSetSelect');
-            if (select) {
-                select.value = selectedSet;
-                // Trigger the change event to load the content set
-                select.dispatchEvent(new Event('change'));
-            }
-            // Clean up the URL (remove the parameter without reloading)
-            window.history.replaceState({}, document.title, window.location.pathname);
-        }
-    })();
 </script>
 {% endblock %}

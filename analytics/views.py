@@ -976,7 +976,7 @@ def get_stopwords():
 @require_valid_api_credentials
 def insights_view(request):
     """
-    Display the insights page with content sets.
+    Display the insights page with trend analysis chart and report generator.
     """
     from .models import Publication
     import json
@@ -984,7 +984,7 @@ def insights_view(request):
     # Get current publication for filtering
     _, beehiiv_pub_id, _ = get_user_api_credentials(request.user)
 
-    # Get content sets for current publication and user only
+    # Get content sets and reports for report generator card
     try:
         publication = Publication.objects.get(pub_id=beehiiv_pub_id)
         content_sets = ContentSet.objects.filter(publication=publication, user=request.user).order_by('-created_at')
@@ -992,17 +992,103 @@ def insights_view(request):
             content_set__publication=publication,
             content_set__user=request.user
         ).exists()
+        has_processed_data = ProcessedPost.objects.filter(
+            user=request.user, publication=publication
+        ).exists()
     except Publication.DoesNotExist:
         content_sets = ContentSet.objects.none()
         has_reports = False
+        has_processed_data = False
 
     context = {
         'content_sets': content_sets,
         'has_reports': has_reports,
+        'has_processed_data': has_processed_data,
         'stopwords_json': json.dumps(get_stopwords()),
     }
 
     return render(request, 'analytics/insights.html', context)
+
+
+@login_required
+def load_processed_data(request):
+    """
+    Load all ProcessedPost data for the current user and publication.
+    Flattens sections_data into a single items list with section_name annotated.
+    """
+    from .models import Publication
+    from datetime import datetime as dt
+
+    try:
+        _, beehiiv_pub_id, _ = get_user_api_credentials(request.user)
+
+        try:
+            publication = Publication.objects.get(pub_id=beehiiv_pub_id)
+        except Publication.DoesNotExist:
+            return JsonResponse({'success': True, 'items': [], 'section_names': []})
+
+        processed_posts = ProcessedPost.objects.filter(
+            user=request.user, publication=publication
+        ).select_related('post')
+
+        items = []
+        section_names_set = set()
+
+        for pp in processed_posts:
+            sections_data = pp.sections_data or []
+            for section in sections_data:
+                section_name = section.get('section_name', 'Unknown')
+                section_names_set.add(section_name)
+                for item in section.get('items', []):
+                    # Parse post_date for display
+                    raw_date = item.get('post_date')
+                    post_date_display = '-'
+                    post_date_sortable = ''
+                    if raw_date:
+                        try:
+                            if hasattr(raw_date, 'strftime'):
+                                post_date_display = raw_date.strftime('%b %d, %Y')
+                                post_date_sortable = raw_date.strftime('%Y-%m-%d')
+                            else:
+                                parsed = dt.strptime(str(raw_date)[:10], '%Y-%m-%d')
+                                post_date_display = parsed.strftime('%b %d, %Y')
+                                post_date_sortable = parsed.strftime('%Y-%m-%d')
+                        except Exception:
+                            post_date_display = str(raw_date)
+                            post_date_sortable = str(raw_date)
+
+                    clicks = item.get('clicks', [])
+                    click_rate = item.get('click_rate', [])
+
+                    max_clicks = max(clicks) if clicks else 0
+                    max_click_rate_raw = max(click_rate) if click_rate else 0
+                    max_click_rate = f"{max_click_rate_raw * 100:.2f}%" if max_click_rate_raw > 0 else "0.00%"
+
+                    items.append({
+                        'section_name': section_name,
+                        'post_title': item.get('post_title', ''),
+                        'post_date_display': post_date_display,
+                        'post_date_sortable': post_date_sortable,
+                        'text': item.get('text', ''),
+                        'links': item.get('links', []),
+                        'clicks': clicks,
+                        'click_rate': [f"{r * 100:.2f}%" for r in click_rate] if click_rate else [],
+                        'click_rate_raw': click_rate,
+                        'max_clicks': max_clicks,
+                        'max_click_rate': max_click_rate,
+                        'max_click_rate_raw': max_click_rate_raw,
+                    })
+
+        section_names = sorted(section_names_set)
+
+        return JsonResponse({
+            'success': True,
+            'items': items,
+            'section_names': section_names,
+        })
+
+    except Exception as e:
+        return JsonResponse({'success': False, 'error': str(e)}, status=500)
 
 
 @login_required

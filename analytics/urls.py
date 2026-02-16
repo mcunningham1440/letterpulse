@@ -21,6 +21,7 @@ urlpatterns = [
     path('posts/load-templates/', views.load_processing_templates, name='load_processing_templates'),
     path('posts/delete-template/<int:template_id>/', views.delete_processing_template, name='delete_processing_template'),
     path('insights/', views.insights_view, name='insights'),
+    path('insights/load-processed-data/', views.load_processed_data, name='load_processed_data'),
     path('insights/load-content-set/<str:set_name>/', views.load_content_set, name='load_content_set'),
     path('insights/generate-insights/', views.generate_insights, name='generate_insights'),
     path('insights/download-csv/<str:set_name>/', views.download_csv, name='download_csv'),

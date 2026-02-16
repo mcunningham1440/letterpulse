@@ -21,7 +21,7 @@ This application helps newsletter creators understand which content resonates wi
 - **Database**: PostgreSQL on AWS RDS (Aurora)
 - **AI**: OpenAI API (GPT-5.1 with reasoning)
 - **Authentication**: django-allauth (email-based auth)
-- **Frontend**: Bootstrap 5, DataTables, jQuery, Marked.js (markdown rendering)
+- **Frontend**: Bootstrap 5, DataTables, jQuery, Marked.js (markdown rendering), Chart.js (trend charts on Insights page)
 - **Async**: aiohttp, asyncio for parallel API calls
 - **Deployment**: AWS App Runner (cloud), local development with gunicorn
 
@@ -218,11 +218,13 @@ Uses django-allauth for email-based authentication:
 - **Download Improvement Tips**: ZIP of HTML files with AI-generated improvement tips
 
 ### 2. Insights Page (`/insights/`)
-- **View Content Sets**: Browse extracted items with CTR data
-- **Generate Insights**: AI analysis identifying top/bottom performing content patterns
-- **Manage Sets**: Rename, copy, merge, delete items or entire sets
-- **Reports**: Save, load, and delete generated reports
-- **Export**: Download as CSV
+- **Trend Chart**: Chart.js time-series line chart showing section performance over time, driven by ProcessedPost data
+  - Metric selector: "Average max CTR" (default), "CTR of most clicked link", "Average max clicks", "Clicks of most clicked link"
+  - Date range filters (start/end) with "All" clear buttons
+  - Section checkboxes below chart (color-coded, all checked by default)
+- **Data Table**: Filtered ProcessedPost items showing Post Title, Post Date, Section, Item Text, Links, Max Clicks, Max CTR
+- **Phrase Analysis**: Same n-gram algorithm, recalculates on every filter change using currently displayed items
+- **Report Generator** (unchanged): Create reports from ContentSets, view/save/delete saved reports
 
 ### 3. Account Page (`/account/`)
 - **Usage Stats**: View AI credits used and remaining
@@ -262,7 +264,8 @@ All routes use the `analytics:` namespace.
 - `POST /posts/delete-template/<id>/` - Delete a processing template (AJAX)
 
 ### Insights Routes
-- `GET /insights/` - Insights dashboard
+- `GET /insights/` - Insights dashboard (trend chart + report generator)
+- `GET /insights/load-processed-data/` - Load all ProcessedPost items as JSON (flattened with section_name)
 - `GET /insights/load-content-set/<name>/` - Load ContentSet as JSON
 - `POST /insights/generate-insights/` - Generate AI report
 - `GET /insights/download-csv/<name>/` - Export as CSV
@@ -299,9 +302,16 @@ OPENAI_API_KEY=your-openai-api-key
 
 **Important:** `SECRET_KEY` is used to derive the encryption key for user beehiiv tokens (via `EncryptedCharField`). Changing the SECRET_KEY will make existing encrypted tokens unreadable. Always backup the SECRET_KEY alongside database backups.
 
-Run locally with Django's dev server:
+A Python 3.11 virtual environment exists at `.venv/`. The system default `python` is Python 3.8 (Anaconda) and does **not** have project dependencies installed. When running Python commands locally, use the venv explicitly:
+
 ```bash
-python manage.py runserver
+source .venv/bin/activate && python manage.py runserver
+```
+
+Or directly:
+
+```bash
+.venv/bin/python manage.py check
 ```
 
 Or run locally with Docker (mirrors production environment):
