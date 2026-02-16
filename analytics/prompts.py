@@ -37,27 +37,6 @@ In this case, if the user asked for “new product release”, you would make it
 Use your judgement and the content description to determine whether to extract multiple items or a single item.
 """
 
-SUMMARIZATION_PROMPT = """Provide a 3-sentence summary of the following newsletter post.
-If the post has a main essay, particularly if it gives the issue its title, 
-focus on that, ignoring other extraneous sections. 
-Always ignore ads.
-Be concise and informative.
-
-<example>
-AI agents are improving at a pace far faster than traditional computing progress, as shown by METR’s finding that the length of tasks agents can complete (measured in human-equivalent work time) is doubling roughly every seven months—about four times faster than Moore’s law.
-
-Recent benchmarks show top models like GPT‑5 can now reliably handle tasks equivalent to over two hours of human work, with simple projections suggesting agents capable of month-, year-, or even career-length tasks within the next decade.
-
-This trend, however, faces major caveats—current success rates, focus on purely digital tasks, and the possibility that progress will slow or break at more complex, longer-horizon work—but this could still dramatically and quickly transform the nature of work.
-</example>
-
-Don't say "The essay argues", "The author concludes that", etc.
-
-Bad: "The author points out that dogs have a uniquely powerful sense of smell that enables them to..."
-Good: "Dogs have a uniquely powerful sense of smell that enables them to..."
-
-"""
-
 # Used in generate_content_insights() — user message template containing
 # instructions and an example report for analyzing item CTR performance.
 ANALYSIS_PROMPT = """
