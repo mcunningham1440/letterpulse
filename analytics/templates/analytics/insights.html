@@ -100,7 +100,7 @@
         <!-- Trend Chart Card -->
         <div class="card" id="trendChartCard">
             <div class="card-header">
-                <h5 class="mb-3">Section Performance Over Time</h5>
+                <h5 class="mb-3">Section Performance</h5>
                 <div class="d-flex flex-wrap gap-3 align-items-end">
                     <!-- Metric selector -->
                     <div>
@@ -131,12 +131,13 @@
                 </div>
             </div>
             <div class="card-body">
+                <div class="mb-2 small text-muted" id="metricDescription"></div>
                 <div id="trendChartContainer">
                     <canvas id="trendChart"></canvas>
                 </div>
                 <!-- Section checkboxes -->
-                <div class="mt-3 d-flex align-items-center flex-wrap gap-2">
-                    <button type="button" class="btn btn-outline-secondary btn-sm" id="toggleAllSections" style="font-size: 0.8rem;">Show/hide all</button>
+                <div class="mt-3 d-flex align-items-start flex-wrap gap-2">
+                    <button type="button" class="btn btn-outline-secondary btn-sm flex-shrink-0" id="toggleAllSections" style="font-size: 0.8rem;">Show/hide All</button>
                     <div id="sectionCheckboxes" class="d-flex flex-wrap"></div>
                 </div>
             </div>
@@ -144,8 +145,11 @@
 
         <!-- Data Table Card -->
         <div class="card mt-4" id="dataTableCard">
-            <div class="card-header">
+            <div class="card-header d-flex justify-content-between align-items-center">
                 <h5 class="mb-0" id="dataTableTitle">Processed Items</h5>
+                <button type="button" class="btn btn-info btn-sm" id="downloadFilteredCsvBtn">
+                    <i class="bi bi-download"></i> Download CSV
+                </button>
             </div>
             <div class="card-body">
                 <div class="table-responsive">
@@ -576,10 +580,24 @@
         return labels[metric] || '';
     }
 
+    const METRIC_DESCRIPTIONS = {
+        'avg_max_ctr': 'Average click-through rate (CTR) for the best-performing link in each item in the section',
+        'top_ctr': 'Unique click-through rate (CTR) for the best-performing link in the section',
+        'avg_max_clicks': 'Average number of unique clicks for the best-performing link in each item in the section',
+        'top_clicks': 'Number of unique clicks for the best-performing link in the section',
+    };
+
+    function updateMetricDescription(metric) {
+        const el = document.getElementById('metricDescription');
+        if (el) el.textContent = METRIC_DESCRIPTIONS[metric] || '';
+    }
+
     function renderChart() {
         const metric = document.getElementById('metricSelect').value;
         const datasets = calculateChartData(filteredItems, metric);
         const isCtr = isCtrMetric(metric);
+
+        updateMetricDescription(metric);
 
         if (trendChart) {
             trendChart.destroy();
@@ -832,6 +850,42 @@
         });
     });
     document.getElementById('minAppearances')?.addEventListener('input', updatePhraseTable);
+
+    // =========================================================================
+    // Download filtered items as CSV
+    // =========================================================================
+    document.getElementById('downloadFilteredCsvBtn')?.addEventListener('click', function() {
+        if (!filteredItems || filteredItems.length === 0) {
+            alert('No items to download.');
+            return;
+        }
+
+        const headers = ['Post Title', 'Post Date', 'Section', 'Item Text', 'Links', 'Max Clicks', 'Max CTR'];
+        const rows = filteredItems.map(item => [
+            item.post_title || '',
+            item.post_date_display || '',
+            item.section_name || '',
+            item.text || '',
+            (item.links || []).join('; '),
+            item.max_clicks || 0,
+            item.max_click_rate || '0.00%'
+        ]);
+
+        let csv = headers.map(h => '"' + h.replace(/"/g, '""') + '"').join(',') + '\n';
+        rows.forEach(row => {
+            csv += row.map(val => '"' + String(val).replace(/"/g, '""') + '"').join(',') + '\n';
+        });
+
+        const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'processed_items.csv';
+        document.body.appendChild(a);
+        a.click();
+        URL.revokeObjectURL(url);
+        document.body.removeChild(a);
+    });
 
     // =========================================================================
     // Report generator logic (unchanged from before)
