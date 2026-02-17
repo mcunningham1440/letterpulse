@@ -2130,3 +2130,31 @@ def delete_processing_template(request, template_id):
         return JsonResponse({'success': False, 'error': 'Template not found.'}, status=404)
     except Exception as e:
         return JsonResponse({'success': False, 'error': str(e)}, status=500)
+
+
+@login_required
+@require_POST
+def clear_processed_posts(request):
+    """
+    Delete ProcessedPost records for the given post_ids (owned by the requesting user).
+    """
+    try:
+        body = json.loads(request.body)
+        post_ids = body.get('post_ids', [])
+
+        if not post_ids:
+            return JsonResponse({'success': False, 'error': 'No post IDs provided.'}, status=400)
+
+        deleted_count, _ = ProcessedPost.objects.filter(
+            user=request.user,
+            post__post_id__in=post_ids
+        ).delete()
+
+        return JsonResponse({
+            'success': True,
+            'message': f'Cleared processed data from {deleted_count} post{"s" if deleted_count != 1 else ""}.'
+        })
+
+    except Exception as e:
+        logger.error(f"Error in clear_processed_posts: {str(e)}", exc_info=True)
+        return JsonResponse({'success': False, 'error': str(e)}, status=500)

@@ -262,6 +262,7 @@ All routes use the `analytics:` namespace.
 - `POST /posts/save-template/` - Save section layout as a named processing template (AJAX)
 - `GET /posts/load-templates/` - List saved processing templates for current publication (AJAX)
 - `POST /posts/delete-template/<id>/` - Delete a processing template (AJAX)
+- `POST /posts/clear-processed/` - Delete ProcessedPost records for selected posts (AJAX)
 
 ### Insights Routes
 - `GET /insights/` - Insights dashboard (trend chart + report generator)

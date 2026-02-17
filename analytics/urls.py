@@ -20,6 +20,7 @@ urlpatterns = [
     path('posts/save-template/', views.save_processing_template, name='save_processing_template'),
     path('posts/load-templates/', views.load_processing_templates, name='load_processing_templates'),
     path('posts/delete-template/<int:template_id>/', views.delete_processing_template, name='delete_processing_template'),
+    path('posts/clear-processed/', views.clear_processed_posts, name='clear_processed_posts'),
     path('insights/', views.insights_view, name='insights'),
     path('insights/load-processed-data/', views.load_processed_data, name='load_processed_data'),
     path('insights/load-content-set/<str:set_name>/', views.load_content_set, name='load_content_set'),

@@ -9,6 +9,9 @@
         max-width: 350px;
         text-align: left;
     }
+    .extract-tooltip {
+        z-index: 10001 !important;
+    }
     .processing-overlay {
         position: fixed;
         top: 0; left: 0; right: 0; bottom: 0;
@@ -145,6 +148,11 @@
                                 </button>
                             </div>
 
+                            <!-- Clear Processed Data -->
+                            <button type="button" class="btn btn-danger btn-sm" id="clearProcessedBtn">
+                                <i class="bi bi-trash"></i> Clear Data from Selected Posts
+                            </button>
+
                             {% comment %}
                             <!-- Get Improvement Tips Dropdown -->
                             <div class="dropdown" id="downloadAnnotatedProgress" style="min-width: 200px;">
@@ -252,6 +260,8 @@
             <small class="text-muted" id="sectionCount">1 / 15 sections</small>
         </div>
 
+        <hr>
+
         <!-- Save/Load Template Row -->
         <div class="d-flex justify-content-between align-items-center mb-3">
             <small class="text-muted">Save this layout or load a saved one</small>
@@ -277,14 +287,14 @@
                     </div>
                 </div>
 
-                <!-- Load Template Dropdown -->
-                <div class="dropdown">
+                <!-- Load Template Dropdown (dropup to avoid clipping by modal overflow) -->
+                <div class="dropup">
                     <button class="btn btn-outline-secondary btn-sm dropdown-toggle" type="button"
                             id="loadTemplateDropdown" data-bs-toggle="dropdown"
                             aria-expanded="false" data-bs-auto-close="outside">
                         <i class="bi bi-folder2-open"></i> Load
                     </button>
-                    <div class="dropdown-menu dropdown-menu-end p-3" aria-labelledby="loadTemplateDropdown" style="min-width: 280px;">
+                    <div class="dropdown-menu dropdown-menu-end p-3" aria-labelledby="loadTemplateDropdown" style="min-width: 280px; max-height: 60vh; overflow-y: auto;">
                         <div id="templateList">
                             <div class="text-center py-2">
                                 <span class="spinner-border spinner-border-sm"></span> Loading...
@@ -348,26 +358,26 @@
                     </button>
                 </div>
                 <div class="d-flex gap-2">
-                    <button type="button" class="btn btn-outline-danger btn-sm" id="deleteSelectedReviewBtn">
+                    <button type="button" class="btn btn-warning btn-sm" id="deleteSelectedReviewBtn">
                         <i class="bi bi-trash"></i> Remove Selected Items
                     </button>
                     <!-- Re-process dropdown -->
                     <div class="dropdown">
-                        <button class="btn btn-warning btn-sm dropdown-toggle" type="button"
+                        <button class="btn btn-info btn-sm dropdown-toggle" type="button"
                                 id="reprocessDropdown" data-bs-toggle="dropdown"
                                 aria-expanded="false" data-bs-auto-close="outside">
                             <i class="bi bi-arrow-clockwise"></i> Re-process Post
                         </button>
                         <div class="dropdown-menu dropdown-menu-end p-3" aria-labelledby="reprocessDropdown" style="min-width: 360px;">
                             <div class="mb-3">
-                                <label class="form-label small fw-bold">Custom Instructions (optional)</label>
-                                <input type="text" class="form-control form-control-sm"
-                                       id="reprocessInstructions"
-                                       placeholder="Quick Bites section should not include the 'Quick bites for this week...' text at the top">
+                                <label class="form-label small fw-bold">Custom instructions (optional)</label>
+                                <textarea class="form-control form-control-sm" rows="2"
+                                          id="reprocessInstructions"
+                                          placeholder="Quick Bites section should not include the 'Here's what's new...' text at the top"></textarea>
                             </div>
                             <div class="d-flex justify-content-between align-items-center">
                                 <small class="text-muted">🧠 1 AI credit</small>
-                                <button type="button" class="btn btn-warning btn-sm" id="reprocessBtn">
+                                <button type="button" class="btn btn-success btn-sm" id="reprocessBtn">
                                     <i class="bi bi-play-fill"></i> Run
                                 </button>
                             </div>
@@ -927,6 +937,58 @@
             }, 3000);
         });
     }
+
+    // =========================================================================
+    // Clear Processed Data
+    // =========================================================================
+    document.getElementById('clearProcessedBtn').addEventListener('click', async function() {
+        const selectedPosts = document.querySelectorAll('.post-checkbox:checked');
+        if (selectedPosts.length === 0) {
+            alert('Please select at least one post.');
+            return;
+        }
+
+        // Only include posts that are actually processed
+        const processedPostIds = Array.from(selectedPosts)
+            .filter(cb => cb.dataset.processed === 'true')
+            .map(cb => cb.dataset.postId);
+
+        if (processedPostIds.length === 0) {
+            alert('None of the selected posts have processed data to clear.');
+            return;
+        }
+
+        if (!confirm('Clear processed data from ' + processedPostIds.length + ' post' + (processedPostIds.length !== 1 ? 's' : '') + '? This cannot be undone.')) {
+            return;
+        }
+
+        const btn = this;
+        btn.disabled = true;
+
+        try {
+            const response = await fetch("{% url 'analytics:clear_processed_posts' %}", {
+                method: 'POST',
+                headers: {
+                    'X-CSRFToken': csrfToken,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ post_ids: processedPostIds })
+            });
+
+            const data = await response.json();
+            if (data.success) {
+                showToast(data.message, 'success');
+                window.location.reload();
+            } else {
+                alert(data.error || 'Error clearing data.');
+            }
+        } catch (error) {
+            console.error('Error:', error);
+            alert('An error occurred while clearing data.');
+        } finally {
+            btn.disabled = false;
+        }
+    });
 
     // =========================================================================
     // Processing Template Save/Load Logic
