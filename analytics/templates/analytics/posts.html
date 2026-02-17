@@ -187,7 +187,7 @@
                                         </div>
                                     </div>
                                     <div class="d-flex justify-content-between align-items-center">
-                                        <small class="text-muted">1 AI credit/post</small>
+                                        <small class="text-muted">🧠 1 AI credit per post</small>
                                         <button type="button" class="btn btn-warning btn-sm" id="downloadAnnotatedBtn">
                                             <i class="bi bi-play-fill"></i> Run
                                         </button>
@@ -211,7 +211,21 @@
 <!-- Processing Modal (survey-style overlay) -->
 <div class="processing-overlay" id="processingOverlay" style="display: none;">
     <div class="processing-modal">
-        <h4 class="mb-4" id="processingTitle">Processing 0 posts</h4>
+        <h4 class="mb-3" id="processingTitle">Processing 0 posts</h4>
+
+        <div class="form-text small mb-3">
+            <span class="text-primary"
+                  data-bs-toggle="tooltip"
+                  data-bs-placement="bottom"
+                  data-bs-html="true"
+                  data-bs-custom-class="extract-tooltip"
+                  title="Define the sections of your newsletter (e.g. 'Quick Bites', 'Deep Dives') so the AI knows what to extract from each post.<br><br>For each section, enter a <b>name</b> and optionally a <b>description</b> to help the AI identify it. You can drag sections to reorder them, and save layouts as templates for reuse.<br><br>After extraction, you'll review results post-by-post and can approve, edit, or re-process each one. Approved posts are saved and appear in the <b>Insights</b> tab for trend analysis."
+                  style="cursor: help;">
+                <i class="bi bi-info-circle"></i> How to use this feature
+            </span>
+        </div>
+
+        <datalist id="sectionNameOptions"></datalist>
 
         <div id="sectionFields">
             <div class="section-pair mb-3" data-index="0">
@@ -240,7 +254,7 @@
 
         <!-- Save/Load Template Row -->
         <div class="d-flex justify-content-between align-items-center mb-3">
-            <small class="text-muted">Save this layout or load a saved one.</small>
+            <small class="text-muted">Save this layout or load a saved one</small>
             <div class="d-flex gap-2">
                 <!-- Save Template Dropdown -->
                 <div class="dropdown">
@@ -253,7 +267,7 @@
                         <div class="mb-3">
                             <label class="form-label small fw-bold">Template Name</label>
                             <input type="text" class="form-control form-control-sm" id="templateNameInput"
-                                   placeholder="e.g. Weekly Newsletter">
+                                   placeholder="e.g. Monday issue">
                         </div>
                         <div class="d-flex justify-content-end">
                             <button type="button" class="btn btn-primary btn-sm" id="saveTemplateBtn">
@@ -287,7 +301,7 @@
         <div id="processModalProgress" class="mb-3"></div>
 
         <div class="d-flex justify-content-between align-items-center">
-            <small class="text-muted">1 AI credit per post</small>
+            <small class="text-muted">🧠 1 AI credit per post</small>
             <div class="d-flex gap-2">
                 <button type="button" class="btn btn-secondary btn-sm" id="cancelProcessingBtn">Cancel</button>
                 <button type="button" class="btn btn-primary btn-sm" id="runProcessingBtn">
@@ -332,17 +346,17 @@
                     <button type="button" class="btn btn-success btn-sm" id="approveBtn">
                         <i class="bi bi-check-lg"></i> Approve
                     </button>
-                    <button type="button" class="btn btn-danger btn-sm" id="deleteSelectedReviewBtn">
-                        <i class="bi bi-trash"></i> Delete Selected Items
-                    </button>
                 </div>
                 <div class="d-flex gap-2">
+                    <button type="button" class="btn btn-outline-danger btn-sm" id="deleteSelectedReviewBtn">
+                        <i class="bi bi-trash"></i> Remove Selected Items
+                    </button>
                     <!-- Re-process dropdown -->
                     <div class="dropdown">
                         <button class="btn btn-warning btn-sm dropdown-toggle" type="button"
                                 id="reprocessDropdown" data-bs-toggle="dropdown"
                                 aria-expanded="false" data-bs-auto-close="outside">
-                            <i class="bi bi-arrow-clockwise"></i> Re-process
+                            <i class="bi bi-arrow-clockwise"></i> Re-process Post
                         </button>
                         <div class="dropdown-menu dropdown-menu-end p-3" aria-labelledby="reprocessDropdown" style="min-width: 360px;">
                             <div class="mb-3">
@@ -352,14 +366,14 @@
                                        placeholder="Quick Bites section should not include the 'Quick bites for this week...' text at the top">
                             </div>
                             <div class="d-flex justify-content-between align-items-center">
-                                <small class="text-muted">1 AI credit</small>
+                                <small class="text-muted">🧠 1 AI credit</small>
                                 <button type="button" class="btn btn-warning btn-sm" id="reprocessBtn">
                                     <i class="bi bi-play-fill"></i> Run
                                 </button>
                             </div>
                         </div>
                     </div>
-                    <button type="button" class="btn btn-outline-danger btn-sm" id="deletePostBtn">
+                    <button type="button" class="btn btn-danger btn-sm" id="deletePostBtn">
                         <i class="bi bi-x-lg"></i> Delete
                     </button>
                 </div>
@@ -754,11 +768,11 @@
         }
     });
 
-    // Delete Selected Items (client-side)
+    // Remove Selected Items (client-side)
     document.getElementById('deleteSelectedReviewBtn').addEventListener('click', function() {
         const checked = document.querySelectorAll('.review-item-checkbox:checked');
         if (checked.length === 0) {
-            alert('Please select at least one item to delete.');
+            alert('Please select at least one item to remove.');
             return;
         }
 

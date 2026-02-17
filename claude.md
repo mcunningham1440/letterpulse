@@ -210,7 +210,7 @@ Uses django-allauth for email-based authentication:
   - Opens a review overlay popup (post-by-post) where users can:
     - **Approve**: Save the post's sections to the `ProcessedPost` table
     - **Delete Selected Items**: Remove specific items from section tables
-    - **Re-process**: Re-run extraction with custom instructions (costs 1 additional credit, shows progress bar)
+    - **Re-process post**: Re-run extraction with custom instructions (costs 1 additional credit, shows progress bar)
     - **Delete**: Skip the post without saving
   - On review completion, page reloads to update the Processed column
 - **Processed Column**: Shows a green checkmark for posts that have been processed and saved
