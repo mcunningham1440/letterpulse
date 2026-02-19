@@ -216,6 +216,10 @@ CREDITS_PER_EXTRACTION = 1      # Per post extracted from
 CREDITS_PER_REPORT = 1          # Flat cost for generating insights
 CREDITS_PER_ANNOTATION = 1      # Per post annotated with improvement tips
 
+# Maximum items sent to the LLM for report generation. When exceeded, the
+# top and bottom performers from each section are sampled (middle omitted).
+MAX_REPORT_ITEMS = 150
+
 # =============================================================================
 # Progress Bar Expected Durations (seconds)
 # =============================================================================

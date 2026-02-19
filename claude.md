@@ -90,8 +90,11 @@ Named collections of extracted content items:
 ### Report
 AI-generated content insights:
 - `name`: Report name
-- `content_set`: ForeignKey to ContentSet
+- `user`: ForeignKey to User (owner)
+- `publication`: ForeignKey to Publication (nullable)
+- `content_set`: ForeignKey to ContentSet (nullable, legacy — no longer required)
 - `report_text`: Markdown-formatted analysis
+- Unique constraint: `(name, user, publication)`
 
 ### UsageAccount
 Tracks AI usage credits and API credentials per user:
@@ -182,6 +185,17 @@ Saved section layout templates for the Process Selected Posts workflow:
 
 Users can save/load templates from the processing modal to avoid re-entering section definitions for newsletters with a consistent layout.
 
+### PendingReport
+Tracks background report generation tasks:
+- `task_id`: UUID (unique, auto-generated)
+- `user`: ForeignKey to User
+- `publication`: ForeignKey to Publication (nullable)
+- `status`: "pending", "complete", or "error"
+- `result_text`: The generated report markdown (populated on completion)
+- `error_message`: Error details (populated on failure)
+
+Created when a user initiates report generation. The LLM call runs in a background thread. The frontend polls `/insights/report-status/<task_id>/` until complete, allowing the user to navigate away and return without losing progress.
+
 ## Authentication
 
 Uses django-allauth for email-based authentication:
@@ -224,7 +238,7 @@ Uses django-allauth for email-based authentication:
   - Section checkboxes below chart (color-coded, all checked by default)
 - **Data Table**: Filtered ProcessedPost items showing Post Title, Post Date, Section, Item Text, Links, Max Clicks, Max CTR
 - **Phrase Analysis**: Same n-gram algorithm, recalculates on every filter change using currently displayed items
-- **Report Generator** (unchanged): Create reports from ContentSets, view/save/delete saved reports
+- **Report Generator**: Generate AI reports from the currently filtered table items (no ContentSet required). Generation runs in a background thread with polling, so users can navigate away and return without losing progress. Reports can be saved, loaded, and deleted.
 
 ### 3. Account Page (`/account/`)
 - **Usage Stats**: View AI credits used and remaining
@@ -268,7 +282,8 @@ All routes use the `analytics:` namespace.
 - `GET /insights/` - Insights dashboard (trend chart + report generator)
 - `GET /insights/load-processed-data/` - Load all ProcessedPost items as JSON (flattened with section_name)
 - `GET /insights/load-content-set/<name>/` - Load ContentSet as JSON
-- `POST /insights/generate-insights/` - Generate AI report
+- `POST /insights/generate-insights/` - Start background AI report generation (accepts items_json, returns task_id)
+- `GET /insights/report-status/<uuid:task_id>/` - Poll background report generation status
 - `GET /insights/download-csv/<name>/` - Export as CSV
 - `POST /insights/rename-set/`, `/copy-set/`, `/merge-sets/`, `/delete-set/`, `/delete-items/`
 - `POST /insights/save-report/`, `GET /insights/load-report/<id>/`, `DELETE /insights/delete-report/<id>/`
@@ -397,7 +412,7 @@ Views use `get_user_api_credentials(user)` helper to retrieve credentials and re
 - `extract_items()`: AI-powered content extraction from HTML (single-description, legacy)
 - `extract_sections()`: AI-powered multi-section content extraction from HTML (used by Process Selected Posts)
 - `extract_sections_parallel()`: Parallel multi-section extraction across multiple posts
-- `generate_content_insights()`: Generate performance analysis report
+- `generate_content_insights()`: Generate performance analysis report. Requires `section_name` column in the DataFrame. Uses water-filling to distribute `MAX_REPORT_ITEMS` across sections; when a section exceeds its budget, top and bottom performers are kept and middle items are omitted (with a note to the LLM).
 - `annotate_post_html(post_id, content_perf_evals, beehiiv_token, beehiiv_pub_id, user=None)`: Insert improvement tips into HTML
 - `annotate_posts_parallel(post_ids, content_perf_evals, beehiiv_token, beehiiv_pub_id, user=None)`: Parallel annotation of multiple posts
 
@@ -413,6 +428,9 @@ DEFAULT_MONTHLY_CREDITS = 100
 CREDITS_PER_EXTRACTION = 1      # Per post extracted from
 CREDITS_PER_REPORT = 1          # Flat cost for generating insights
 CREDITS_PER_ANNOTATION = 1      # Per post annotated with improvement tips
+
+# Maximum items sent to the LLM for report generation
+MAX_REPORT_ITEMS = 150
 ```
 
 Credits are charged at the view level before each AI operation runs.

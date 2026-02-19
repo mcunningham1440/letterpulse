@@ -21,7 +21,7 @@ from django.db import transaction
 from django.db.models import F
 from Levenshtein import distance as levenshtein_distance
 from dotenv import load_dotenv
-from analytics.prompts import PARSING_PROMPT, SECTION_PARSING_PROMPT, ANALYSIS_PROMPT, TIP_PROMPT
+from analytics.prompts import PARSING_PROMPT, SECTION_PARSING_PROMPT, INSIGHTS_PROMPT, TIP_PROMPT
 
 logger = logging.getLogger(__name__)
 
@@ -711,26 +711,78 @@ async def generate_content_insights(items_display, user=None):
     """
     Generate AI insights from content items using OpenAI API.
 
+    Distributes the MAX_REPORT_ITEMS budget across sections using a water-filling
+    algorithm. When a section exceeds its allocation, the top and bottom half by
+    CTR are included and the middle is omitted (with a note to the LLM).
+
     Args:
-        items_display: DataFrame containing the content items with clicks
+        items_display: DataFrame with columns including 'text', 'click_rate',
+                       and 'section_name'
         user: Django user object for credit charging (optional)
 
     Returns:
-        OpenAI response object containing structured insights with 3 tags
+        OpenAI response object containing the generated report
     """
-    # Use the items with clicks formatted as string
-    items_display["max_click_rate"] = items_display["click_rate"].apply(max)
-    items_display["max_click_rate_percentile"] = items_display["max_click_rate"].rank(pct=True)
+    from django.conf import settings as django_settings
 
-    items_display = items_display.sort_values(by="max_click_rate", ascending=False).reset_index(drop=True)
-    
+    max_items = django_settings.MAX_REPORT_ITEMS
+
+    items_display = items_display.copy()
+    items_display["max_click_rate"] = items_display["click_rate"].apply(max)
+    items_display["max_click_rate_percentile_all"] = items_display["max_click_rate"].rank(pct=True)
+
+    # Water-filling allocation: distribute max_items across sections evenly,
+    # capped by each section's actual count. Processing smallest sections first
+    # ensures they don't waste budget that larger sections can use.
+    section_counts = items_display["section_name"].value_counts(ascending=True)
+    n_sections = len(section_counts)
+    remaining = max_items
+    n_items_per_section = {}
+
+    for i, (section, count) in enumerate(section_counts.items()):
+        alloc = min(remaining // (n_sections - i), count)
+        n_items_per_section[section] = alloc
+        remaining -= alloc
+
     newsletter_items = ""
-    for i, row in items_display.iterrows():
-        newsletter_items += f"ID {i}. " + row["text"] + "\n"
-        newsletter_items += f"CTR: {round(row['max_click_rate'] * 100, 2)}% (percentile {row['max_click_rate_percentile']:.0%})\n\n"
-        
+    for section in sorted(items_display["section_name"].unique()):
+        # Sort descending by CTR; compute section percentile on the full section
+        # before trimming so ranks reflect the complete distribution.
+        section_items = (
+            items_display[items_display["section_name"] == section]
+            .copy()
+            .sort_values("max_click_rate", ascending=False)
+            .reset_index(drop=True)
+        )
+        section_items["max_click_rate_percentile_section"] = section_items["max_click_rate"].rank(pct=True)
+
+        alloc = n_items_per_section[section]
+        count = len(section_items)
+
+        if alloc < count:
+            half = alloc // 2
+            n_omitted = count - alloc
+            section_items = pd.concat([section_items.head(half), section_items.tail(half)])
+            truncation_note = (
+                f"Note: {count} items exist in this section but only the top {half} and bottom {half} "
+                f"by CTR are shown ({n_omitted} middle items omitted). "
+                f"The distribution is not bimodal — the omitted items fall between these two groups.\n\n"
+            )
+        else:
+            truncation_note = ""
+
+        newsletter_items += f"<{section} items>\n\n"
+        newsletter_items += truncation_note
+        for i, row in section_items.iterrows():
+            newsletter_items += f"<{section} {i+1}>\n" + row["text"] + "\n"
+            newsletter_items += f"CTR: {round(row['max_click_rate'] * 100, 2)}% "
+            newsletter_items += f"(percentile among all items {row['max_click_rate_percentile_all']:.0%}, "
+            newsletter_items += f"among {section} items {row['max_click_rate_percentile_section']:.0%})\n"
+            newsletter_items += f"</{section} {i+1}>\n\n"
+        newsletter_items += f"</{section} items>\n\n"
+
     messages = [
-        {"role": "user", "content": ANALYSIS_PROMPT},
+        {"role": "user", "content": INSIGHTS_PROMPT},
         {"role": "user", "content": newsletter_items}
     ]
 

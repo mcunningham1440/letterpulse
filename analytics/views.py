@@ -12,10 +12,9 @@ from django.contrib.auth.decorators import login_required
 from django.conf import settings
 import pandas as pd
 import json
-import ast
 from asgiref.sync import async_to_sync
 
-from .models import Post, ContentSet, Report, UsageAccount, SurveyResponse, ProcessedPost, ProcessingTemplate
+from .models import Post, ContentSet, Report, UsageAccount, SurveyResponse, ProcessedPost, ProcessingTemplate, PendingReport
 
 logger = logging.getLogger(__name__)
 
@@ -984,27 +983,30 @@ def insights_view(request):
     # Get current publication for filtering
     _, beehiiv_pub_id, _ = get_user_api_credentials(request.user)
 
-    # Get content sets and reports for report generator card
+    # Get reports and check for pending generation
     try:
         publication = Publication.objects.get(pub_id=beehiiv_pub_id)
-        content_sets = ContentSet.objects.filter(publication=publication, user=request.user).order_by('-created_at')
         has_reports = Report.objects.filter(
-            content_set__publication=publication,
-            content_set__user=request.user
+            user=request.user, publication=publication
         ).exists()
         has_processed_data = ProcessedPost.objects.filter(
             user=request.user, publication=publication
         ).exists()
+        # Check for any pending report generation
+        pending_report = PendingReport.objects.filter(
+            user=request.user, publication=publication, status='pending'
+        ).order_by('-created_at').first()
     except Publication.DoesNotExist:
-        content_sets = ContentSet.objects.none()
         has_reports = False
         has_processed_data = False
+        pending_report = None
 
     context = {
-        'content_sets': content_sets,
         'has_reports': has_reports,
         'has_processed_data': has_processed_data,
         'stopwords_json': json.dumps(get_stopwords()),
+        'pending_task_id': str(pending_report.task_id) if pending_report else '',
+        'max_report_items': settings.MAX_REPORT_ITEMS,
     }
 
     return render(request, 'analytics/insights.html', context)
@@ -1168,60 +1170,144 @@ def load_content_set(request, set_name):
 @require_POST
 def generate_insights(request):
     """
-    Generate AI insights for a content set.
+    Generate AI insights from items JSON in a background thread.
+    Returns a task_id immediately for polling.
     """
-    try:
-        set_name = request.POST.get('set_name')
+    import threading
+    from .models import Publication
 
-        if not set_name:
+    try:
+        items_json = request.POST.get('items_json', '')
+
+        if not items_json:
             return JsonResponse({
                 'success': False,
-                'error': 'Content set name is required.'
+                'error': 'Items data is required.'
             }, status=400)
 
-        content_set = ContentSet.objects.get(name=set_name, user=request.user)
-        df = content_set.to_dataframe()
+        try:
+            items = json.loads(items_json)
+        except json.JSONDecodeError:
+            return JsonResponse({
+                'success': False,
+                'error': 'Invalid items JSON.'
+            }, status=400)
+
+        if not items:
+            return JsonResponse({
+                'success': False,
+                'error': 'No items provided.'
+            }, status=400)
+
+        # Build DataFrame from items
+        df = pd.DataFrame(items)
 
         if df.empty:
             return JsonResponse({
                 'success': False,
-                'error': 'Content set is empty.'
+                'error': 'Items data is empty.'
             }, status=400)
 
-        # Charge credits before generating report (flat cost)
+        # Charge credits before starting background task
         charge_credits(request.user, settings.CREDITS_PER_REPORT)
 
-        # Generate insights using async function
-        response = async_to_sync(generate_content_insights)(df, user=request.user)
-        insights = response.output[-1].content[0].text
+        # Get publication for the pending report
+        _, beehiiv_pub_id, _ = get_user_api_credentials(request.user)
+        try:
+            publication = Publication.objects.get(pub_id=beehiiv_pub_id)
+        except Publication.DoesNotExist:
+            publication = None
+
+        # Create pending report entry
+        pending = PendingReport.objects.create(
+            user=request.user,
+            publication=publication,
+            status='pending'
+        )
+
+        # Run generation in background thread
+        user_id = request.user.id
+
+        def _run_generation():
+            import django
+            from django.contrib.auth import get_user_model
+            User = get_user_model()
+
+            try:
+                user = User.objects.get(id=user_id)
+                response = async_to_sync(generate_content_insights)(df, user=user)
+                insights = response.output[-1].content[0].text
+
+                pending_obj = PendingReport.objects.get(task_id=pending.task_id)
+                pending_obj.status = 'complete'
+                pending_obj.result_text = insights
+                pending_obj.save()
+            except Exception as e:
+                try:
+                    pending_obj = PendingReport.objects.get(task_id=pending.task_id)
+                    pending_obj.status = 'error'
+                    pending_obj.error_message = str(e)
+                    pending_obj.save()
+                except Exception:
+                    pass
+
+        thread = threading.Thread(target=_run_generation, daemon=True)
+        thread.start()
 
         # Get updated usage for sidebar
-        from .models import UsageAccount
         usage = UsageAccount.objects.get(user=request.user)
         usage.ensure_current_period()
 
         return JsonResponse({
             'success': True,
-            'insights': insights,
+            'task_id': str(pending.task_id),
             'credits_used': usage.used_this_period,
             'credits_quota': usage.monthly_quota,
         })
 
-    except ContentSet.DoesNotExist:
-        return JsonResponse({
-            'success': False,
-            'error': f"Content set '{set_name}' not found."
-        }, status=404)
     except NotEnoughCredits as e:
         return JsonResponse({
             'success': False,
             'error': str(e)
-        }, status=402)  # Payment Required
+        }, status=402)
     except Exception as e:
         return JsonResponse({
             'success': False,
             'error': str(e)
         }, status=500)
+
+
+@login_required
+def report_status(request, task_id):
+    """
+    Check the status of a background report generation task.
+    """
+    try:
+        pending = PendingReport.objects.get(task_id=task_id, user=request.user)
+
+        response_data = {
+            'success': True,
+            'status': pending.status,
+        }
+
+        if pending.status == 'complete':
+            response_data['result_text'] = pending.result_text
+            # Get updated usage for sidebar
+            usage = UsageAccount.objects.get(user=request.user)
+            usage.ensure_current_period()
+            response_data['credits_used'] = usage.used_this_period
+            response_data['credits_quota'] = usage.monthly_quota
+
+        elif pending.status == 'error':
+            response_data['error_message'] = pending.error_message
+
+        return JsonResponse(response_data)
+
+    except PendingReport.DoesNotExist:
+        return JsonResponse({
+            'success': False,
+            'error': 'Task not found.'
+        }, status=404)
 
 
 @login_required
@@ -1820,57 +1906,52 @@ def save_report(request):
     """
     Save a generated report to the database.
     """
+    from .models import Publication
+
     try:
         report_name = request.POST.get('report_name', '').strip()
         report_text = request.POST.get('report_text', '').strip()
-        set_name = request.POST.get('set_name', '').strip()
-        
+
         if not report_name:
             return JsonResponse({
                 'success': False,
                 'error': 'Report name is required.'
             }, status=400)
-        
+
         if not report_text:
             return JsonResponse({
                 'success': False,
                 'error': 'Report text is required.'
             }, status=400)
-        
-        if not set_name:
-            return JsonResponse({
-                'success': False,
-                'error': 'Content set name is required.'
-            }, status=400)
-        
-        # Get the content set (must be owned by this user)
-        content_set = ContentSet.objects.get(name=set_name, user=request.user)
 
-        # Check if a report with this name already exists for this content set
-        if Report.objects.filter(name=report_name, content_set=content_set).exists():
+        # Get current publication
+        _, beehiiv_pub_id, _ = get_user_api_credentials(request.user)
+        try:
+            publication = Publication.objects.get(pub_id=beehiiv_pub_id)
+        except Publication.DoesNotExist:
+            publication = None
+
+        # Check if a report with this name already exists for this user/publication
+        if Report.objects.filter(name=report_name, user=request.user, publication=publication).exists():
             return JsonResponse({
                 'success': False,
-                'error': f'A report named "{report_name}" already exists for this content set.'
+                'error': f'A report named "{report_name}" already exists.'
             }, status=400)
-        
+
         # Create the report
         report = Report.objects.create(
             name=report_name,
-            content_set=content_set,
+            user=request.user,
+            publication=publication,
             report_text=report_text
         )
-        
+
         return JsonResponse({
             'success': True,
             'message': f'Report "{report_name}" saved successfully!',
             'report_id': report.id
         })
-        
-    except ContentSet.DoesNotExist:
-        return JsonResponse({
-            'success': False,
-            'error': f"Content set '{set_name}' not found."
-        }, status=404)
+
     except Exception as e:
         return JsonResponse({
             'success': False,
@@ -1884,20 +1965,19 @@ def load_report(request, report_id):
     Load a saved report and return as JSON.
     """
     try:
-        report = Report.objects.get(id=report_id, content_set__user=request.user)
-        
+        report = Report.objects.get(id=report_id, user=request.user)
+
         return JsonResponse({
             'success': True,
             'report_name': report.name,
             'report_text': report.report_text,
-            'content_set_name': report.content_set.name,
             'created_at': report.created_at.strftime('%Y-%m-%d %H:%M:%S')
         })
-        
+
     except Report.DoesNotExist:
         return JsonResponse({
             'success': False,
-            'error': f"Report not found."
+            'error': 'Report not found.'
         }, status=404)
     except Exception as e:
         return JsonResponse({
@@ -1909,20 +1989,17 @@ def load_report(request, report_id):
 @login_required
 def get_all_reports(request):
     """
-    Get all reports for the current publication's content sets.
+    Get all reports for the current user and publication.
     """
     from .models import Publication
 
     try:
-        # Get current publication for filtering
         _, beehiiv_pub_id, _ = get_user_api_credentials(request.user)
 
-        # Filter reports by publication and user through content_set
         try:
             publication = Publication.objects.get(pub_id=beehiiv_pub_id)
             reports = Report.objects.filter(
-                content_set__publication=publication,
-                content_set__user=request.user
+                user=request.user, publication=publication
             ).order_by('-created_at')
         except Publication.DoesNotExist:
             reports = Report.objects.none()
@@ -1931,7 +2008,6 @@ def get_all_reports(request):
             {
                 'id': report.id,
                 'name': report.name,
-                'content_set_name': report.content_set.name,
                 'created_at': report.created_at.strftime('created %b %-d, %Y')
             }
             for report in reports
@@ -1956,7 +2032,7 @@ def delete_report(request, report_id):
     Delete a saved report.
     """
     try:
-        report = Report.objects.get(id=report_id, content_set__user=request.user)
+        report = Report.objects.get(id=report_id, user=request.user)
         report_name = report.name
         report.delete()
         

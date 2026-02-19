@@ -25,6 +25,7 @@ urlpatterns = [
     path('insights/load-processed-data/', views.load_processed_data, name='load_processed_data'),
     path('insights/load-content-set/<str:set_name>/', views.load_content_set, name='load_content_set'),
     path('insights/generate-insights/', views.generate_insights, name='generate_insights'),
+    path('insights/report-status/<uuid:task_id>/', views.report_status, name='report_status'),
     path('insights/download-csv/<str:set_name>/', views.download_csv, name='download_csv'),
     path('insights/rename-set/', views.rename_set, name='rename_set'),
     path('insights/copy-set/', views.copy_set, name='copy_set'),

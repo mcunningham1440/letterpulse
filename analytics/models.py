@@ -5,6 +5,7 @@ from django.core.serializers.json import DjangoJSONEncoder
 from django.utils import timezone
 from calendar import monthrange
 import json
+import uuid
 
 from .fields import EncryptedCharField
 
@@ -341,8 +342,24 @@ class Report(models.Model):
     content_set = models.ForeignKey(
         ContentSet,
         on_delete=models.CASCADE,
+        null=True,
+        blank=True,
         related_name='reports',
-        help_text="The content set this report is based on"
+        help_text="The content set this report is based on (legacy, nullable)"
+    )
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='reports',
+        help_text="The user who owns this report"
+    )
+    publication = models.ForeignKey(
+        'Publication',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='reports',
+        help_text="The publication this report belongs to"
     )
     report_text = models.TextField(help_text="The markdown-formatted report content")
 
@@ -351,10 +368,10 @@ class Report(models.Model):
 
     class Meta:
         ordering = ['-created_at']
-        unique_together = [['name', 'content_set']]
+        unique_together = [['name', 'user', 'publication']]
 
     def __str__(self):
-        return f"{self.name} - {self.content_set.name}"
+        return f"{self.name} - {self.user.email}"
 
 
 class ExecutionLog(models.Model):
@@ -501,6 +518,38 @@ class ProcessingTemplate(models.Model):
 
     def __str__(self):
         return f"{self.name} ({self.user})"
+
+
+class PendingReport(models.Model):
+    """Tracks background report generation tasks"""
+
+    task_id = models.UUIDField(default=uuid.uuid4, unique=True)
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='pending_reports'
+    )
+    publication = models.ForeignKey(
+        Publication,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='pending_reports'
+    )
+    status = models.CharField(
+        max_length=20,
+        default='pending',
+        help_text="pending, complete, or error"
+    )
+    result_text = models.TextField(blank=True)
+    error_message = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"PendingReport {self.task_id} ({self.status})"
 
 
 class SurveyResponse(models.Model):

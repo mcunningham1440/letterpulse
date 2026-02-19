@@ -72,13 +72,41 @@
         position: relative;
         height: 350px;
     }
+
+    /* Report markdown rendering */
+    #insightsText h1 {
+        font-size: 1.35rem;
+        font-weight: 700;
+        border-bottom: 2px solid #dee2e6;
+        padding-bottom: 0.4rem;
+        margin-bottom: 1.5rem;
+    }
+    #insightsText h2 {
+        font-size: 1.1rem;
+        font-weight: 600;
+        margin-top: 2rem;
+        margin-bottom: 0.5rem;
+        color: #495057;
+    }
+    #insightsText h3 {
+        font-size: 0.75rem;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        color: #6c757d;
+        margin-top: 1.25rem;
+        margin-bottom: 0.5rem;
+    }
+    #insightsText table + p {
+        margin-top: 1.25rem;
+    }
 </style>
 {% endblock %}
 
 {% block content %}
 <div class="row">
     <div class="col-12">
-        {% if not has_processed_data and not content_sets and not has_reports %}
+        {% if not has_processed_data and not has_reports %}
         <!-- Fully empty state -->
         <div class="card">
             <div class="card-body">
@@ -210,8 +238,8 @@
         </div>
         {% endif %}
 
-        <!-- AI Insights Card (Report Generator) - unchanged -->
-        {% if has_processed_data or content_sets or has_reports %}
+        <!-- AI Insights Card (Report Generator) -->
+        {% if has_processed_data or has_reports %}
         <div class="card mt-4" id="insightsCard">
             <div class="card-header">
                 <h5 class="mb-0">Content Insights</h5>
@@ -219,50 +247,22 @@
             <div class="card-body">
                 <!-- Mode Toggle Switch -->
                 <div class="d-flex align-items-center gap-2 mb-4">
-                    <span class="form-label mb-0">Create report</span>
+                    <span class="form-label mb-0">Create</span>
                     <div class="form-check form-switch mb-0" style="padding-left: 0;">
                         <input class="form-check-input" type="checkbox" id="reportModeSwitch" role="switch" style="margin-left: 0;">
                     </div>
-                    <span class="form-label mb-0">View report</span>
+                    <span class="form-label mb-0">View saved</span>
                 </div>
 
                 <!-- Create Report Mode -->
                 <div id="createReportMode">
-                    <div class="dropdown" id="generateReportProgress" style="display: inline-block;">
-                        <button class="btn btn-primary dropdown-toggle" type="button" id="generateReportDropdown" data-bs-toggle="dropdown" aria-expanded="false" data-bs-auto-close="outside">
-                            <i class="bi bi-file-earmark-text"></i> Generate Report
+                    <div id="generateReportProgress" style="display: inline-block;">
+                        <button class="btn btn-primary" type="button" id="generateInsightsBtn">
+                            <i class="bi bi-file-earmark-text"></i> Get Insights
                         </button>
-                        <div class="dropdown-menu p-3" aria-labelledby="generateReportDropdown" style="min-width: 320px;">
-                            <div class="mb-3">
-                                <label for="reportContentSetSelect" class="form-label small fw-bold">Select Content Set</label>
-                                <select class="form-select form-select-sm" id="reportContentSetSelect">
-                                    <option value="">-- Choose a content set --</option>
-                                    {% for content_set in content_sets %}
-                                    <option value="{{ content_set.name }}" data-item-count="{{ content_set.get_items_count }}">
-                                        {{ content_set.name }} ({{ content_set.get_items_count }} items)
-                                    </option>
-                                    {% endfor %}
-                                </select>
-                                <div class="form-text small mt-2">
-                                    <span class="text-primary"
-                                          data-bs-toggle="tooltip"
-                                          data-bs-placement="bottom"
-                                          data-bs-html="true"
-                                          data-bs-custom-class="extract-tooltip"
-                                          title="This feature allows you to generate insights about your content's performance.<br><br>First, use the <b>Extract Content</b> button in <b>Posts</b> to extract content items and save them as a Content Set. Then select that set here before generating a report.<br><br>The report will identify patterns in what content performs best, highlight top and bottom performers, and provide actionable recommendations."
-                                          style="cursor: help;">
-                                        <i class="bi bi-info-circle"></i> How to use this feature
-                                    </span>
-                                </div>
-                            </div>
-                            <div class="d-flex justify-content-between align-items-center">
-                                <small class="text-muted">&#x1f9e0; 🧠 1 AI credit</small>
-                                <button type="button" class="btn btn-primary btn-sm" id="generateInsightsBtn">
-                                    <i class="bi bi-play-fill"></i> Run
-                                </button>
-                            </div>
-                        </div>
+                        <small class="text-muted ms-2">🧠 1 AI credit</small>
                     </div>
+                    <div class="text-muted small mt-2">Generate a report on what types of content your audience likes to click on based on the content in the table above</div>
                 </div>
 
                 <!-- View Report Mode -->
@@ -319,10 +319,22 @@
 <div class="confirm-overlay" id="lowItemCountModal" style="display: none;">
     <div class="confirm-modal">
         <h5>Generate Report?</h5>
-        <p id="lowItemCountMessage">Report generation works best with content sets with at least 10 items. Are you sure you want to proceed with only <span id="lowItemCountNum">0</span>?</p>
+        <p id="lowItemCountMessage">Report generation works best with at least 10 items. Are you sure you want to proceed with only <span id="lowItemCountNum">0</span>?</p>
         <div class="btn-group-confirm">
             <button type="button" class="btn btn-secondary" id="lowItemCountCancel">Cancel</button>
             <button type="button" class="btn btn-primary" id="lowItemCountProceed">Proceed</button>
+        </div>
+    </div>
+</div>
+
+<!-- High Item Count Warning Modal -->
+<div class="confirm-overlay" id="highItemCountModal" style="display: none;">
+    <div class="confirm-modal">
+        <h5>Large Item Set</h5>
+        <p>You have <strong><span id="highItemCountNum">0</span> items</strong> selected, but the report analyzes at most <strong>{{ max_report_items }}</strong>. The top and bottom performers from each section will be used; mid-range items will be skipped.</p>
+        <div class="btn-group-confirm">
+            <button type="button" class="btn btn-secondary" id="highItemCountCancel">Cancel</button>
+            <button type="button" class="btn btn-primary" id="highItemCountProceed">Proceed</button>
         </div>
     </div>
 </div>
@@ -341,9 +353,19 @@
     let allSectionNames = [];
     let filteredItems = [];
     let trendChart = null;
-    let currentContentSet = null;
     let currentReportText = null;
     let isViewingSavedReport = false;
+    let activeTaskId = '{{ pending_task_id }}' || null;
+
+    function renderMarkdown(text) {
+        const div = document.createElement('div');
+        div.innerHTML = marked.parse(text);
+        div.querySelectorAll('table').forEach(t => {
+            t.classList.add('table', 'table-bordered', 'table-sm');
+        });
+        return div.innerHTML;
+    }
+    let pollInterval = null;
     let currentPhraseData = [];
     let overallAvgCtr = 0;
 
@@ -717,8 +739,9 @@
         filteredItems = getFilteredItems();
         renderChart();
         renderTable(filteredItems);
-        updatePhraseAnalysis(filteredItems);
+        // updatePhraseAnalysis(filteredItems);
         updateDataTableTitle();
+        updateReportItemCount();
     }
 
     function updateDataTableTitle() {
@@ -888,8 +911,16 @@
     });
 
     // =========================================================================
-    // Report generator logic (unchanged from before)
+    // Report generator logic
     // =========================================================================
+
+    // Update the item count badge whenever filtered items change
+    function updateReportItemCount() {
+        const badge = document.getElementById('reportItemCount');
+        if (badge) {
+            badge.textContent = filteredItems.length + ' items';
+        }
+    }
 
     // Load all reports on page load
     async function loadAllReports() {
@@ -905,7 +936,6 @@
                 data.reports.forEach(report => {
                     const option = document.createElement('option');
                     option.value = report.id;
-                    option.dataset.contentSetName = report.content_set_name;
                     option.textContent = `${report.name} (${report.created_at})`;
                     reportSelect.appendChild(option);
                 });
@@ -930,7 +960,10 @@
             viewMode.style.display = 'none';
         }
 
-        document.getElementById('insightsContent').classList.add('d-none');
+        // Only hide report content if not actively generating
+        if (!activeTaskId) {
+            document.getElementById('insightsContent').classList.add('d-none');
+        }
         document.getElementById('deleteReportBtn').classList.add('d-none');
         document.getElementById('reportSelect').value = '';
     });
@@ -954,9 +987,8 @@
 
             if (data.success) {
                 currentReportText = data.report_text;
-                currentContentSet = data.content_set_name;
                 isViewingSavedReport = true;
-                document.getElementById('insightsText').innerHTML = marked.parse(data.report_text);
+                document.getElementById('insightsText').innerHTML = renderMarkdown(data.report_text);
                 document.getElementById('insightsContent').classList.remove('d-none');
                 document.getElementById('saveReportSection').style.display = 'none';
             } else {
@@ -967,13 +999,82 @@
         }
     });
 
+    // Update sidebar credit display
+    function updateCreditsDisplay(creditsUsed, creditsQuota) {
+        if (creditsUsed !== undefined && creditsQuota !== undefined) {
+            const usagePercentage = Math.round((creditsUsed / creditsQuota) * 100);
+            const usageBar = document.querySelector('.usage-bar-fill');
+            const usageText = document.querySelector('.usage-text');
+            if (usageBar && usageText) {
+                usageBar.style.width = usagePercentage + '%';
+                usageText.textContent = Math.round(creditsUsed) + ' / ' + Math.round(creditsQuota) + ' used';
+            }
+        }
+    }
+
+    // Poll for report status
+    function startPolling(taskId) {
+        activeTaskId = taskId;
+
+        pollInterval = setInterval(async () => {
+            try {
+                const response = await fetch(`/insights/report-status/${taskId}/`);
+                const data = await response.json();
+
+                if (!data.success) {
+                    clearInterval(pollInterval);
+                    pollInterval = null;
+                    activeTaskId = null;
+                    ProgressBar.forceClose({ containerId: 'generateReportProgress' });
+                    alert('Error checking report status: ' + data.error);
+                    document.getElementById('generateInsightsBtn').disabled = false;
+                    return;
+                }
+
+                if (data.status === 'complete') {
+                    clearInterval(pollInterval);
+                    pollInterval = null;
+                    activeTaskId = null;
+
+                    currentReportText = data.result_text;
+                    isViewingSavedReport = false;
+                    document.getElementById('insightsText').innerHTML = renderMarkdown(data.result_text);
+                    document.getElementById('insightsContent').classList.remove('d-none');
+                    document.getElementById('saveReportSection').style.display = 'inline-block';
+                    document.getElementById('report_name').value = '';
+
+                    const reportSelect = document.getElementById('reportSelect');
+                    if (reportSelect) reportSelect.value = '';
+
+                    updateCreditsDisplay(data.credits_used, data.credits_quota);
+                    ProgressBar.complete({ containerId: 'generateReportProgress', success: true, message: 'Report generated!' });
+                    document.getElementById('generateInsightsBtn').disabled = false;
+
+                } else if (data.status === 'error') {
+                    clearInterval(pollInterval);
+                    pollInterval = null;
+                    activeTaskId = null;
+
+                    ProgressBar.forceClose({ containerId: 'generateReportProgress' });
+                    alert(data.error_message || 'Error generating report');
+                    document.getElementById('generateInsightsBtn').disabled = false;
+                }
+                // If still 'pending', keep polling
+            } catch (error) {
+                clearInterval(pollInterval);
+                pollInterval = null;
+                activeTaskId = null;
+                ProgressBar.forceClose({ containerId: 'generateReportProgress' });
+                alert('Error polling report status: ' + error.message);
+                document.getElementById('generateInsightsBtn').disabled = false;
+            }
+        }, 2000);
+    }
+
     // Generate report - actual execution
-    async function executeReportGeneration(selectedSet) {
+    async function executeReportGeneration() {
         const button = document.getElementById('generateInsightsBtn');
         button.disabled = true;
-
-        const dropdown = bootstrap.Dropdown.getInstance(document.getElementById('generateReportDropdown'));
-        if (dropdown) dropdown.hide();
 
         ProgressBar.start({
             containerId: 'generateReportProgress',
@@ -982,8 +1083,17 @@
         });
 
         try {
+            // Collect items from the current filtered table view
+            // click_rate must be an array (generate_content_insights calls .apply(max) on it)
+            // section_name is required for water-filling allocation across sections
+            const itemsForReport = filteredItems.map(item => ({
+                text: item.text || '',
+                click_rate: item.click_rate_raw || [0],
+                section_name: item.section_name || 'Unknown',
+            }));
+
             const formData = new FormData();
-            formData.append('set_name', selectedSet);
+            formData.append('items_json', JSON.stringify(itemsForReport));
             formData.append('csrfmiddlewaretoken', '{{ csrf_token }}');
 
             const response = await fetch('/insights/generate-insights/', {
@@ -994,56 +1104,37 @@
             const data = await response.json();
 
             if (data.success) {
-                currentContentSet = selectedSet;
-                currentReportText = data.insights;
-                isViewingSavedReport = false;
-                document.getElementById('insightsText').innerHTML = marked.parse(data.insights);
-                document.getElementById('insightsContent').classList.remove('d-none');
-                document.getElementById('saveReportSection').style.display = 'inline-block';
-                document.getElementById('report_name').value = '';
-                document.getElementById('reportSelect').value = '';
-
-                if (data.credits_used !== undefined && data.credits_quota !== undefined) {
-                    const usagePercentage = Math.round((data.credits_used / data.credits_quota) * 100);
-                    const usageBar = document.querySelector('.usage-bar-fill');
-                    const usageText = document.querySelector('.usage-text');
-                    if (usageBar && usageText) {
-                        usageBar.style.width = usagePercentage + '%';
-                        usageText.textContent = Math.round(data.credits_used) + ' / ' + Math.round(data.credits_quota) + ' used';
-                    }
-                }
-
-                ProgressBar.complete({ containerId: 'generateReportProgress', success: true, message: 'Report generated!' });
+                updateCreditsDisplay(data.credits_used, data.credits_quota);
+                // Start polling for completion
+                startPolling(data.task_id);
             } else {
                 ProgressBar.forceClose({ containerId: 'generateReportProgress' });
                 alert(data.error || 'Error generating report');
+                button.disabled = false;
             }
         } catch (error) {
             ProgressBar.complete({ containerId: 'generateReportProgress', success: false, message: 'Error: ' + error.message });
-        } finally {
             button.disabled = false;
         }
     }
 
-    // Generate report - click handler with confirmation for low item count
+    // Generate report - click handler with confirmation for low/high item count
     document.getElementById('generateInsightsBtn')?.addEventListener('click', function() {
-        const select = document.getElementById('reportContentSetSelect');
-        const selectedSet = select.value;
+        const itemCount = filteredItems.length;
 
-        if (!selectedSet) {
-            alert('Please select a content set.');
+        if (itemCount === 0) {
+            alert('No items to analyze. Apply filters to show items in the table first.');
             return;
         }
-
-        const selectedOption = select.options[select.selectedIndex];
-        const itemCount = parseInt(selectedOption.dataset.itemCount) || 0;
 
         if (itemCount < 10) {
             document.getElementById('lowItemCountNum').textContent = itemCount;
             document.getElementById('lowItemCountModal').style.display = 'flex';
-            document.getElementById('lowItemCountModal').dataset.selectedSet = selectedSet;
+        } else if (itemCount > {{ max_report_items }}) {
+            document.getElementById('highItemCountNum').textContent = itemCount;
+            document.getElementById('highItemCountModal').style.display = 'flex';
         } else {
-            executeReportGeneration(selectedSet);
+            executeReportGeneration();
         }
     });
 
@@ -1052,11 +1143,29 @@
         document.getElementById('lowItemCountModal').style.display = 'none';
     });
     document.getElementById('lowItemCountProceed')?.addEventListener('click', function() {
-        const modal = document.getElementById('lowItemCountModal');
-        const selectedSet = modal.dataset.selectedSet;
-        modal.style.display = 'none';
-        executeReportGeneration(selectedSet);
+        document.getElementById('lowItemCountModal').style.display = 'none';
+        executeReportGeneration();
     });
+
+    // High item count modal buttons
+    document.getElementById('highItemCountCancel')?.addEventListener('click', function() {
+        document.getElementById('highItemCountModal').style.display = 'none';
+    });
+    document.getElementById('highItemCountProceed')?.addEventListener('click', function() {
+        document.getElementById('highItemCountModal').style.display = 'none';
+        executeReportGeneration();
+    });
+
+    // Resume polling on page load if there's a pending report
+    if (activeTaskId) {
+        document.getElementById('generateInsightsBtn').disabled = true;
+        ProgressBar.start({
+            containerId: 'generateReportProgress',
+            expectedDuration: {{ progress_durations.generate_report }},
+            subtext: 'Analyzing content performance... (resumed)'
+        });
+        startPolling(activeTaskId);
+    }
 
     // Save report
     document.getElementById('saveReportBtn')?.addEventListener('click', async function() {
@@ -1067,7 +1176,7 @@
             return;
         }
 
-        if (!currentContentSet || !currentReportText) {
+        if (!currentReportText) {
             alert('No report to save.');
             return;
         }
@@ -1079,7 +1188,6 @@
             const formData = new FormData();
             formData.append('report_name', reportName);
             formData.append('report_text', currentReportText);
-            formData.append('set_name', currentContentSet);
             formData.append('csrfmiddlewaretoken', '{{ csrf_token }}');
 
             const response = await fetch('/insights/save-report/', {
