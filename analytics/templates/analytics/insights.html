@@ -1012,9 +1012,13 @@
         }
     }
 
+    const REPORT_TASK_KEY = 'lp_report_task';
+
     // Poll for report status
     function startPolling(taskId) {
         activeTaskId = taskId;
+        // Record start time so progress can be resumed accurately if user navigates away
+        localStorage.setItem(REPORT_TASK_KEY, JSON.stringify({ taskId, startTime: Date.now() }));
 
         pollInterval = setInterval(async () => {
             try {
@@ -1035,6 +1039,7 @@
                     clearInterval(pollInterval);
                     pollInterval = null;
                     activeTaskId = null;
+                    localStorage.removeItem(REPORT_TASK_KEY);
 
                     currentReportText = data.result_text;
                     isViewingSavedReport = false;
@@ -1054,6 +1059,7 @@
                     clearInterval(pollInterval);
                     pollInterval = null;
                     activeTaskId = null;
+                    localStorage.removeItem(REPORT_TASK_KEY);
 
                     ProgressBar.forceClose({ containerId: 'generateReportProgress' });
                     alert(data.error_message || 'Error generating report');
@@ -1064,6 +1070,7 @@
                 clearInterval(pollInterval);
                 pollInterval = null;
                 activeTaskId = null;
+                localStorage.removeItem(REPORT_TASK_KEY);
                 ProgressBar.forceClose({ containerId: 'generateReportProgress' });
                 alert('Error polling report status: ' + error.message);
                 document.getElementById('generateInsightsBtn').disabled = false;
@@ -1159,10 +1166,22 @@
     // Resume polling on page load if there's a pending report
     if (activeTaskId) {
         document.getElementById('generateInsightsBtn').disabled = true;
+
+        // Calculate how far the bar should already be based on elapsed time
+        const expectedDuration = {{ progress_durations.generate_report }};
+        const intervalMs = (expectedDuration * 1000) / 9;
+        const stored = JSON.parse(localStorage.getItem(REPORT_TASK_KEY) || 'null');
+        let startProgress = 0;
+        if (stored && stored.taskId === activeTaskId) {
+            const elapsedMs = Date.now() - stored.startTime;
+            startProgress = Math.min(Math.floor(elapsedMs / intervalMs) * 10, 90);
+        }
+
         ProgressBar.start({
             containerId: 'generateReportProgress',
-            expectedDuration: {{ progress_durations.generate_report }},
-            subtext: 'Analyzing content performance... (resumed)'
+            expectedDuration: expectedDuration,
+            subtext: 'Analyzing content performance...',
+            startProgress: startProgress,
         });
         startPolling(activeTaskId);
     }

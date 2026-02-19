@@ -227,7 +227,7 @@
                   data-bs-placement="bottom"
                   data-bs-html="true"
                   data-bs-custom-class="extract-tooltip"
-                  title="Define the sections of your newsletter (e.g. 'Quick Bites', 'Deep Dives') so the AI knows what to extract from each post.<br><br>For each section, enter a <b>name</b> and optionally a <b>description</b> to help the AI identify it. You can drag sections to reorder them, and save layouts as templates for reuse.<br><br>After extraction, you'll review results post-by-post and can approve, edit, or re-process each one. Approved posts are saved and appear in the <b>Insights</b> tab for trend analysis."
+                  title="<b>Processing</b> splits your newsletters into <b>sections</b> that you specify. Each of those sections can be made up of one or more <b>items,</b> which are automatically detected by our AI.<br><br>For example, if your newsletter consists of a Deep Dive section with an essay on one topic and a Quick Bites section with a series of 5 news links, the system would extract one item—the essay—from Deep Dive and 5 items—the 5 links—from Quick Bites. You will then be asked to save these for analysis in the <b>Insights</b> tab.<br><br>Enter your newsletter's section titles (e.g. 'Quick Bites', 'Deep Dives') so the AI knows what to extract from each post.<br><br>For each section, enter a <b>name</b> and optionally a <b>description</b> to help the AI identify it. You can save layouts as templates for reuse.<br><br>If the AI is having trouble identifying a section or the items in it, you can add <b>special instructions</b> to help it out. Some examples:<br><br><i>This section is titled ‘Monday Deep Dive’ in the Monday issue and ‘Thursday Deep Dive’ in the Thursday issue.</i><br><br><i>There are always 6 items in this section.</i><br><br><i>Do not include the ‘Thanks for reading!’ at the bottom as a separate item.</i>"
                   style="cursor: help;">
                 <i class="bi bi-info-circle"></i> How to use this feature
             </span>
@@ -241,8 +241,9 @@
                     <div class="flex-grow-1">
                         <input type="text" class="form-control form-control-sm mb-1 section-name"
                                placeholder="Section name">
-                        <input type="text" class="form-control form-control-sm section-desc"
-                               placeholder="Section description (optional)">
+                        <textarea class="form-control form-control-sm section-desc"
+                                  placeholder="Special instructions (optional)"
+                                  rows="1" style="resize: vertical; overflow-y: hidden;"></textarea>
                     </div>
                 </div>
             </div>
@@ -479,13 +480,22 @@
                 <div class="flex-grow-1">
                     <input type="text" class="form-control form-control-sm mb-1 section-name"
                            placeholder="Section name">
-                    <input type="text" class="form-control form-control-sm section-desc"
-                           placeholder="Section description (optional)">
+                    <textarea class="form-control form-control-sm section-desc"
+                              placeholder="Special instructions (optional)"
+                              rows="1" style="resize: vertical; overflow-y: hidden;"></textarea>
                 </div>
             </div>
         `;
         fields.appendChild(div);
         updateSectionUI();
+    });
+
+    // Auto-expand section-desc textareas as user types
+    document.getElementById('sectionFields').addEventListener('input', function(e) {
+        if (e.target.classList.contains('section-desc')) {
+            e.target.style.height = 'auto';
+            e.target.style.height = e.target.scrollHeight + 'px';
+        }
     });
 
     // Remove last section
@@ -1117,12 +1127,19 @@
                     <div class="flex-grow-1">
                         <input type="text" class="form-control form-control-sm mb-1 section-name"
                                placeholder="Section name" value="${(section.name || '').replace(/"/g, '&quot;')}">
-                        <input type="text" class="form-control form-control-sm section-desc"
-                               placeholder="Section description (optional)" value="${(section.description || '').replace(/"/g, '&quot;')}">
+                        <textarea class="form-control form-control-sm section-desc"
+                                  placeholder="Special instructions (optional)"
+                                  rows="1" style="resize: vertical; overflow-y: hidden;">${(section.description || '').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</textarea>
                     </div>
                 </div>
             `;
             fields.appendChild(div);
+            // Auto-size textarea for pre-populated content
+            const ta = div.querySelector('.section-desc');
+            if (ta && ta.value) {
+                ta.style.height = 'auto';
+                ta.style.height = ta.scrollHeight + 'px';
+            }
         });
 
         updateSectionUI();
