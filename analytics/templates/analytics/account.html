@@ -106,27 +106,27 @@
                 </div>
                 {% endif %}
 
-                <!-- API Token Form -->
+                <!-- API Key Form -->
                 <form method="post" action="{% url 'analytics:account' %}" id="credentialsForm">
                     {% csrf_token %}
                     <input type="hidden" name="action" value="update_credentials">
 
                     <div class="mb-3">
-                        <label for="beehiiv_token" class="form-label">API Token</label>
+                        <label for="beehiiv_token" class="form-label">API Key</label>
                         <div class="input-group">
                             <input type="password"
                                    class="form-control"
                                    id="beehiiv_token"
                                    name="beehiiv_token"
                                    value="{{ usage.beehiiv_token }}"
-                                   placeholder="Enter your API token">
+                                   placeholder="Enter your API key">
                             <button class="btn btn-outline-secondary" type="button" id="toggleToken">
                                 <i class="bi bi-eye"></i>
                             </button>
                         </div>
                         <div class="form-text">
                             {% if not usage.beehiiv_token %}
-                            Generate an API key in your Beehiiv dashboard under Settings → Integrations → API.
+                            Generate an API key in your Beehiiv dashboard by navigating to Settings and clicking on API under Workspace Settings.
                             <br>
                             {% endif %}
                             <span class="text-primary"
@@ -134,7 +134,7 @@
                                   data-bs-placement="bottom"
                                   data-bs-html="true"
                                   data-bs-custom-class="extract-tooltip"
-                                  title="<b>We take your privacy and security seriously.</b><br><br>Your API token is stored in an encrypted database. You can clear it from our system at any time, or deactivate it in the API page on the Beehiiv website.<br><br>We will never sell or share your data with third parties."
+                                  title="<b>We take your privacy and security seriously.</b><br><br>Your API key is stored in an encrypted database. You can clear it from our system at any time, or deactivate it in the API page on the Beehiiv website.<br><br>We will never sell or share your data with third parties."
                                   style="cursor: help;">
                                 <i class="bi bi-info-circle"></i> How we ensure your privacy and security
                             </span>
@@ -143,7 +143,7 @@
 
                     <div class="d-flex gap-2 mb-3">
                         <button type="submit" class="btn btn-primary">
-                            <i class="bi bi-check-lg me-1"></i>Save Token
+                            <i class="bi bi-check-lg me-1"></i>Save Key
                         </button>
                         {% if usage.beehiiv_token %}
                         <button type="button" class="btn btn-outline-danger" id="clearCredentials">

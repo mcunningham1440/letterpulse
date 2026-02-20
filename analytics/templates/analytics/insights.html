@@ -262,7 +262,7 @@
                         </button>
                         <small class="text-muted ms-2">🧠 1 AI credit</small>
                     </div>
-                    <div class="text-muted small mt-2">Generate a report on what types of content your audience likes to click on based on the content in the table above</div>
+                    <div class="text-muted small mt-2">Generate a report on what types of content your audience likes to click on based on the items in the table above</div>
                 </div>
 
                 <!-- View Report Mode -->
@@ -629,9 +629,33 @@
         trendChart = new Chart(ctx, {
             type: 'line',
             data: { datasets },
+            plugins: [{
+                id: 'yearLabels',
+                afterDraw: function(chart) {
+                    const xScale = chart.scales && chart.scales.x;
+                    if (!xScale || !xScale.ticks || !xScale.ticks.length) return;
+                    const c = chart.ctx;
+                    c.save();
+                    c.fillStyle = Chart.defaults.color || 'rgba(0,0,0,0.5)';
+                    c.font = '12px ' + ((Chart.defaults.font && Chart.defaults.font.family) || 'sans-serif');
+                    c.textAlign = 'center';
+                    c.textBaseline = 'top';
+                    let lastYear = null;
+                    xScale.ticks.forEach(tick => {
+                        const year = new Date(tick.value).getFullYear();
+                        if (isNaN(year) || (lastYear !== null && lastYear === year)) return;
+                        lastYear = year;
+                        const x = xScale.getPixelForValue(tick.value);
+                        const y = xScale.bottom + 4;
+                        if (y + 14 <= chart.height) c.fillText(String(year), x, y);
+                    });
+                    c.restore();
+                }
+            }],
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
+                layout: { padding: { bottom: 20 } },
                 interaction: {
                     mode: 'index',
                     intersect: false,

@@ -102,7 +102,7 @@ Tracks AI usage credits and API credentials per user:
 - `monthly_quota`: Credits available per month (default from `settings.DEFAULT_MONTHLY_CREDITS`)
 - `used_this_period`: Credits consumed this period
 - `period_start`: Start of current billing period (resets on user's signup anniversary each month)
-- `beehiiv_token`: User's Beehiiv API token
+- `beehiiv_token`: User's Beehiiv API key
 - `beehiiv_pub_id`: User's currently selected Beehiiv publication ID
 - `api_key_valid`: Boolean indicating if the API key has been validated
 - `available_publications`: JSON list of publications available to the user
@@ -111,7 +111,7 @@ Tracks AI usage credits and API credentials per user:
 
 Billing cycle: Credits reset on the same day of the month as the user's signup date (e.g., signup on the 15th means credits renew on the 15th of each month). For months with fewer days, renewal occurs on the last day of the month.
 
-API key validation: When a user enters their API token, it is immediately validated against the Beehiiv `/publications` endpoint. If valid, the list of available publications is cached and the user can select which publication to work with.
+API key validation: When a user enters their API key, it is immediately validated against the Beehiiv `/publications` endpoint. If valid, the list of available publications is cached and the user can select which publication to work with.
 
 ### ExecutionLog
 Low-overhead execution logging for HTTP requests and function calls:
@@ -242,7 +242,7 @@ Uses django-allauth for email-based authentication:
 
 ### 3. Account Page (`/account/`)
 - **Usage Stats**: View AI credits used and remaining
-- **API Credentials**: Configure Beehiiv API token (validated on save)
+- **API Credentials**: Configure Beehiiv API key (validated on save)
 - **Publication Selector**: Dropdown to switch between available publications (populated from API)
 - **Account Info**: View email and change password
 
