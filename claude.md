@@ -205,6 +205,9 @@ Uses django-allauth for email-based authentication:
 - Password reset via email
 - All views are protected with `@login_required` except the public about page
 - UsageAccount is auto-created for new users via signals
+- "Successfully signed in as" message is suppressed via custom adapter
+- After login, users without API credentials are redirected to Account page (not Posts); users with credentials go to Posts
+- The "Please configure your Beehiiv API credentials" message only appears when navigating to Posts/Insights without credentials, not immediately after login
 
 ### Public Pages
 - `/` - About page (unauthenticated users see landing page; authenticated users redirect to posts)
@@ -222,10 +225,10 @@ Uses django-allauth for email-based authentication:
   - Shows progress bar during extraction
   - If any selected posts already have saved ProcessedPost data, shows an overwrite warning before proceeding
   - Opens a review overlay popup (post-by-post) where users can:
-    - **Approve**: Save the post's sections to the `ProcessedPost` table
+    - **Save and Proceed**: Save the post's sections to the `ProcessedPost` table
     - **Delete Selected Items**: Remove specific items from section tables
     - **Re-process post**: Re-run extraction with custom instructions (costs 1 additional credit, shows progress bar)
-    - **Delete**: Skip the post without saving
+    - **Proceed Without Saving**: Skip the post without saving
   - On review completion, page reloads to update the Processed column
 - **Processed Column**: Shows a green checkmark for posts that have been processed and saved
 - **Download Click Visualization**: ZIP of HTML files with click counts overlaid on links

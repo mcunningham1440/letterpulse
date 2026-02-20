@@ -282,8 +282,7 @@
                 <div class="mt-4 d-none" id="insightsContent">
                     <hr class="my-4">
 
-                    <div class="d-flex justify-content-between align-items-center mb-4">
-                        <h6 class="fw-bold mb-0">Report</h6>
+                    <div class="text-end mb-4">
                         <div id="saveReportSection" class="dropdown" style="display: inline-block;">
                             <button class="btn btn-success dropdown-toggle" type="button" id="saveReportDropdown" data-bs-toggle="dropdown" aria-expanded="false" data-bs-auto-close="outside">
                                 <i class="bi bi-save"></i> Save Report
@@ -327,17 +326,6 @@
     </div>
 </div>
 
-<!-- High Item Count Warning Modal -->
-<div class="confirm-overlay" id="highItemCountModal" style="display: none;">
-    <div class="confirm-modal">
-        <h5>Large Item Set</h5>
-        <p>You have <strong><span id="highItemCountNum">0</span> items</strong> selected, but the report analyzes at most <strong>{{ max_report_items }}</strong>. The top and bottom performers from each section will be used; mid-range items will be skipped.</p>
-        <div class="btn-group-confirm">
-            <button type="button" class="btn btn-secondary" id="highItemCountCancel">Cancel</button>
-            <button type="button" class="btn btn-primary" id="highItemCountProceed">Proceed</button>
-        </div>
-    </div>
-</div>
 {% endblock %}
 
 {% block extra_js %}
@@ -791,7 +779,7 @@
         if (startDate && endDate) {
             datePart = ' from ' + formatDateLabel(startDate) + ' to ' + formatDateLabel(endDate);
         } else if (startDate) {
-            datePart = ' from ' + formatDateLabel(startDate);
+            datePart = ' beginning ' + formatDateLabel(startDate);
         } else if (endDate) {
             datePart = ' through ' + formatDateLabel(endDate);
         }
@@ -975,21 +963,32 @@
     document.getElementById('reportModeSwitch')?.addEventListener('change', function() {
         const createMode = document.getElementById('createReportMode');
         const viewMode = document.getElementById('viewReportMode');
+        const insightsContent = document.getElementById('insightsContent');
 
         if (this.checked) {
+            // Switching to View saved mode
             createMode.style.display = 'none';
             viewMode.style.display = 'block';
+            // Hide generated report content (will show saved report when selected)
+            if (!activeTaskId) {
+                insightsContent.classList.add('d-none');
+            }
+            document.getElementById('deleteReportBtn').classList.add('d-none');
+            document.getElementById('reportSelect').value = '';
         } else {
+            // Switching back to Create mode
             createMode.style.display = 'block';
             viewMode.style.display = 'none';
+            document.getElementById('deleteReportBtn').classList.add('d-none');
+            document.getElementById('reportSelect').value = '';
+            // Restore generated report if one exists and we're not viewing a saved report
+            if (currentReportText && !isViewingSavedReport) {
+                insightsContent.classList.remove('d-none');
+                document.getElementById('saveReportSection').style.display = 'inline-block';
+            } else if (!activeTaskId) {
+                insightsContent.classList.add('d-none');
+            }
         }
-
-        // Only hide report content if not actively generating
-        if (!activeTaskId) {
-            document.getElementById('insightsContent').classList.add('d-none');
-        }
-        document.getElementById('deleteReportBtn').classList.add('d-none');
-        document.getElementById('reportSelect').value = '';
     });
 
     // Handle report selection (View mode)
@@ -1149,7 +1148,7 @@
         }
     }
 
-    // Generate report - click handler with confirmation for low/high item count
+    // Generate report - click handler with confirmation for low item count
     document.getElementById('generateInsightsBtn')?.addEventListener('click', function() {
         const itemCount = filteredItems.length;
 
@@ -1161,9 +1160,6 @@
         if (itemCount < 10) {
             document.getElementById('lowItemCountNum').textContent = itemCount;
             document.getElementById('lowItemCountModal').style.display = 'flex';
-        } else if (itemCount > {{ max_report_items }}) {
-            document.getElementById('highItemCountNum').textContent = itemCount;
-            document.getElementById('highItemCountModal').style.display = 'flex';
         } else {
             executeReportGeneration();
         }
@@ -1178,14 +1174,6 @@
         executeReportGeneration();
     });
 
-    // High item count modal buttons
-    document.getElementById('highItemCountCancel')?.addEventListener('click', function() {
-        document.getElementById('highItemCountModal').style.display = 'none';
-    });
-    document.getElementById('highItemCountProceed')?.addEventListener('click', function() {
-        document.getElementById('highItemCountModal').style.display = 'none';
-        executeReportGeneration();
-    });
 
     // Resume polling on page load if there's a pending report
     if (activeTaskId) {

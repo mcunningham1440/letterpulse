@@ -233,6 +233,11 @@ PROGRESS_DURATIONS = {
     'process_posts': 20,        # empirical
 }
 
+# User-facing time warnings (minutes)
+EXPECTED_TIMES = {
+    'refresh_posts_first_load': 2,  # first-time post load warning
+}
+
 # =============================================================================
 # Execution Logging Configuration
 # =============================================================================

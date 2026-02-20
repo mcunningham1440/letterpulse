@@ -19,71 +19,9 @@
 </div>
 
 <div class="row">
-    <!-- Left Column: Usage Stats + Account Info -->
+    <!-- Left Column: API Credentials + Usage Stats -->
     <div class="col-md-6">
-        <!-- Usage Stats Card -->
-        <div class="card">
-            <div class="card-header">
-                🧠 AI Credits Usage
-            </div>
-            <div class="card-body">
-                <div class="d-flex justify-content-between align-items-center mb-2">
-                    <span class="text-muted">AI Credits Used This Month</span>
-                    <span class="fw-bold">{{ usage.used_this_period }} / {{ usage.monthly_quota }}</span>
-                </div>
-                <div class="progress" style="height: 12px;">
-                    <div class="progress-bar bg-success" role="progressbar"
-                         style="width: {{ usage.usage_percentage }}%"
-                         aria-valuenow="{{ usage.usage_percentage }}"
-                         aria-valuemin="0"
-                         aria-valuemax="100">
-                    </div>
-                </div>
-                <div class="mt-2 text-muted small">
-                    <i class="bi bi-arrow-repeat me-1"></i>
-                    Credits renew {{ usage.next_renewal_date|date:"F j, Y" }}
-                </div>
-            </div>
-        </div>
-
-        <!-- Account Info Card -->
-        <div class="card">
-            <div class="card-header">
-                <i class="bi bi-person me-2"></i>Account Information
-            </div>
-            <div class="card-body">
-                <div class="mb-3">
-                    <label class="form-label text-muted">Email</label>
-                    <div class="fw-medium">{{ user.email }}</div>
-                </div>
-                <div class="mb-3">
-                    <label class="form-label text-muted">Member Since</label>
-                    <div class="fw-medium">{{ user.date_joined|date:"F j, Y" }}</div>
-                </div>
-                <form method="post" action="{% url 'analytics:account' %}" class="mb-3" id="timezoneForm">
-                    {% csrf_token %}
-                    <input type="hidden" name="action" value="update_timezone">
-                    <label for="timezone" class="form-label text-muted">Timezone</label>
-                    <select class="form-select" id="timezone" name="timezone" style="max-width: 280px;">
-                        {% for tz_value, tz_label in timezone_choices %}
-                        <option value="{{ tz_value }}" {% if usage.timezone == tz_value %}selected{% endif %}>
-                            {{ tz_label }}
-                        </option>
-                        {% endfor %}
-                    </select>
-                    <div class="form-text">Dates will be displayed in your selected timezone</div>
-                </form>
-                <div>
-                    <a href="{% url 'account_change_password' %}" class="btn btn-outline-secondary btn-sm">
-                        <i class="bi bi-lock me-1"></i>Change Password
-                    </a>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- Right Column: API Credentials Card -->
-    <div class="col-md-6">
+        <!-- API Credentials Card -->
         <div class="card">
             <div class="card-header">
                 <i class="bi bi-key me-2"></i>Beehiiv API Credentials
@@ -173,6 +111,68 @@
                 </form>
                 {% endif %}
 
+            </div>
+        </div>
+
+        <!-- Usage Stats Card -->
+        <div class="card">
+            <div class="card-header">
+                🧠 AI Credits Usage
+            </div>
+            <div class="card-body">
+                <div class="d-flex justify-content-between align-items-center mb-2">
+                    <span class="text-muted">AI Credits Used This Month</span>
+                    <span class="fw-bold">{{ usage.used_this_period }} / {{ usage.monthly_quota }}</span>
+                </div>
+                <div class="progress" style="height: 12px;">
+                    <div class="progress-bar bg-success" role="progressbar"
+                         style="width: {{ usage.usage_percentage }}%"
+                         aria-valuenow="{{ usage.usage_percentage }}"
+                         aria-valuemin="0"
+                         aria-valuemax="100">
+                    </div>
+                </div>
+                <div class="mt-2 text-muted small">
+                    <i class="bi bi-arrow-repeat me-1"></i>
+                    Credits renew {{ usage.next_renewal_date|date:"F j, Y" }}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Right Column: Account Info -->
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">
+                <i class="bi bi-person me-2"></i>Account Information
+            </div>
+            <div class="card-body">
+                <div class="mb-3">
+                    <label class="form-label text-muted">Email</label>
+                    <div class="fw-medium">{{ user.email }}</div>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label text-muted">Member Since</label>
+                    <div class="fw-medium">{{ user.date_joined|date:"F j, Y" }}</div>
+                </div>
+                <form method="post" action="{% url 'analytics:account' %}" class="mb-3" id="timezoneForm">
+                    {% csrf_token %}
+                    <input type="hidden" name="action" value="update_timezone">
+                    <label for="timezone" class="form-label text-muted">Timezone</label>
+                    <select class="form-select" id="timezone" name="timezone" style="max-width: 280px;">
+                        {% for tz_value, tz_label in timezone_choices %}
+                        <option value="{{ tz_value }}" {% if usage.timezone == tz_value %}selected{% endif %}>
+                            {{ tz_label }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                    <div class="form-text">Dates will be displayed in your selected timezone</div>
+                </form>
+                <div>
+                    <a href="{% url 'account_change_password' %}" class="btn btn-outline-secondary btn-sm">
+                        <i class="bi bi-lock me-1"></i>Change Password
+                    </a>
+                </div>
             </div>
         </div>
     </div>
