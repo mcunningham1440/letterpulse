@@ -21,7 +21,7 @@ from django.db import transaction
 from django.db.models import F
 from Levenshtein import distance as levenshtein_distance
 from dotenv import load_dotenv
-from analytics.prompts import PARSING_PROMPT, ANALYSIS_PROMPT, TIP_PROMPT
+from analytics.prompts import PARSING_PROMPT, SECTION_PARSING_PROMPT, INSIGHTS_PROMPT, TIP_PROMPT
 
 logger = logging.getLogger(__name__)
 
@@ -568,30 +568,221 @@ async def extract_items_parallel(posts_data, content_desc, htmls, clicks_by_id, 
     return items_list[::-1]
 
 
+async def extract_sections(post_html, sections, clicks_dict, title, post_date,
+                           unique_email_opens, custom_instructions="", user=None):
+    """
+    Extract items from a single post HTML grouped by named sections.
+
+    Args:
+        post_html: HTML content of the post
+        sections: List of dicts with 'name' and 'description' keys
+        clicks_dict: Dictionary mapping URLs to click counts for this post
+        title: Post title
+        post_date: Date the post was published
+        unique_email_opens: Number of unique email opens
+        custom_instructions: Optional additional instructions for re-processing
+        user: Django user object for credit charging (optional)
+
+    Returns:
+        List of section dicts: [{"section_name": "...", "items": [...]}, ...]
+    """
+    # Step 1: Get line numbers for sections matching descriptions
+    section_names = [s['name'] for s in sections]
+
+    # Build user message with sections (description is optional)
+    sections_xml = "<Sections>\n"
+    for s in sections:
+        desc = s.get("description", "").strip()
+        if desc:
+            sections_xml += f'<Section name="{s["name"]}">{desc}</Section>\n'
+        else:
+            sections_xml += f'<Section name="{s["name"]}">Items in the {s["name"]} section</Section>\n'
+    sections_xml += "</Sections>"
+
+    if custom_instructions:
+        sections_xml += f"\n\n<CustomInstructions>\n{custom_instructions}\n</CustomInstructions>"
+
+    soup = BeautifulSoup(post_html, 'html.parser')
+    all_lines = soup.prettify().split('\n')
+    numbered_lines = [f"{i+1}\t{line}" for i, line in enumerate(all_lines)]
+
+    # Build dynamic Pydantic models with Literal enum for section names
+    SectionNameLiteral = Literal[tuple(section_names)] if len(section_names) > 1 else Literal[section_names[0]]
+
+    class Item(BaseModel):
+        StartLine: int
+        EndLine: int
+
+    class Section(BaseModel):
+        Name: SectionNameLiteral
+        Items: List[Item]
+
+    class AllSections(BaseModel):
+        Sections: List[Section]
+
+    messages = [
+        {"role": "system", "content": SECTION_PARSING_PROMPT},
+        {"role": "user", "content": '\n'.join(numbered_lines)},
+        {"role": "user", "content": sections_xml}
+    ]
+
+    response = await llm_call("extract_sections", messages, "gpt-5.1", "low",
+                              response_format=AllSections, user=user)
+    output = response.output[-1].content[0].parsed
+
+    # Step 2: Extract text and links from each section's items
+    html_links_raw = [link['href'] for link in soup.find_all('a') if link.has_attr('href')]
+    link_to_clicks = match_links_with_clicks(html_links_raw, clicks_dict)
+
+    result_sections = []
+    for section in output.Sections:
+        section_items = []
+        for item in section.Items:
+            reconstructed_html = "\n".join(all_lines[item.StartLine - 1:item.EndLine])
+            item_soup = BeautifulSoup(reconstructed_html, 'html.parser')
+
+            text = item_soup.get_text(" ", strip=True)
+            selected_links = [link['href'] for link in item_soup.find_all('a') if link.has_attr('href')]
+            clicks = [link_to_clicks.get(link, 0) for link in selected_links]
+
+            section_items.append({
+                "post_title": title,
+                "post_date": str(post_date) if post_date else None,
+                "text": text,
+                "links": selected_links,
+                "clicks": clicks,
+                "click_rate": [c / unique_email_opens if unique_email_opens > 0 else 0 for c in clicks]
+            })
+
+        result_sections.append({
+            "section_name": section.Name,
+            "items": section_items
+        })
+
+    # Ensure all section names are present in result (even if empty)
+    result_names = {s["section_name"] for s in result_sections}
+    for name in section_names:
+        if name not in result_names:
+            result_sections.append({"section_name": name, "items": []})
+
+    return result_sections
+
+
+async def extract_sections_parallel(posts_data, sections, htmls, clicks_by_id,
+                                    custom_instructions="", user=None):
+    """
+    Extract sections from multiple posts in parallel.
+
+    Args:
+        posts_data: List of tuples (post_id, title, html_filename, post_date, unique_email_opens)
+        sections: List of dicts with 'name' and 'description' keys
+        htmls: Dictionary of HTML content keyed by filename
+        clicks_by_id: Dictionary mapping post IDs to their clicks dictionaries
+        custom_instructions: Optional additional instructions
+        user: Django user object (optional)
+
+    Returns:
+        Dict mapping post_id to list of section dicts
+    """
+    tasks = []
+    post_ids_order = []
+    for post_id, title, html_filename, post_date, unique_email_opens in posts_data:
+        if html_filename in htmls and post_id in clicks_by_id:
+            current_html = htmls[html_filename]
+            clicks_dict = clicks_by_id[post_id]
+            task = extract_sections(current_html, sections, clicks_dict, title,
+                                    post_date, unique_email_opens, custom_instructions, user=user)
+            tasks.append(task)
+            post_ids_order.append(post_id)
+
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    results_by_post = {}
+    for i, result in enumerate(results):
+        if isinstance(result, Exception):
+            logger.error(f"Error extracting sections from post {post_ids_order[i]}: {str(result)}")
+        else:
+            results_by_post[post_ids_order[i]] = result
+
+    return results_by_post
+
+
 async def generate_content_insights(items_display, user=None):
     """
     Generate AI insights from content items using OpenAI API.
 
+    Distributes the MAX_REPORT_ITEMS budget across sections using a water-filling
+    algorithm. When a section exceeds its allocation, the top and bottom half by
+    CTR are included and the middle is omitted (with a note to the LLM).
+
     Args:
-        items_display: DataFrame containing the content items with clicks
+        items_display: DataFrame with columns including 'text', 'click_rate',
+                       and 'section_name'
         user: Django user object for credit charging (optional)
 
     Returns:
-        OpenAI response object containing structured insights with 3 tags
+        OpenAI response object containing the generated report
     """
-    # Use the items with clicks formatted as string
-    items_display["max_click_rate"] = items_display["click_rate"].apply(max)
-    items_display["max_click_rate_percentile"] = items_display["max_click_rate"].rank(pct=True)
+    from django.conf import settings as django_settings
 
-    items_display = items_display.sort_values(by="max_click_rate", ascending=False).reset_index(drop=True)
-    
+    max_items = django_settings.MAX_REPORT_ITEMS
+
+    items_display = items_display.copy()
+    items_display["max_click_rate"] = items_display["click_rate"].apply(max)
+    items_display["max_click_rate_percentile_all"] = items_display["max_click_rate"].rank(pct=True)
+
+    # Water-filling allocation: distribute max_items across sections evenly,
+    # capped by each section's actual count. Processing smallest sections first
+    # ensures they don't waste budget that larger sections can use.
+    section_counts = items_display["section_name"].value_counts(ascending=True)
+    n_sections = len(section_counts)
+    remaining = max_items
+    n_items_per_section = {}
+
+    for i, (section, count) in enumerate(section_counts.items()):
+        alloc = min(remaining // (n_sections - i), count)
+        n_items_per_section[section] = alloc
+        remaining -= alloc
+
     newsletter_items = ""
-    for i, row in items_display.iterrows():
-        newsletter_items += f"ID {i}. " + row["text"] + "\n"
-        newsletter_items += f"CTR: {round(row['max_click_rate'] * 100, 2)}% (percentile {row['max_click_rate_percentile']:.0%})\n\n"
-        
+    for section in sorted(items_display["section_name"].unique()):
+        # Sort descending by CTR; compute section percentile on the full section
+        # before trimming so ranks reflect the complete distribution.
+        section_items = (
+            items_display[items_display["section_name"] == section]
+            .copy()
+            .sort_values("max_click_rate", ascending=False)
+            .reset_index(drop=True)
+        )
+        section_items["max_click_rate_percentile_section"] = section_items["max_click_rate"].rank(pct=True)
+
+        alloc = n_items_per_section[section]
+        count = len(section_items)
+
+        if alloc < count:
+            half = alloc // 2
+            n_omitted = count - alloc
+            section_items = pd.concat([section_items.head(half), section_items.tail(half)])
+            truncation_note = (
+                f"Note: {count} items exist in this section but only the top {half} and bottom {half} "
+                f"by CTR are shown ({n_omitted} middle items omitted). "
+                f"The distribution is not bimodal — the omitted items fall between these two groups.\n\n"
+            )
+        else:
+            truncation_note = ""
+
+        newsletter_items += f"<{section} items>\n\n"
+        newsletter_items += truncation_note
+        for i, row in section_items.iterrows():
+            newsletter_items += f"<{section} {i+1}>\n" + row["text"] + "\n"
+            newsletter_items += f"CTR: {round(row['max_click_rate'] * 100, 2)}% "
+            newsletter_items += f"(percentile among all items {row['max_click_rate_percentile_all']:.0%}, "
+            newsletter_items += f"among {section} items {row['max_click_rate_percentile_section']:.0%})\n"
+            newsletter_items += f"</{section} {i+1}>\n\n"
+        newsletter_items += f"</{section} items>\n\n"
+
     messages = [
-        {"role": "user", "content": ANALYSIS_PROMPT},
+        {"role": "user", "content": INSIGHTS_PROMPT},
         {"role": "user", "content": newsletter_items}
     ]
 

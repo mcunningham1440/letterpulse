@@ -21,7 +21,7 @@ This application helps newsletter creators understand which content resonates wi
 - **Database**: PostgreSQL on AWS RDS (Aurora)
 - **AI**: OpenAI API (GPT-5.1 with reasoning)
 - **Authentication**: django-allauth (email-based auth)
-- **Frontend**: Bootstrap 5, DataTables, jQuery, Marked.js (markdown rendering)
+- **Frontend**: Bootstrap 5, DataTables, jQuery, Marked.js (markdown rendering), Chart.js (trend charts on Insights page)
 - **Async**: aiohttp, asyncio for parallel API calls
 - **Deployment**: AWS App Runner (cloud), local development with gunicorn
 
@@ -35,7 +35,7 @@ app/
 │   ├── wsgi.py / asgi.py       # WSGI/ASGI entry points
 │   └── __init__.py
 ├── analytics/                  # Main Django app
-│   ├── models.py               # Post, ContentSet, Report, UsageAccount, ExecutionLog, SurveyResponse models
+│   ├── models.py               # Post, ContentSet, Report, UsageAccount, ExecutionLog, SurveyResponse, ProcessedPost models
 │   ├── views.py                # All view logic (login-protected)
 │   ├── urls.py                 # App URL patterns (analytics namespace)
 │   ├── utils.py                # Core utility functions (API calls, AI extraction, credit charging)
@@ -90,8 +90,11 @@ Named collections of extracted content items:
 ### Report
 AI-generated content insights:
 - `name`: Report name
-- `content_set`: ForeignKey to ContentSet
+- `user`: ForeignKey to User (owner)
+- `publication`: ForeignKey to Publication (nullable)
+- `content_set`: ForeignKey to ContentSet (nullable, legacy — no longer required)
 - `report_text`: Markdown-formatted analysis
+- Unique constraint: `(name, user, publication)`
 
 ### UsageAccount
 Tracks AI usage credits and API credentials per user:
@@ -99,7 +102,7 @@ Tracks AI usage credits and API credentials per user:
 - `monthly_quota`: Credits available per month (default from `settings.DEFAULT_MONTHLY_CREDITS`)
 - `used_this_period`: Credits consumed this period
 - `period_start`: Start of current billing period (resets on user's signup anniversary each month)
-- `beehiiv_token`: User's Beehiiv API token
+- `beehiiv_token`: User's Beehiiv API key
 - `beehiiv_pub_id`: User's currently selected Beehiiv publication ID
 - `api_key_valid`: Boolean indicating if the API key has been validated
 - `available_publications`: JSON list of publications available to the user
@@ -108,7 +111,7 @@ Tracks AI usage credits and API credentials per user:
 
 Billing cycle: Credits reset on the same day of the month as the user's signup date (e.g., signup on the 15th means credits renew on the 15th of each month). For months with fewer days, renewal occurs on the last day of the month.
 
-API key validation: When a user enters their API token, it is immediately validated against the Beehiiv `/publications` endpoint. If valid, the list of available publications is cached and the user can select which publication to work with.
+API key validation: When a user enters their API key, it is immediately validated against the Beehiiv `/publications` endpoint. If valid, the list of available publications is cached and the user can select which publication to work with.
 
 ### ExecutionLog
 Low-overhead execution logging for HTTP requests and function calls:
@@ -135,6 +138,64 @@ Stores user responses to the signup survey (displayed on first login):
 
 The survey modal appears automatically on first login and is dismissed once submitted. Survey completion is tracked via `UsageAccount.survey_completed`.
 
+### ProcessedPost
+Stores section-aware extracted content for a single post after user review/approval:
+- `post`: ForeignKey to Post (the source post)
+- `user`: ForeignKey to User (owner)
+- `publication`: ForeignKey to Publication (nullable)
+- `sections_data`: JSON array of sections, each containing a `section_name` and `items` list
+- Unique constraint: `(post, user)` - one processed result per post per user
+
+`sections_data` structure:
+```json
+[
+  {
+    "section_name": "Quick Bites",
+    "items": [
+      {
+        "post_title": "Newsletter #42",
+        "post_date": "2025-12-01",
+        "text": "Extracted item text",
+        "links": ["https://example.com"],
+        "clicks": [45],
+        "click_rate": [0.03]
+      }
+    ]
+  }
+]
+```
+
+Created via the "Process Selected Posts" workflow on the Posts page. Each item within a section has the same fields as ContentSet items (`text`, `links`, `clicks`, `click_rate`, `post_title`, `post_date`).
+
+### ProcessingTemplate
+Saved section layout templates for the Process Selected Posts workflow:
+- `name`: Template name (unique per publication and user)
+- `user`: ForeignKey to User (owner)
+- `publication`: ForeignKey to Publication (nullable)
+- `sections_data`: JSON array of `{name, description}` dicts defining section layouts
+- Unique constraint: `(name, publication, user)`
+
+`sections_data` structure:
+```json
+[
+  {"name": "Quick Bites", "description": "Items in the Quick Bites section"},
+  {"name": "Deep Dives", "description": ""}
+]
+```
+
+Users can save/load templates from the processing modal to avoid re-entering section definitions for newsletters with a consistent layout.
+
+### PendingReport
+Tracks background report generation tasks:
+- `task_id`: UUID (unique, auto-generated)
+- `user`: ForeignKey to User
+- `publication`: ForeignKey to Publication (nullable)
+- `status`: "pending", "complete", or "error"
+- `result_text`: The generated report markdown (populated on completion)
+- `error_message`: Error details (populated on failure)
+
+Created when a user initiates report generation. The LLM call runs in a background thread. The frontend polls `/insights/report-status/<task_id>/` until complete, allowing the user to navigate away and return without losing progress.
+
 ## Authentication
 
 Uses django-allauth for email-based authentication:
@@ -144,6 +205,9 @@ Uses django-allauth for email-based authentication:
 - Password reset via email
 - All views are protected with `@login_required` except the public about page
 - UsageAccount is auto-created for new users via signals
+- "Successfully signed in as" message is suppressed via custom adapter
+- After login, users without API credentials are redirected to Account page (not Posts); users with credentials go to Posts
+- The "Please configure your Beehiiv API credentials" message only appears when navigating to Posts/Insights without credentials, not immediately after login
 
 ### Public Pages
 - `/` - About page (unauthenticated users see landing page; authenticated users redirect to posts)
@@ -153,24 +217,35 @@ Uses django-allauth for email-based authentication:
 ### 1. Posts Page (`/posts/`)
 - **Refresh Posts**: Fetches all posts from Beehiiv API with pagination
 - **Select Posts**: DataTable with sorting by date, opens, clicks
-- **Content Extraction**: Describe content to extract (e.g., "items in the quick links section")
-  - Uses GPT-5.1 to identify HTML line ranges matching the description
-  - Extracts text and links from each section
+- **Process Selected Posts**: Opens a modal to define named sections (up to 15), each with a name and optional description
+  - **Save/Load Templates**: Users can save the current section layout as a named template and load saved templates to pre-populate section fields (stored in `ProcessingTemplate` model, scoped to user + publication)
+  - Uses GPT-5.1 to identify HTML line ranges for each section
+  - Extracts text and links from each item, grouped by section
   - Matches links with click data using Levenshtein fuzzy matching
+  - Shows progress bar during extraction
+  - If any selected posts already have saved ProcessedPost data, shows an overwrite warning before proceeding
+  - Opens a review overlay popup (post-by-post) where users can:
+    - **Save and Proceed**: Save the post's sections to the `ProcessedPost` table
+    - **Delete Selected Items**: Remove specific items from section tables
+    - **Re-process post**: Re-run extraction with custom instructions (costs 1 additional credit, shows progress bar)
+    - **Proceed Without Saving**: Skip the post without saving
+  - On review completion, page reloads to update the Processed column
+- **Processed Column**: Shows a green checkmark for posts that have been processed and saved
 - **Download Click Visualization**: ZIP of HTML files with click counts overlaid on links
 - **Download Improvement Tips**: ZIP of HTML files with AI-generated improvement tips
-- **Save Content Sets**: Create new or add to existing sets
 
 ### 2. Insights Page (`/insights/`)
-- **View Content Sets**: Browse extracted items with CTR data
-- **Generate Insights**: AI analysis identifying top/bottom performing content patterns
-- **Manage Sets**: Rename, copy, merge, delete items or entire sets
-- **Reports**: Save, load, and delete generated reports
-- **Export**: Download as CSV
+- **Trend Chart**: Chart.js time-series line chart showing section performance over time, driven by ProcessedPost data
+  - Metric selector: "Average max CTR" (default), "CTR of most clicked link", "Average max clicks", "Clicks of most clicked link"
+  - Date range filters (start/end) with "All" clear buttons
+  - Section checkboxes below chart (color-coded, all checked by default)
+- **Data Table**: Filtered ProcessedPost items showing Post Title, Post Date, Section, Item Text, Links, Max Clicks, Max CTR
+- **Phrase Analysis**: Same n-gram algorithm, recalculates on every filter change using currently displayed items
+- **Report Generator**: Generate AI reports from the currently filtered table items (no ContentSet required). Generation runs in a background thread with polling, so users can navigate away and return without losing progress. Reports can be saved, loaded, and deleted.
 
 ### 3. Account Page (`/account/`)
 - **Usage Stats**: View AI credits used and remaining
-- **API Credentials**: Configure Beehiiv API token (validated on save)
+- **API Credentials**: Configure Beehiiv API key (validated on save)
 - **Publication Selector**: Dropdown to switch between available publications (populated from API)
 - **Account Info**: View email and change password
 
@@ -192,17 +267,26 @@ All routes use the `analytics:` namespace.
 
 ### Posts Routes
 - `GET /posts/` - Main posts page
-- `POST /posts/run/` - Run AI content extraction
+- `POST /posts/run/` - Run AI content extraction (legacy single-description flow)
+- `POST /posts/process/` - Run multi-section extraction (returns JSON for review flow)
+- `POST /posts/review/approve/` - Save reviewed post sections to ProcessedPost (AJAX)
+- `POST /posts/review/reprocess/` - Re-run extraction for a single post with custom instructions (AJAX)
 - `POST /posts/save/` - Save extracted items as ContentSet
 - `POST /posts/delete-items/` - Remove items from session
 - `POST /posts/refresh-posts/` - Fetch latest posts from Beehiiv
 - `POST /posts/download-click-viz/` - Generate click visualization ZIP
 - `POST /posts/download-annotated/` - Generate annotated HTML ZIP
+- `POST /posts/save-template/` - Save section layout as a named processing template (AJAX)
+- `GET /posts/load-templates/` - List saved processing templates for current publication (AJAX)
+- `POST /posts/delete-template/<id>/` - Delete a processing template (AJAX)
+- `POST /posts/clear-processed/` - Delete ProcessedPost records for selected posts (AJAX)
 
 ### Insights Routes
-- `GET /insights/` - Insights dashboard
+- `GET /insights/` - Insights dashboard (trend chart + report generator)
+- `GET /insights/load-processed-data/` - Load all ProcessedPost items as JSON (flattened with section_name)
 - `GET /insights/load-content-set/<name>/` - Load ContentSet as JSON
-- `POST /insights/generate-insights/` - Generate AI report
+- `POST /insights/generate-insights/` - Start background AI report generation (accepts items_json, returns task_id)
+- `GET /insights/report-status/<uuid:task_id>/` - Poll background report generation status
 - `GET /insights/download-csv/<name>/` - Export as CSV
 - `POST /insights/rename-set/`, `/copy-set/`, `/merge-sets/`, `/delete-set/`, `/delete-items/`
 - `POST /insights/save-report/`, `GET /insights/load-report/<id>/`, `DELETE /insights/delete-report/<id>/`
@@ -237,9 +321,16 @@ OPENAI_API_KEY=your-openai-api-key
 
 **Important:** `SECRET_KEY` is used to derive the encryption key for user beehiiv tokens (via `EncryptedCharField`). Changing the SECRET_KEY will make existing encrypted tokens unreadable. Always backup the SECRET_KEY alongside database backups.
 
-Run locally with Django's dev server:
+A Python 3.11 virtual environment exists at `.venv/`. The system default `python` is Python 3.8 (Anaconda) and does **not** have project dependencies installed. When running Python commands locally, use the venv explicitly:
+
 ```bash
-python manage.py runserver
+source .venv/bin/activate && python manage.py runserver
+```
+
+Or directly:
+
+```bash
+.venv/bin/python manage.py check
 ```
 
 Or run locally with Docker (mirrors production environment):
@@ -321,8 +412,10 @@ Views use `get_user_api_credentials(user)` helper to retrieve credentials and re
 - `llm_call(user=None)`: Wrapper for OpenAI API with logging to CSV
 - `charge_credits(user, credits)`: Atomically charge credits against user quota
 - `NotEnoughCredits`: Exception raised when quota exceeded
-- `extract_items()`: AI-powered content extraction from HTML
-- `generate_content_insights()`: Generate performance analysis report
+- `extract_items()`: AI-powered content extraction from HTML (single-description, legacy)
+- `extract_sections()`: AI-powered multi-section content extraction from HTML (used by Process Selected Posts)
+- `extract_sections_parallel()`: Parallel multi-section extraction across multiple posts
+- `generate_content_insights()`: Generate performance analysis report. Requires `section_name` column in the DataFrame. Uses water-filling to distribute `MAX_REPORT_ITEMS` across sections; when a section exceeds its budget, top and bottom performers are kept and middle items are omitted (with a note to the LLM).
 - `annotate_post_html(post_id, content_perf_evals, beehiiv_token, beehiiv_pub_id, user=None)`: Insert improvement tips into HTML
 - `annotate_posts_parallel(post_ids, content_perf_evals, beehiiv_token, beehiiv_pub_id, user=None)`: Parallel annotation of multiple posts
 
@@ -338,6 +431,9 @@ DEFAULT_MONTHLY_CREDITS = 100
 CREDITS_PER_EXTRACTION = 1      # Per post extracted from
 CREDITS_PER_REPORT = 1          # Flat cost for generating insights
 CREDITS_PER_ANNOTATION = 1      # Per post annotated with improvement tips
+
+# Maximum items sent to the LLM for report generation
+MAX_REPORT_ITEMS = 150
 ```
 
 Credits are charged at the view level before each AI operation runs.

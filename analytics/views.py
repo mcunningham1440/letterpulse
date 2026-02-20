@@ -3,6 +3,7 @@ Views for the analytics app.
 """
 
 import re
+import logging
 from django.shortcuts import render, redirect
 from django.http import JsonResponse, HttpResponse
 from django.views.decorators.http import require_POST
@@ -11,10 +12,11 @@ from django.contrib.auth.decorators import login_required
 from django.conf import settings
 import pandas as pd
 import json
-import ast
 from asgiref.sync import async_to_sync
 
-from .models import Post, ContentSet, Report, UsageAccount, SurveyResponse
+from .models import Post, ContentSet, Report, UsageAccount, SurveyResponse, ProcessedPost, ProcessingTemplate, PendingReport
+
+logger = logging.getLogger(__name__)
 
 
 # =============================================================================
@@ -58,6 +60,26 @@ def sanitize_filename(filename: str) -> str:
 # Allows alphanumeric, spaces, hyphens, underscores, and common punctuation
 VALID_SET_NAME_PATTERN = re.compile(r'^[\w\s\-.,()\']+$', re.UNICODE)
 
+def validate_section_name(name: str) -> tuple[bool, str]:
+    """
+    Validate a section name. More permissive than content set names —
+    allows most printable characters except control characters.
+
+    Returns:
+        (is_valid, error_message) tuple
+    """
+    if not name:
+        return False, "Name cannot be empty."
+
+    if len(name) > 200:
+        return False, "Name must be 200 characters or less."
+
+    # Check for newlines and other control characters
+    if any(c in name for c in '\n\r\t\x00'):
+        return False, "Name cannot contain control characters."
+
+    return True, ""
+
 def validate_set_name(name: str) -> tuple[bool, str]:
     """
     Validate a content set name for security and usability.
@@ -89,6 +111,8 @@ from .utils import (
     load_posts_from_db,
     fetch_posts_html_and_clicks_parallel,
     extract_items_parallel,
+    extract_sections,
+    extract_sections_parallel,
     generate_content_insights,
     refresh_posts_data,
     annotate_posts_parallel,
@@ -368,57 +392,6 @@ def posts_view(request):
             post['creation_date_display'] = '-'
             post['creation_date_sortable'] = ''
     
-    # Get extracted items from session if available
-    extracted_items = request.session.get('extracted_items', None)
-    extracted_items_data = None
-    
-    if extracted_items:
-        df = pd.DataFrame(extracted_items)
-        # Parse lists if they're stored as strings
-        for col in ['clicks', 'links', 'click_rate']:
-            if col in df.columns:
-                df[col] = df[col].apply(
-                    lambda x: ast.literal_eval(x) if isinstance(x, str) else x
-                )
-        
-        # Calculate max clicks and max click rate before formatting
-        df['max_clicks'] = df['clicks'].apply(lambda x: max(x) if x else 0)
-        df['max_click_rate'] = df['click_rate'].apply(
-            lambda x: f"{max(x) * 100:.2f}%" if x and max(x) > 0 else "0.00%"
-        )
-        
-        # Format click rates as percentages
-        df['click_rate'] = df['click_rate'].apply(
-            lambda x: [f"{rate * 100:.2f}%" for rate in x] if x else []
-        )
-
-        # Format post_date for display (stored as string in session)
-        if 'post_date' in df.columns:
-            from datetime import datetime as dt
-
-            def format_post_date(date_str):
-                if not date_str or date_str == 'None' or date_str == 'NaT':
-                    return '-', ''
-                try:
-                    # Parse the date string (may be in various formats)
-                    if 'T' in str(date_str) or '+' in str(date_str):
-                        # ISO format with time/timezone
-                        parsed = pd.to_datetime(date_str, utc=True)
-                        local_dt = convert_to_user_timezone(parsed, user_tz)
-                    else:
-                        # Simple date format
-                        parsed = dt.strptime(str(date_str)[:10], '%Y-%m-%d')
-                        local_dt = parsed
-                    return local_dt.strftime('%b %d, %Y'), local_dt.strftime('%Y-%m-%d')
-                except Exception:
-                    return str(date_str), str(date_str)
-
-            formatted = df['post_date'].apply(format_post_date)
-            df['post_date_display'] = formatted.apply(lambda x: x[0])
-            df['post_date_sortable'] = formatted.apply(lambda x: x[1])
-
-        extracted_items_data = df.to_dict('records')
-    
     # Get content sets for current publication and user only
     from .models import Publication
     try:
@@ -428,14 +401,20 @@ def posts_view(request):
     except Publication.DoesNotExist:
         all_content_sets = ContentSet.objects.none()
         all_reports = Report.objects.none()
-    
+
+    # Get set of post_ids that have been processed by this user
+    processed_post_ids = set(
+        ProcessedPost.objects.filter(user=request.user)
+        .values_list('post__post_id', flat=True)
+    )
+
     context = {
         'posts': posts_data,
-        'extracted_items': extracted_items_data,
         'all_content_sets': all_content_sets,
         'all_reports': all_reports,
+        'processed_post_ids': processed_post_ids,
     }
-    
+
     return render(request, 'analytics/posts.html', context)
 
 
@@ -538,6 +517,232 @@ def run_extraction(request):
         messages.error(request, f"Error during extraction: {str(e)}")
 
     return redirect('analytics:posts')
+
+
+@login_required
+@require_POST
+def run_processing(request):
+    """
+    Run multi-section content extraction on selected posts.
+    Returns JSON with extraction results for client-side review flow.
+    """
+    try:
+        beehiiv_token, beehiiv_pub_id, is_valid = get_user_api_credentials(request.user)
+        if not beehiiv_token or not beehiiv_pub_id or not is_valid:
+            return JsonResponse({'success': False, 'error': 'Please configure valid API credentials in Account settings.'}, status=400)
+
+        # Parse JSON body
+        body = json.loads(request.body)
+        selected_indices = body.get('selected_posts', [])
+        sections = body.get('sections', [])
+
+        if not selected_indices:
+            return JsonResponse({'success': False, 'error': 'Please select at least one post.'}, status=400)
+
+        if not sections or len(sections) == 0:
+            return JsonResponse({'success': False, 'error': 'Please add at least one section.'}, status=400)
+
+        if len(sections) > 15:
+            return JsonResponse({'success': False, 'error': 'Maximum 15 sections allowed.'}, status=400)
+
+        # Validate section names (description is optional)
+        seen_names = set()
+        for s in sections:
+            name = s.get('name', '').strip()
+            s['description'] = s.get('description', '').strip()
+            if not name:
+                return JsonResponse({'success': False, 'error': 'All section names must be filled in.'}, status=400)
+            is_valid, error_msg = validate_section_name(name)
+            if not is_valid:
+                return JsonResponse({'success': False, 'error': f'Invalid section name "{name}": {error_msg}'}, status=400)
+            if name.lower() in seen_names:
+                return JsonResponse({'success': False, 'error': f'Duplicate section name: "{name}".'}, status=400)
+            seen_names.add(name.lower())
+
+        # Convert indices to integers
+        selected_indices = [int(idx) for idx in selected_indices]
+
+        # Load posts from database
+        posts_df = load_posts_from_db(publication_id=beehiiv_pub_id, user=request.user)
+        posts_df = posts_df.iloc[::-1].reset_index(drop=True)
+
+        posts_of_interest = posts_df.iloc[selected_indices]
+        post_ids = posts_of_interest['id'].tolist()
+
+        # Fetch HTMLs and clicks
+        htmls, clicks_by_id = async_to_sync(fetch_posts_html_and_clicks_parallel)(
+            post_ids, beehiiv_token, beehiiv_pub_id
+        )
+
+        if not htmls:
+            return JsonResponse({'success': False, 'error': 'Failed to fetch content from Beehiiv.'}, status=500)
+
+        # Prepare posts data
+        posts_data = [
+            (row.id, row.title, f"{row.id}.html", row.publish_date, row.unique_email_opens)
+            for _, row in posts_of_interest.iterrows()
+        ]
+
+        # Charge credits
+        num_posts = len([p for p in posts_data if p[2] in htmls and p[0] in clicks_by_id])
+        credits_needed = num_posts * settings.CREDITS_PER_EXTRACTION
+        charge_credits(request.user, credits_needed)
+
+        # Run parallel section extraction
+        results_by_post = async_to_sync(extract_sections_parallel)(
+            posts_data, sections, htmls, clicks_by_id, user=request.user
+        )
+
+        # Build review data
+        review_posts = []
+        for post_id, title, html_filename, post_date, unique_email_opens in posts_data:
+            if post_id in results_by_post:
+                review_posts.append({
+                    'post_id': post_id,
+                    'post_title': title,
+                    'post_date': str(post_date) if post_date else None,
+                    'sections': results_by_post[post_id]
+                })
+
+        review_data = {
+            'posts': review_posts,
+            'current_index': 0,
+            'sections_config': sections,
+            'total_posts': len(review_posts)
+        }
+
+        # Store in session for re-process access
+        request.session['review_sections_config'] = sections
+
+        # Get updated credit info
+        usage = UsageAccount.objects.get(user=request.user)
+
+        return JsonResponse({
+            'success': True,
+            'review_data': review_data,
+            'credits_used': usage.used_this_period,
+            'credits_quota': usage.monthly_quota
+        })
+
+    except NotEnoughCredits as e:
+        return JsonResponse({'success': False, 'error': str(e)}, status=400)
+    except Exception as e:
+        logger.error(f"Error in run_processing: {str(e)}", exc_info=True)
+        return JsonResponse({'success': False, 'error': f'Error during processing: {str(e)}'}, status=500)
+
+
+@login_required
+@require_POST
+def approve_post(request):
+    """
+    Save reviewed post sections to the ProcessedPost table.
+    Called via AJAX from the review flow.
+    """
+    from .models import Publication
+    try:
+        body = json.loads(request.body)
+        post_id = body.get('post_id')
+        sections_data = body.get('sections_data')
+
+        if not post_id or sections_data is None:
+            return JsonResponse({'success': False, 'error': 'Missing post_id or sections_data.'}, status=400)
+
+        # Get the Post object
+        post = Post.objects.get(post_id=post_id, user=request.user)
+
+        # Get current publication
+        _, beehiiv_pub_id, _ = get_user_api_credentials(request.user)
+        try:
+            publication = Publication.objects.get(pub_id=beehiiv_pub_id)
+        except Publication.DoesNotExist:
+            publication = None
+
+        # Create or update ProcessedPost
+        ProcessedPost.objects.update_or_create(
+            post=post,
+            user=request.user,
+            defaults={
+                'publication': publication,
+                'sections_data': sections_data
+            }
+        )
+
+        return JsonResponse({'success': True})
+
+    except Post.DoesNotExist:
+        return JsonResponse({'success': False, 'error': 'Post not found.'}, status=404)
+    except Exception as e:
+        logger.error(f"Error in approve_post: {str(e)}", exc_info=True)
+        return JsonResponse({'success': False, 'error': str(e)}, status=500)
+
+
+@login_required
+@require_POST
+def reprocess_post(request):
+    """
+    Re-run section extraction for a single post with optional custom instructions.
+    Called via AJAX from the review flow. Charges 1 additional credit.
+    """
+    try:
+        beehiiv_token, beehiiv_pub_id, is_valid = get_user_api_credentials(request.user)
+        if not beehiiv_token or not beehiiv_pub_id or not is_valid:
+            return JsonResponse({'success': False, 'error': 'Please configure valid API credentials in Account settings.'}, status=400)
+
+        body = json.loads(request.body)
+        post_id = body.get('post_id')
+        sections_config = body.get('sections_config', [])
+        custom_instructions = body.get('custom_instructions', '')
+
+        if not post_id:
+            return JsonResponse({'success': False, 'error': 'Missing post_id.'}, status=400)
+
+        if not sections_config:
+            return JsonResponse({'success': False, 'error': 'Missing sections configuration.'}, status=400)
+
+        # Charge 1 credit for re-processing
+        charge_credits(request.user, settings.CREDITS_PER_EXTRACTION)
+
+        # Fetch HTML and clicks for this single post
+        htmls, clicks_by_id = async_to_sync(fetch_posts_html_and_clicks_parallel)(
+            [post_id], beehiiv_token, beehiiv_pub_id
+        )
+
+        html_filename = f"{post_id}.html"
+        if html_filename not in htmls or post_id not in clicks_by_id:
+            return JsonResponse({'success': False, 'error': 'Failed to fetch post data.'}, status=500)
+
+        # Get post info from database
+        post = Post.objects.get(post_id=post_id, user=request.user)
+
+        # Run extraction with custom instructions
+        sections_result = async_to_sync(extract_sections)(
+            htmls[html_filename],
+            sections_config,
+            clicks_by_id[post_id],
+            post.title,
+            post.publish_date,
+            post.unique_email_opens,
+            custom_instructions=custom_instructions,
+            user=request.user
+        )
+
+        # Get updated credit info
+        usage = UsageAccount.objects.get(user=request.user)
+
+        return JsonResponse({
+            'success': True,
+            'sections': sections_result,
+            'credits_used': usage.used_this_period,
+            'credits_quota': usage.monthly_quota
+        })
+
+    except NotEnoughCredits as e:
+        return JsonResponse({'success': False, 'error': str(e)}, status=400)
+    except Post.DoesNotExist:
+        return JsonResponse({'success': False, 'error': 'Post not found.'}, status=404)
+    except Exception as e:
+        logger.error(f"Error in reprocess_post: {str(e)}", exc_info=True)
+        return JsonResponse({'success': False, 'error': str(e)}, status=500)
 
 
 @login_required
@@ -770,7 +975,7 @@ def get_stopwords():
 @require_valid_api_credentials
 def insights_view(request):
     """
-    Display the insights page with content sets.
+    Display the insights page with trend analysis chart and report generator.
     """
     from .models import Publication
     import json
@@ -778,25 +983,114 @@ def insights_view(request):
     # Get current publication for filtering
     _, beehiiv_pub_id, _ = get_user_api_credentials(request.user)
 
-    # Get content sets for current publication and user only
+    # Get reports and check for pending generation
     try:
         publication = Publication.objects.get(pub_id=beehiiv_pub_id)
-        content_sets = ContentSet.objects.filter(publication=publication, user=request.user).order_by('-created_at')
         has_reports = Report.objects.filter(
-            content_set__publication=publication,
-            content_set__user=request.user
+            user=request.user, publication=publication
         ).exists()
+        has_processed_data = ProcessedPost.objects.filter(
+            user=request.user, publication=publication
+        ).exists()
+        # Check for any pending report generation
+        pending_report = PendingReport.objects.filter(
+            user=request.user, publication=publication, status='pending'
+        ).order_by('-created_at').first()
     except Publication.DoesNotExist:
-        content_sets = ContentSet.objects.none()
         has_reports = False
+        has_processed_data = False
+        pending_report = None
 
     context = {
-        'content_sets': content_sets,
         'has_reports': has_reports,
+        'has_processed_data': has_processed_data,
         'stopwords_json': json.dumps(get_stopwords()),
+        'pending_task_id': str(pending_report.task_id) if pending_report else '',
+        'max_report_items': settings.MAX_REPORT_ITEMS,
     }
 
     return render(request, 'analytics/insights.html', context)
+
+
+@login_required
+def load_processed_data(request):
+    """
+    Load all ProcessedPost data for the current user and publication.
+    Flattens sections_data into a single items list with section_name annotated.
+    """
+    from .models import Publication
+    from datetime import datetime as dt
+
+    try:
+        _, beehiiv_pub_id, _ = get_user_api_credentials(request.user)
+
+        try:
+            publication = Publication.objects.get(pub_id=beehiiv_pub_id)
+        except Publication.DoesNotExist:
+            return JsonResponse({'success': True, 'items': [], 'section_names': []})
+
+        processed_posts = ProcessedPost.objects.filter(
+            user=request.user, publication=publication
+        ).select_related('post')
+
+        items = []
+        section_names_set = set()
+
+        for pp in processed_posts:
+            sections_data = pp.sections_data or []
+            for section in sections_data:
+                section_name = section.get('section_name', 'Unknown')
+                section_names_set.add(section_name)
+                for item in section.get('items', []):
+                    # Parse post_date for display
+                    raw_date = item.get('post_date')
+                    post_date_display = '-'
+                    post_date_sortable = ''
+                    if raw_date:
+                        try:
+                            if hasattr(raw_date, 'strftime'):
+                                post_date_display = raw_date.strftime('%b %d, %Y')
+                                post_date_sortable = raw_date.strftime('%Y-%m-%d')
+                            else:
+                                parsed = dt.strptime(str(raw_date)[:10], '%Y-%m-%d')
+                                post_date_display = parsed.strftime('%b %d, %Y')
+                                post_date_sortable = parsed.strftime('%Y-%m-%d')
+                        except Exception:
+                            post_date_display = str(raw_date)
+                            post_date_sortable = str(raw_date)
+
+                    clicks = item.get('clicks', [])
+                    click_rate = item.get('click_rate', [])
+
+                    max_clicks = max(clicks) if clicks else 0
+                    max_click_rate_raw = max(click_rate) if click_rate else 0
+                    max_click_rate = f"{max_click_rate_raw * 100:.2f}%" if max_click_rate_raw > 0 else "0.00%"
+
+                    items.append({
+                        'section_name': section_name,
+                        'post_title': item.get('post_title', ''),
+                        'post_date_display': post_date_display,
+                        'post_date_sortable': post_date_sortable,
+                        'text': item.get('text', ''),
+                        'links': item.get('links', []),
+                        'clicks': clicks,
+                        'click_rate': [f"{r * 100:.2f}%" for r in click_rate] if click_rate else [],
+                        'click_rate_raw': click_rate,
+                        'max_clicks': max_clicks,
+                        'max_click_rate': max_click_rate,
+                        'max_click_rate_raw': max_click_rate_raw,
+                    })
+
+        section_names = sorted(section_names_set)
+
+        return JsonResponse({
+            'success': True,
+            'items': items,
+            'section_names': section_names,
+        })
+
+    except Exception as e:
+        return JsonResponse({'success': False, 'error': str(e)}, status=500)
 
 
 @login_required
@@ -876,60 +1170,144 @@ def load_content_set(request, set_name):
 @require_POST
 def generate_insights(request):
     """
-    Generate AI insights for a content set.
+    Generate AI insights from items JSON in a background thread.
+    Returns a task_id immediately for polling.
     """
-    try:
-        set_name = request.POST.get('set_name')
+    import threading
+    from .models import Publication
 
-        if not set_name:
+    try:
+        items_json = request.POST.get('items_json', '')
+
+        if not items_json:
             return JsonResponse({
                 'success': False,
-                'error': 'Content set name is required.'
+                'error': 'Items data is required.'
             }, status=400)
 
-        content_set = ContentSet.objects.get(name=set_name, user=request.user)
-        df = content_set.to_dataframe()
+        try:
+            items = json.loads(items_json)
+        except json.JSONDecodeError:
+            return JsonResponse({
+                'success': False,
+                'error': 'Invalid items JSON.'
+            }, status=400)
+
+        if not items:
+            return JsonResponse({
+                'success': False,
+                'error': 'No items provided.'
+            }, status=400)
+
+        # Build DataFrame from items
+        df = pd.DataFrame(items)
 
         if df.empty:
             return JsonResponse({
                 'success': False,
-                'error': 'Content set is empty.'
+                'error': 'Items data is empty.'
             }, status=400)
 
-        # Charge credits before generating report (flat cost)
+        # Charge credits before starting background task
         charge_credits(request.user, settings.CREDITS_PER_REPORT)
 
-        # Generate insights using async function
-        response = async_to_sync(generate_content_insights)(df, user=request.user)
-        insights = response.output[-1].content[0].text
+        # Get publication for the pending report
+        _, beehiiv_pub_id, _ = get_user_api_credentials(request.user)
+        try:
+            publication = Publication.objects.get(pub_id=beehiiv_pub_id)
+        except Publication.DoesNotExist:
+            publication = None
+
+        # Create pending report entry
+        pending = PendingReport.objects.create(
+            user=request.user,
+            publication=publication,
+            status='pending'
+        )
+
+        # Run generation in background thread
+        user_id = request.user.id
+
+        def _run_generation():
+            import django
+            from django.contrib.auth import get_user_model
+            User = get_user_model()
+
+            try:
+                user = User.objects.get(id=user_id)
+                response = async_to_sync(generate_content_insights)(df, user=user)
+                insights = response.output[-1].content[0].text
+
+                pending_obj = PendingReport.objects.get(task_id=pending.task_id)
+                pending_obj.status = 'complete'
+                pending_obj.result_text = insights
+                pending_obj.save()
+            except Exception as e:
+                try:
+                    pending_obj = PendingReport.objects.get(task_id=pending.task_id)
+                    pending_obj.status = 'error'
+                    pending_obj.error_message = str(e)
+                    pending_obj.save()
+                except Exception:
+                    pass
+
+        thread = threading.Thread(target=_run_generation, daemon=True)
+        thread.start()
 
         # Get updated usage for sidebar
-        from .models import UsageAccount
         usage = UsageAccount.objects.get(user=request.user)
         usage.ensure_current_period()
 
         return JsonResponse({
             'success': True,
-            'insights': insights,
+            'task_id': str(pending.task_id),
             'credits_used': usage.used_this_period,
             'credits_quota': usage.monthly_quota,
         })
 
-    except ContentSet.DoesNotExist:
-        return JsonResponse({
-            'success': False,
-            'error': f"Content set '{set_name}' not found."
-        }, status=404)
     except NotEnoughCredits as e:
         return JsonResponse({
             'success': False,
             'error': str(e)
-        }, status=402)  # Payment Required
+        }, status=402)
     except Exception as e:
         return JsonResponse({
             'success': False,
             'error': str(e)
         }, status=500)
+
+
+@login_required
+def report_status(request, task_id):
+    """
+    Check the status of a background report generation task.
+    """
+    try:
+        pending = PendingReport.objects.get(task_id=task_id, user=request.user)
+
+        response_data = {
+            'success': True,
+            'status': pending.status,
+        }
+
+        if pending.status == 'complete':
+            response_data['result_text'] = pending.result_text
+            # Get updated usage for sidebar
+            usage = UsageAccount.objects.get(user=request.user)
+            usage.ensure_current_period()
+            response_data['credits_used'] = usage.used_this_period
+            response_data['credits_quota'] = usage.monthly_quota
+
+        elif pending.status == 'error':
+            response_data['error_message'] = pending.error_message
+
+        return JsonResponse(response_data)
+
+    except PendingReport.DoesNotExist:
+        return JsonResponse({
+            'success': False,
+            'error': 'Task not found.'
+        }, status=404)
 
 
 @login_required
@@ -1528,57 +1906,52 @@ def save_report(request):
     """
     Save a generated report to the database.
     """
+    from .models import Publication
+
     try:
         report_name = request.POST.get('report_name', '').strip()
         report_text = request.POST.get('report_text', '').strip()
-        set_name = request.POST.get('set_name', '').strip()
-        
+
         if not report_name:
             return JsonResponse({
                 'success': False,
                 'error': 'Report name is required.'
             }, status=400)
-        
+
         if not report_text:
             return JsonResponse({
                 'success': False,
                 'error': 'Report text is required.'
             }, status=400)
-        
-        if not set_name:
-            return JsonResponse({
-                'success': False,
-                'error': 'Content set name is required.'
-            }, status=400)
-        
-        # Get the content set (must be owned by this user)
-        content_set = ContentSet.objects.get(name=set_name, user=request.user)
 
-        # Check if a report with this name already exists for this content set
-        if Report.objects.filter(name=report_name, content_set=content_set).exists():
+        # Get current publication
+        _, beehiiv_pub_id, _ = get_user_api_credentials(request.user)
+        try:
+            publication = Publication.objects.get(pub_id=beehiiv_pub_id)
+        except Publication.DoesNotExist:
+            publication = None
+
+        # Check if a report with this name already exists for this user/publication
+        if Report.objects.filter(name=report_name, user=request.user, publication=publication).exists():
             return JsonResponse({
                 'success': False,
-                'error': f'A report named "{report_name}" already exists for this content set.'
+                'error': f'A report named "{report_name}" already exists.'
             }, status=400)
-        
+
         # Create the report
         report = Report.objects.create(
             name=report_name,
-            content_set=content_set,
+            user=request.user,
+            publication=publication,
             report_text=report_text
         )
-        
+
         return JsonResponse({
             'success': True,
             'message': f'Report "{report_name}" saved successfully!',
             'report_id': report.id
         })
-        
-    except ContentSet.DoesNotExist:
-        return JsonResponse({
-            'success': False,
-            'error': f"Content set '{set_name}' not found."
-        }, status=404)
+
     except Exception as e:
         return JsonResponse({
             'success': False,
@@ -1592,20 +1965,19 @@ def load_report(request, report_id):
     Load a saved report and return as JSON.
     """
     try:
-        report = Report.objects.get(id=report_id, content_set__user=request.user)
-        
+        report = Report.objects.get(id=report_id, user=request.user)
+
         return JsonResponse({
             'success': True,
             'report_name': report.name,
             'report_text': report.report_text,
-            'content_set_name': report.content_set.name,
             'created_at': report.created_at.strftime('%Y-%m-%d %H:%M:%S')
         })
-        
+
     except Report.DoesNotExist:
         return JsonResponse({
             'success': False,
-            'error': f"Report not found."
+            'error': 'Report not found.'
         }, status=404)
     except Exception as e:
         return JsonResponse({
@@ -1617,20 +1989,17 @@ def load_report(request, report_id):
 @login_required
 def get_all_reports(request):
     """
-    Get all reports for the current publication's content sets.
+    Get all reports for the current user and publication.
     """
     from .models import Publication
 
     try:
-        # Get current publication for filtering
         _, beehiiv_pub_id, _ = get_user_api_credentials(request.user)
 
-        # Filter reports by publication and user through content_set
         try:
             publication = Publication.objects.get(pub_id=beehiiv_pub_id)
             reports = Report.objects.filter(
-                content_set__publication=publication,
-                content_set__user=request.user
+                user=request.user, publication=publication
             ).order_by('-created_at')
         except Publication.DoesNotExist:
             reports = Report.objects.none()
@@ -1639,7 +2008,6 @@ def get_all_reports(request):
             {
                 'id': report.id,
                 'name': report.name,
-                'content_set_name': report.content_set.name,
                 'created_at': report.created_at.strftime('created %b %-d, %Y')
             }
             for report in reports
@@ -1664,7 +2032,7 @@ def delete_report(request, report_id):
     Delete a saved report.
     """
     try:
-        report = Report.objects.get(id=report_id, content_set__user=request.user)
+        report = Report.objects.get(id=report_id, user=request.user)
         report_name = report.name
         report.delete()
         
@@ -1733,3 +2101,136 @@ def submit_survey(request):
             'success': False,
             'error': str(e)
         }, status=500)
+
+
+@login_required
+@require_POST
+def save_processing_template(request):
+    """
+    Save the current section layout as a named processing template.
+    If a template with the same name exists for this user+publication, it is overwritten.
+    """
+    from .models import Publication
+
+    try:
+        body = json.loads(request.body)
+        name = body.get('name', '').strip()
+        sections = body.get('sections', [])
+
+        if not name:
+            return JsonResponse({'success': False, 'error': 'Template name is required.'}, status=400)
+
+        is_valid, error_msg = validate_set_name(name)
+        if not is_valid:
+            return JsonResponse({'success': False, 'error': error_msg}, status=400)
+
+        if not sections or len(sections) == 0:
+            return JsonResponse({'success': False, 'error': 'At least one section is required.'}, status=400)
+
+        if len(sections) > 15:
+            return JsonResponse({'success': False, 'error': 'Maximum 15 sections allowed.'}, status=400)
+
+        for s in sections:
+            if not s.get('name', '').strip():
+                return JsonResponse({'success': False, 'error': 'All sections must have a name.'}, status=400)
+
+        # Get current publication
+        _, beehiiv_pub_id, _ = get_user_api_credentials(request.user)
+        try:
+            publication = Publication.objects.get(pub_id=beehiiv_pub_id)
+        except Publication.DoesNotExist:
+            publication = None
+
+        template, created = ProcessingTemplate.objects.update_or_create(
+            name=name,
+            user=request.user,
+            publication=publication,
+            defaults={'sections_data': sections}
+        )
+
+        msg = f'Template "{name}" saved.' if created else f'Template "{name}" updated.'
+        return JsonResponse({'success': True, 'template_id': template.id, 'message': msg})
+
+    except Exception as e:
+        return JsonResponse({'success': False, 'error': str(e)}, status=500)
+
+
+@login_required
+def load_processing_templates(request):
+    """
+    Return all processing templates for the current user and publication.
+    """
+    from .models import Publication
+
+    try:
+        _, beehiiv_pub_id, _ = get_user_api_credentials(request.user)
+        try:
+            publication = Publication.objects.get(pub_id=beehiiv_pub_id)
+        except Publication.DoesNotExist:
+            publication = None
+
+        templates = ProcessingTemplate.objects.filter(
+            user=request.user,
+            publication=publication
+        )
+
+        templates_data = [
+            {
+                'id': t.id,
+                'name': t.name,
+                'sections_data': t.sections_data,
+            }
+            for t in templates
+        ]
+
+        return JsonResponse({'success': True, 'templates': templates_data})
+
+    except Exception as e:
+        return JsonResponse({'success': False, 'error': str(e)}, status=500)
+
+
+@login_required
+@require_POST
+def delete_processing_template(request, template_id):
+    """
+    Delete a processing template by ID (must be owned by the requesting user).
+    """
+    try:
+        template = ProcessingTemplate.objects.get(id=template_id, user=request.user)
+        template_name = template.name
+        template.delete()
+
+        return JsonResponse({'success': True, 'message': f'Template "{template_name}" deleted.'})
+
+    except ProcessingTemplate.DoesNotExist:
+        return JsonResponse({'success': False, 'error': 'Template not found.'}, status=404)
+    except Exception as e:
+        return JsonResponse({'success': False, 'error': str(e)}, status=500)
+
+
+@login_required
+@require_POST
+def clear_processed_posts(request):
+    """
+    Delete ProcessedPost records for the given post_ids (owned by the requesting user).
+    """
+    try:
+        body = json.loads(request.body)
+        post_ids = body.get('post_ids', [])
+
+        if not post_ids:
+            return JsonResponse({'success': False, 'error': 'No post IDs provided.'}, status=400)
+
+        deleted_count, _ = ProcessedPost.objects.filter(
+            user=request.user,
+            post__post_id__in=post_ids
+        ).delete()
+
+        return JsonResponse({
+            'success': True,
+            'message': f'Cleared processed data from {deleted_count} post{"s" if deleted_count != 1 else ""}.'
+        })
+
+    except Exception as e:
+        logger.error(f"Error in clear_processed_posts: {str(e)}", exc_info=True)
+        return JsonResponse({'success': False, 'error': str(e)}, status=500)

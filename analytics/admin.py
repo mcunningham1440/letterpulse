@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Post, ContentSet, Report, UsageAccount, Publication, ExecutionLog, SurveyResponse
+from .models import Post, ContentSet, Report, UsageAccount, Publication, ExecutionLog, SurveyResponse, ProcessedPost, ProcessingTemplate
 
 
 @admin.register(UsageAccount)
@@ -82,6 +82,32 @@ class ExecutionLogAdmin(admin.ModelAdmin):
     def has_change_permission(self, request, obj=None):
         # Logs should be immutable
         return False
+
+
+@admin.register(ProcessedPost)
+class ProcessedPostAdmin(admin.ModelAdmin):
+    list_display = ('post', 'user', 'publication', 'section_count', 'total_items', 'created_at', 'updated_at')
+    list_filter = ('publication', 'user', 'created_at')
+    search_fields = ('post__title', 'user__email')
+    ordering = ('-created_at',)
+    readonly_fields = ('created_at', 'updated_at')
+
+    def section_count(self, obj):
+        return obj.get_section_count()
+    section_count.short_description = 'Sections'
+
+    def total_items(self, obj):
+        return obj.get_total_items_count()
+    total_items.short_description = 'Total Items'
+
+
+@admin.register(ProcessingTemplate)
+class ProcessingTemplateAdmin(admin.ModelAdmin):
+    list_display = ('name', 'user', 'publication', 'created_at')
+    list_filter = ('publication', 'user', 'created_at')
+    search_fields = ('name', 'user__email')
+    ordering = ('-created_at',)
+    readonly_fields = ('created_at', 'updated_at')
 
 
 @admin.register(SurveyResponse)

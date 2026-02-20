@@ -19,8 +19,101 @@
 </div>
 
 <div class="row">
-    <!-- Left Column: Usage Stats + Account Info -->
+    <!-- Left Column: API Credentials + Usage Stats -->
     <div class="col-md-6">
+        <!-- API Credentials Card -->
+        <div class="card">
+            <div class="card-header">
+                <i class="bi bi-key me-2"></i>Beehiiv API Credentials
+            </div>
+            <div class="card-body">
+                {% if usage.api_key_valid %}
+                <div class="alert alert-success d-flex align-items-center mb-4">
+                    <i class="bi bi-check-circle-fill me-2"></i>
+                    API credentials are configured and validated
+                </div>
+                {% elif usage.beehiiv_token and not usage.api_key_valid %}
+                <div class="alert alert-danger d-flex align-items-center mb-4">
+                    <i class="bi bi-x-circle-fill me-2"></i>
+                    API key is invalid. Please enter a valid key below.
+                </div>
+                {% else %}
+                <div class="alert alert-warning d-flex align-items-center mb-4 no-auto-dismiss">
+                    <i class="bi bi-exclamation-triangle-fill me-2"></i>
+                    API credentials not configured. Add them below to fetch your newsletter data.
+                </div>
+                {% endif %}
+
+                <!-- API Key Form -->
+                <form method="post" action="{% url 'analytics:account' %}" id="credentialsForm">
+                    {% csrf_token %}
+                    <input type="hidden" name="action" value="update_credentials">
+
+                    <div class="mb-3">
+                        <label for="beehiiv_token" class="form-label">API Key</label>
+                        <div class="input-group">
+                            <input type="password"
+                                   class="form-control"
+                                   id="beehiiv_token"
+                                   name="beehiiv_token"
+                                   value="{{ usage.beehiiv_token }}"
+                                   placeholder="Enter your API key">
+                            <button class="btn btn-outline-secondary" type="button" id="toggleToken">
+                                <i class="bi bi-eye"></i>
+                            </button>
+                        </div>
+                        <div class="form-text">
+                            {% if not usage.beehiiv_token %}
+                            Generate an API key in your Beehiiv dashboard by navigating to Settings and clicking on API under Workspace Settings.
+                            <br>
+                            {% endif %}
+                            <span class="text-primary"
+                                  data-bs-toggle="tooltip"
+                                  data-bs-placement="bottom"
+                                  data-bs-html="true"
+                                  data-bs-custom-class="extract-tooltip"
+                                  title="<b>We take your privacy and security seriously.</b><br><br>Your API key is stored in an encrypted database. You can clear it from our system at any time, or deactivate it in the API page on the Beehiiv website.<br><br>We will never sell or share your data with third parties."
+                                  style="cursor: help;">
+                                <i class="bi bi-info-circle"></i> How we ensure your privacy and security
+                            </span>
+                        </div>
+                    </div>
+
+                    <div class="d-flex gap-2 mb-3">
+                        <button type="submit" class="btn btn-primary">
+                            <i class="bi bi-check-lg me-1"></i>Save Key
+                        </button>
+                        {% if usage.beehiiv_token %}
+                        <button type="button" class="btn btn-outline-danger" id="clearCredentials">
+                            <i class="bi bi-trash me-1"></i>Clear
+                        </button>
+                        {% endif %}
+                    </div>
+                </form>
+
+                {% if usage.api_key_valid and usage.available_publications %}
+                <form method="post" action="{% url 'analytics:account' %}" id="publicationForm">
+                    {% csrf_token %}
+                    <input type="hidden" name="action" value="switch_publication">
+                    <div class="mb-3">
+                        <label for="beehiiv_pub_id" class="form-label">Publication</label>
+                        <select class="form-select" id="beehiiv_pub_id" name="beehiiv_pub_id">
+                            {% for pub in usage.available_publications %}
+                            <option value="{{ pub.id }}" {% if pub.id == usage.beehiiv_pub_id %}selected{% endif %}>
+                                {{ pub.name }}
+                            </option>
+                            {% endfor %}
+                        </select>
+                        <div class="form-text">
+                            Select the publication to analyze.
+                        </div>
+                    </div>
+                </form>
+                {% endif %}
+
+            </div>
+        </div>
+
         <!-- Usage Stats Card -->
         <div class="card">
             <div class="card-header">
@@ -45,8 +138,10 @@
                 </div>
             </div>
         </div>
+    </div>
 
-        <!-- Account Info Card -->
+    <!-- Right Column: Account Info -->
+    <div class="col-md-6">
         <div class="card">
             <div class="card-header">
                 <i class="bi bi-person me-2"></i>Account Information
@@ -78,101 +173,6 @@
                         <i class="bi bi-lock me-1"></i>Change Password
                     </a>
                 </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- Right Column: API Credentials Card -->
-    <div class="col-md-6">
-        <div class="card">
-            <div class="card-header">
-                <i class="bi bi-key me-2"></i>Beehiiv API Credentials
-            </div>
-            <div class="card-body">
-                {% if usage.api_key_valid %}
-                <div class="alert alert-success d-flex align-items-center mb-4">
-                    <i class="bi bi-check-circle-fill me-2"></i>
-                    API credentials are configured and validated
-                </div>
-                {% elif usage.beehiiv_token and not usage.api_key_valid %}
-                <div class="alert alert-danger d-flex align-items-center mb-4">
-                    <i class="bi bi-x-circle-fill me-2"></i>
-                    API key is invalid. Please enter a valid key below.
-                </div>
-                {% else %}
-                <div class="alert alert-warning d-flex align-items-center mb-4 no-auto-dismiss">
-                    <i class="bi bi-exclamation-triangle-fill me-2"></i>
-                    API credentials not configured. Add them below to fetch your newsletter data.
-                </div>
-                {% endif %}
-
-                <!-- API Token Form -->
-                <form method="post" action="{% url 'analytics:account' %}" id="credentialsForm">
-                    {% csrf_token %}
-                    <input type="hidden" name="action" value="update_credentials">
-
-                    <div class="mb-3">
-                        <label for="beehiiv_token" class="form-label">API Token</label>
-                        <div class="input-group">
-                            <input type="password"
-                                   class="form-control"
-                                   id="beehiiv_token"
-                                   name="beehiiv_token"
-                                   value="{{ usage.beehiiv_token }}"
-                                   placeholder="Enter your API token">
-                            <button class="btn btn-outline-secondary" type="button" id="toggleToken">
-                                <i class="bi bi-eye"></i>
-                            </button>
-                        </div>
-                        <div class="form-text">
-                            {% if not usage.beehiiv_token %}
-                            Generate an API key in your Beehiiv dashboard under Settings → Integrations → API.
-                            <br>
-                            {% endif %}
-                            <span class="text-primary"
-                                  data-bs-toggle="tooltip"
-                                  data-bs-placement="bottom"
-                                  data-bs-html="true"
-                                  data-bs-custom-class="extract-tooltip"
-                                  title="<b>We take your privacy and security seriously.</b><br><br>Your API token is stored in an encrypted database. You can clear it from our system at any time, or deactivate it in the API page on the Beehiiv website.<br><br>We will never sell or share your data with third parties."
-                                  style="cursor: help;">
-                                <i class="bi bi-info-circle"></i> How we ensure your privacy and security
-                            </span>
-                        </div>
-                    </div>
-
-                    <div class="d-flex gap-2 mb-3">
-                        <button type="submit" class="btn btn-primary">
-                            <i class="bi bi-check-lg me-1"></i>Save Token
-                        </button>
-                        {% if usage.beehiiv_token %}
-                        <button type="button" class="btn btn-outline-danger" id="clearCredentials">
-                            <i class="bi bi-trash me-1"></i>Clear
-                        </button>
-                        {% endif %}
-                    </div>
-                </form>
-
-                {% if usage.api_key_valid and usage.available_publications %}
-                <form method="post" action="{% url 'analytics:account' %}" id="publicationForm">
-                    {% csrf_token %}
-                    <input type="hidden" name="action" value="switch_publication">
-                    <div class="mb-3">
-                        <label for="beehiiv_pub_id" class="form-label">Publication</label>
-                        <select class="form-select" id="beehiiv_pub_id" name="beehiiv_pub_id">
-                            {% for pub in usage.available_publications %}
-                            <option value="{{ pub.id }}" {% if pub.id == usage.beehiiv_pub_id %}selected{% endif %}>
-                                {{ pub.name }}
-                            </option>
-                            {% endfor %}
-                        </select>
-                        <div class="form-text">
-                            Select the publication to analyze.
-                        </div>
-                    </div>
-                </form>
-                {% endif %}
-
             </div>
         </div>
     </div>

@@ -216,6 +216,10 @@ CREDITS_PER_EXTRACTION = 1      # Per post extracted from
 CREDITS_PER_REPORT = 1          # Flat cost for generating insights
 CREDITS_PER_ANNOTATION = 1      # Per post annotated with improvement tips
 
+# Maximum items sent to the LLM for report generation. When exceeded, the
+# top and bottom performers from each section are sampled (middle omitted).
+MAX_REPORT_ITEMS = 150
+
 # =============================================================================
 # Progress Bar Expected Durations (seconds)
 # =============================================================================
@@ -226,6 +230,12 @@ PROGRESS_DURATIONS = {
     'download_annotated': 60,   # empirical
     'extract_content': 12,      # empirical
     'generate_report': 65,      # empirical
+    'process_posts': 20,        # empirical
+}
+
+# User-facing time warnings (minutes)
+EXPECTED_TIMES = {
+    'refresh_posts_first_load': 2,  # first-time post load warning
 }
 
 # =============================================================================

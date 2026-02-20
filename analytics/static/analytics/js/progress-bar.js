@@ -44,7 +44,8 @@ const ProgressBar = (function() {
         const {
             containerId,
             expectedDuration = 15,
-            subtext = ''
+            subtext = '',
+            startProgress = 0
         } = options;
 
         const container = document.getElementById(containerId);
@@ -70,17 +71,22 @@ const ProgressBar = (function() {
             subtextEl.textContent = subtext;
         }
 
-        // Initialize state
+        // Initialize state, optionally at an offset for resumed bars
+        const initialProgress = Math.min(startProgress, MAX_PROGRESS);
         const state = {
             container: progressContainer,
             progressBar: progressBar,
             subtextEl: subtextEl,
-            currentProgress: 0,
+            currentProgress: initialProgress,
             isComplete: false,
             intervalId: null
         };
 
         activeBars[containerId] = state;
+
+        if (initialProgress > 0) {
+            updateProgressUI(state, initialProgress);
+        }
 
         // Calculate interval: advance 10% at each interval
         // Total intervals needed: 9 (to reach 90%)

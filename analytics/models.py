@@ -5,6 +5,7 @@ from django.core.serializers.json import DjangoJSONEncoder
 from django.utils import timezone
 from calendar import monthrange
 import json
+import uuid
 
 from .fields import EncryptedCharField
 
@@ -341,8 +342,24 @@ class Report(models.Model):
     content_set = models.ForeignKey(
         ContentSet,
         on_delete=models.CASCADE,
+        null=True,
+        blank=True,
         related_name='reports',
-        help_text="The content set this report is based on"
+        help_text="The content set this report is based on (legacy, nullable)"
+    )
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='reports',
+        help_text="The user who owns this report"
+    )
+    publication = models.ForeignKey(
+        'Publication',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='reports',
+        help_text="The publication this report belongs to"
     )
     report_text = models.TextField(help_text="The markdown-formatted report content")
 
@@ -351,10 +368,10 @@ class Report(models.Model):
 
     class Meta:
         ordering = ['-created_at']
-        unique_together = [['name', 'content_set']]
+        unique_together = [['name', 'user', 'publication']]
 
     def __str__(self):
-        return f"{self.name} - {self.content_set.name}"
+        return f"{self.name} - {self.user.email}"
 
 
 class ExecutionLog(models.Model):
@@ -420,6 +437,119 @@ class ExecutionLog(models.Model):
     def __str__(self):
         status = "OK" if self.success else "ERROR"
         return f"[{self.kind}] {self.name} - {status} ({self.duration_ms}ms)"
+
+
+class ProcessedPost(models.Model):
+    """Stores section-aware extracted content for a single post after review approval"""
+
+    post = models.ForeignKey(
+        'Post',
+        on_delete=models.CASCADE,
+        related_name='processed_posts',
+        help_text="The post this extraction belongs to"
+    )
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='processed_posts',
+        help_text="The user who owns this processed data"
+    )
+    publication = models.ForeignKey(
+        Publication,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='processed_posts',
+        help_text="The publication this processed post belongs to"
+    )
+    sections_data = models.JSONField(
+        help_text="JSON array of sections, each with section_name and items list"
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        unique_together = [['post', 'user']]
+        verbose_name = "Processed Post"
+        verbose_name_plural = "Processed Posts"
+
+    def __str__(self):
+        return f"{self.post.title} - {self.user.email}"
+
+    def get_section_count(self):
+        """Return the number of sections"""
+        if isinstance(self.sections_data, list):
+            return len(self.sections_data)
+        return 0
+
+    def get_total_items_count(self):
+        """Return total number of items across all sections"""
+        if not isinstance(self.sections_data, list):
+            return 0
+        return sum(len(s.get('items', [])) for s in self.sections_data)
+
+
+class ProcessingTemplate(models.Model):
+    """Saved section layout template for the Process Selected Posts workflow."""
+    name = models.CharField(max_length=255)
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='processing_templates'
+    )
+    publication = models.ForeignKey(
+        Publication,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='processing_templates'
+    )
+    sections_data = models.JSONField(help_text="JSON array of {name, description} dicts")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        unique_together = [['name', 'publication', 'user']]
+        verbose_name = "Processing Template"
+        verbose_name_plural = "Processing Templates"
+
+    def __str__(self):
+        return f"{self.name} ({self.user})"
+
+
+class PendingReport(models.Model):
+    """Tracks background report generation tasks"""
+
+    task_id = models.UUIDField(default=uuid.uuid4, unique=True)
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='pending_reports'
+    )
+    publication = models.ForeignKey(
+        Publication,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='pending_reports'
+    )
+    status = models.CharField(
+        max_length=20,
+        default='pending',
+        help_text="pending, complete, or error"
+    )
+    result_text = models.TextField(blank=True)
+    error_message = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"PendingReport {self.task_id} ({self.status})"
 
 
 class SurveyResponse(models.Model):

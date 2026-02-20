@@ -35,5 +35,6 @@ def progress_context(request):
     Add progress bar durations to template context.
     """
     return {
-        'progress_durations': settings.PROGRESS_DURATIONS
+        'progress_durations': settings.PROGRESS_DURATIONS,
+        'expected_times': settings.EXPECTED_TIMES,
     }

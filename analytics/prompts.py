@@ -2,9 +2,8 @@
 Prompt templates for LLM calls used throughout the analytics app.
 """
 
-# Used in extract_items() — system message instructing the LLM to identify
-# HTML line ranges matching a user's content description.
-PARSING_PROMPT = """You are given an HTML document with line numbers.
+# Legacy single-description prompt — used by extract_items() for backward compatibility.
+PARSING_PROMPT_SINGLE = """You are given an HTML document with line numbers.
 Your task is to identify items within the HTML that correspond to the ContentDescription at bottom.
 Provide the start and end line numbers (inclusive) for each item that matches the description.
 Make each discrete item a separate pair of start and end line numbers.
@@ -20,7 +19,7 @@ Sometimes, the user may be referring to a section which contains multiple simila
 -Rivian debuts the R1T TrailForge Edition, adding magnetically adjustable suspension plates and an onboard terrain-mapping assistant trained on 40M trail miles.
 </Example1>
 
-In this case, if the user asked for “new product releases”, you would make each one of the four news items into a separate item, unless specifically instructed otherwise.
+In this case, if the user asked for "new product releases", you would make each one of the four news items into a separate item, unless specifically instructed otherwise.
 Make sure to include all of them, for instance, in this case, you would return four pairs of start and end line numbers.
 
 In other cases, the user may be referring to a single item, as in Example2.
@@ -29,160 +28,176 @@ In other cases, the user may be referring to a single item, as in Example2.
 **New product release**
 Audi introduces the A7 NeoSport, a sleek fastback hybrid that pairs a 2.0L turbo engine with a next-gen ultracapacitor boost system, delivering instantaneous torque without relying on traditional lithium-ion packs. Early testers report near-zero lag during acceleration and a smoother handoff between electric assist and combustion power than any previous Audi hybrid.
 
-The NeoSport also debuts Audi’s new “HoloHUD” panoramic projection system, which layers 3D navigation cues, lane boundaries, and contextual alerts directly onto the windshield. The display dynamically adapts to sunlight, fog, and glare, giving drivers a floating augmented-reality interface that feels more like a fighter jet cockpit than a dashboard.
+The NeoSport also debuts Audi's new "HoloHUD" panoramic projection system, which layers 3D navigation cues, lane boundaries, and contextual alerts directly onto the windshield. The display dynamically adapts to sunlight, fog, and glare, giving drivers a floating augmented-reality interface that feels more like a fighter jet cockpit than a dashboard.
 </Example2>
 
-In this case, if the user asked for “new product release”, you would make it a single item, returning a single pair of start and end line numbers.
+In this case, if the user asked for "new product release", you would make it a single item, returning a single pair of start and end line numbers.
 
 Use your judgement and the content description to determine whether to extract multiple items or a single item.
 """
 
+# Used in extract_items() for backward compatibility
+PARSING_PROMPT = PARSING_PROMPT_SINGLE
+
+# Used in extract_sections() — system message for multi-section extraction.
+SECTION_PARSING_PROMPT = """You are given an HTML document with line numbers.
+Your task is to identify items within the HTML that belong to each of the named sections listed at the bottom.
+Each section has a name and a description of the content to look for.
+
+For each section, provide the start and end line numbers (inclusive) for every item matching that section's description.
+Make each discrete item a separate pair of start and end line numbers.
+Do not include any items that do not match a section's description.
+Group items by section name.
+
+Sometimes, a section description may refer to multiple similar items, as in Example1.
+
+<Example1>
+Section: "Product Releases"
+Description: "New product release items"
+
+**New product releases**
+-Tesla unveils the Roadster X-Plus, a lightweight carbon-ceramic edition with a 0–60 time of 1.7 seconds and a 700-mile solid-state battery pack.
+-BMW releases the i5 Touring ActiveHybrid, featuring adaptive solar-roof charging and an AI-driven energy-routing system for long-distance commuters.
+-Toyota launches the Land Cruiser Micro-Hybrid, a compact off-road SUV aimed at urban explorers, with a detachable roof rack drone for scouting terrain.
+-Rivian debuts the R1T TrailForge Edition, adding magnetically adjustable suspension plates and an onboard terrain-mapping assistant trained on 40M trail miles.
+</Example1>
+
+In this case, for the "Product Releases" section, you would make each of the four news items into a separate item within that section.
+Make sure to include all of them.
+
+In other cases, a section description may refer to a single item, as in Example2.
+
+<Example2>
+Section: "Featured Release"
+Description: "The main featured product release"
+
+**New product release**
+Audi introduces the A7 NeoSport, a sleek fastback hybrid that pairs a 2.0L turbo engine with a next-gen ultracapacitor boost system.
+The NeoSport also debuts Audi's new "HoloHUD" panoramic projection system.
+</Example2>
+
+In this case, for the "Featured Release" section, you would make it a single item.
+
+Use your judgement and each section's description to determine whether to extract multiple items or a single item per section.
+It is possible for a section to have zero items if no matching content is found.
+"""
+
 # Used in generate_content_insights() — user message template containing
 # instructions and an example report for analyzing item CTR performance.
-ANALYSIS_PROMPT = """
+INSIGHTS_PROMPT = """
 <instructions>
-You are an expert data analyst.
-You have been given a list of items featured in a newsletter, each with an associated click-through rate (CTR) and percentile ranking among all items.
-Produce a report analyzing the dataset of items and their click-through rates (CTR), following the provided template.
-Aim for ~3 top performing item archetypes, each supported by multiple examples from the data, and 1-3 underperforming archetypes for contrast. 
-Highlight key insights and patterns. 
-Set your "top tier" threshold to include 5-10 of the top items by CTR.
-Use markdown formatting with headings, bullet points, and sections as shown in the template.
+You are an expert newsletter analyst.
+
+You have been given newsletter items grouped by section. Each item has a name/description, CTR, a percentile rank among all items, and a percentile rank within its section.
+
+Write a concise performance report following the sample structure below.
+
+Rules:
+- Do not include item IDs.
+- Use markdown tables for example items; single-sentence bullets for traits.
+- If only one section is present, omit the Overall block and per-section headers — output just the archetype analysis directly.
+- Show up to 5 examples per high/low block. Keep bullet lists to 2–3 points each.
+   These do not necessarily need to be the absolute top or bottom performing items within the section.
+   Rather, you should first decide what the characteristics of high- and low-performing items are within each section and THEN identify up to 5 examples that showcase this trend.
+- Shorten long items to a headline label (≤10 words). Keep the key hook. For example: 
+   Too long: "A framework for reliable browser-using agents Notte is a production‑oriented framework for building browser-using web automation agents, intended to be easier and cheaper to use at scale than alternatives like Browser Use and Convergence”
+   Better: "Notte: a framework for browser-using agents"
+- Always use 💡 for Content Insights and 🌐 for Across all sections (if it is present, i.e. if there are multiple sections).
+   Choose a suitable emoji for each other section title.
 </instructions>
 
-<template>
-Here’s what stands out when you look at the highest‑click-through rate (CTR) links (90th percentile and above) and compare them to the rest.
+<sample>
+# 💡 Content Insights
 
-Top tier (≥90th percentile):
+## 🌐 Across all sections
 
-- ID 53 – Chicago Tech Mixer and Social (Tech / AI / Data) – 9.6% (100%)
-- ID 7 – From Idea to MVP – 9.3% (97%)
-- ID 27 – Chicago Coffee Club | Vertical AI Founders & Funders – 9.3% (97%)
-- ID 4 – Machine Learning Reading Group Social Hour – 9.2% (94%)
-- ID 48 – The AI Collective – 9.2% (94%)
-- ID 50 – Fireside Chat: Unlocking the Power of Context Engineering w/ Pinecone – 9.0% (92%)
-- ID 43 – Emerging Tech Inno Week: AI Day – 8.7% (90%)
+### 📈 High performers
+|| CTR | Percentile |
+|------|-----|:---:|
+| Chicago Tech Mixer | 9.6% | 100% |
+| From Idea to MVP | 9.3% | 97% |
+| Chicago Coffee Club: Vertical AI Founders | 9.3% | 97% |
+| ML Reading Group Social Hour | 9.2% | 94% |
+| Context Engineering w/ Pinecone | 9.0% | 92% |
 
+**✅ What works:**
+- Social/community framing with a clear AI/tech audience ("mixer," "happy hour," "collective").
+- Concrete outcome tied to builder goals: "Idea to MVP," "Building an MCP."
+- Credible attached brand or known community (Drive Capital, Pinecone, AI Tinkerers).
 
----
+### 📉 Low performers
+|| CTR | Percentile |
+|------|-----|:---:|
+| Chicago Stablecoin Social | 2.0% | 2% |
+| Blockchain & Digital Assets: Policy Trends | 2.6% | 13% |
+| Money Moves: Future of Investment Mgmt | 2.5% | 10% |
+| 1 Million Cups Chicago | 1.8% | 1% |
+| Java Global Insights: Innovation | 2.1% | 4% |
 
-### 1. Community‑first, social AI/tech gatherings perform extremely well
-
-High performers with this flavor:
-
-- ID 53 – Chicago Tech Mixer and Social (Tech / AI / Data) – 9.6% (100%)
-- ID 4 – Machine Learning Reading Group Social Hour – 9.2% (94%)
-- ID 48 – The AI Collective – 9.2% (94%)
-- ID 27 – Chicago Coffee Club | Vertical AI Founders & Funders – 9.3% (97%)
-- ID 29 – Chicago Data Happy Hour – 7.2% (80%)
-- ID 54 – Chicago Tech Connect Breakfast – 7.3% (83%)
-- ID 5 – Chicago – International Generalist Day Meetup – 7.0% (76%)
-
-**Common traits:**
-
-- The framing is explicitly social or communal: “Mixer and Social,” “Happy Hour,” “Breakfast,” “Coffee Club,” “Collective,” “Social Hour.”
-- Often broad but targeted topics: “Tech / AI / Data,” “Machine Learning,” “Vertical AI” rather than a hyper‑narrow niche.
-- Implied low barrier to entry: you can “drop in,” meet people, and benefit even if you’re not deeply technical or prepared.
-- Titles emphasize the *community* more than a specific talk title or speaker.
-
-**Event type that works:**  
-Community‑centric meetups and socials for AI / tech / data people, with clear networking and “come hang out” positioning.
-
+**❌ What doesn't work:**
+- Finance/crypto/policy framing with no builder or practitioner angle.
+- Abstract titles with no specific benefit ("Outlook," "Innovation," "Insights").
 
 ---
 
-### 2. Builder‑focused, “ship something” sessions are very strong
+## 🔗 Quick Links section
 
-High performers in this category:
+### 📈 High performers
+|| CTR | Percentile (all items) | Percentile (Quick Links items) |
+|------|-----|:---:|:---:|
+| Chicago Tech Mixer | 9.6% | 100% | 97% |
+| Chicago Coffee Club: Vertical AI Founders | 9.3% | 97% | 96% |
+| The AI Collective | 9.2% | 94% | 95% |
+| Emerging Tech: AI Day | 8.7% | 90% | 100% |
+| AI Tinkerers #21 (Drive Capital) | 8.2% | 88% | 94% |
 
-- ID 7 – From Idea to MVP – 9.3% (97%)
-- ID 0 – Vibe Coding Unlocked: Effortless App Building with Databricks – 7.5% (85%)
-- ID 31 – Building an MCP in Node.js & Using WebAssembly to Safely Run Unsafe Code – 6.7% (70%)
-- ID 30 – AI in Healthcare: Innovation, Infrastructure & Human-Centered Trust – 6.8% (74%)
+**✅ What works:**
+- AI-specific focus with a named brand or practitioner community.
+- "Insider" positioning (tinkerers, practitioners) over generic conference language.
 
-**Common traits:**
+### 📉 Low performers
+|| CTR | Percentile (all items) | Percentile (Quick Links items) |
+|------|-----|:---:|:---:|
+| ChiTech Fall: Gravity Outlook | 2.1% | 4% | 8% |
+| Java Global Insights: Innovation | 2.1% | 4% | 6% |
+| Bitwise Crypto Diligence Summit | 3.2% | 22% | 15% |
+| VC/LP Gallery Series | 2.6% | 13% | 10% |
+| Hispanic Heritage Month: 1871 × LIT | 2.4% | 8% | 7% |
 
-- Clear “you will build / create / launch” promise: “Idea to MVP,” “App Building,” “Building an MCP.”
-- Concrete outcomes or skills implied, often around modern stacks (Databricks, Node.js, WebAssembly) that builders care about.
-- Strong appeal to early‑stage founders and technical product people.
-
-**Event type that works:**  
-Hands‑on or concept‑to‑product sessions that speak directly to founders, makers, and engineers trying to get from idea to something real.
-
-
----
-
-### 3. AI‑specific and infra‑deep‑dive content pops, especially with credible brands
-
-Strong examples:
-
-- ID 50 – Fireside Chat: Unlocking the Power of Context Engineering w/ Pinecone – 9.0% (92%)
-- ID 43 – Emerging Tech Inno Week: AI Day – 8.7% (90%)
-- ID 37 – AI Tinkerers #21 Hosted by Drive Capital – 8.2% (88%)
-
-**Common traits:**
-
-- Explicit AI focus, often on infrastructure or cutting‑edge concepts: “Context Engineering,” “AI Day,” “AI Tinkerers.”
-- Involvement of recognizable tech brands (Pinecone, NVIDIA, Supermicro) or known communities (AI Tinkerers).
-- Framed as deep dives or insider discussions (e.g., “Fireside Chat,” “Insights,” “Tinkerers”) rather than generic panels.
-
-**Event type that works:**  
-AI‑forward, infra‑oriented sessions with a clear advanced topic and credible technical brand or community.
-
+**❌ What doesn't work:**
+- Broad tech-adjacent topics that don't speak directly to AI/ML practitioners.
+- Vague framing with no concrete skill or outcome promised.
 
 ---
 
+## 🤿 Deep Dives section
 
-### What underperforms by comparison
+### 📈 High performers
+|| CTR | Percentile (all items) | Percentile (Deep Dives items) |
+|------|-----|:---:|:---:|
+| From Idea to MVP | 9.3% | 97% | 99% |
+| Context Engineering w/ Pinecone | 9.0% | 92% | 98% |
+| Vibe Coding: App Building with Databricks | 7.5% | 85% | 100% |
+| AI in Healthcare: Innovation & Infrastructure | 6.8% | 74% | 88% |
+| Building an MCP in Node.js | 6.7% | 70% | 92% |
 
-Lower‑CTR events cluster around a few themes:
+**✅ What works:**
+- Step-by-step "how to build X" framing with named tools.
+- Strong appeal to founders and engineers trying to ship something concrete.
 
-1. **Finance/crypto/policy‑heavy without a builder angle**
+### 📉 Low performers
+|| CTR | Percentile (all items) | Percentile (Deep Dives items) |
+|------|-----|:---:|:---:|
+| Money Moves: Future of Investment Mgmt | 2.5% | 10% | 15% |
+| Blockchain Policy Trends & 2026 Outlook | 2.6% | 13% | 12% |
+| Connect & Grow Chicago | 4.9% | 47% | 52% |
+| Navigate the Patient Landscape | 4.6% | 41% | 48% |
+| ChiTech Fall: Gravity Outlook | 2.1% | 4% | 5% |
 
-   - ID 44 – Chicago Stablecoin Social – 2.0% (2%)
-   - ID 40 – Blockchain & Digital Assets: US Policy Trends & 2026 Outlook – 2.6% (13%)
-   - ID 46 – Money Moves: The Future of Investment Management – 2.5% (10%)
-   - ID 32 – Bitwise Crypto Diligence Summit – 3.2% (22%)
-   - ID 33 – VC / LP Gallery Series w Private Chef: II – 2.6% (13%)
-
-   These skew investor/finance/policy‑oriented, with little in the title about how founders or builders will benefit directly.
-
-2. **Generic networking / corporate events with vague outcomes**
-
-   - ID 56 – Connect & Grow Chicago – 4.9% (47%)
-   - ID 24 – Hispanic Heritage Month Celebration 1871 X LIT – 2.4% (8%)
-   - ID 55 – Navigate the Patient Landscape – 4.6% (41%)
-
-   These may be valuable for community or mission reasons, but the title doesn’t promise a sharp, actionable benefit to a founder/AI/tech builder audience.
-
-3. **Recurring programs without a specific topical hook**
-
-   - IDs 6, 17, 57 – 1 Million Cups Chicago – low CTRs across the board.
-   - ID 11 – ChiTech Fall: Gravity Outlook – 2.1% (4%)
-   - ID 42 – Java Global Insights: Innovation w/ Discover and Brazilian Experts – 2.1% (4%)
-
-   The framing is abstract (“Outlook,” “Insights,” “Innovation”) and not clearly tied to what this specific audience will learn, build, or who they’ll meet.
-
-These types of events may still be important for diversity of programming, ecosystem health, or specific partner commitments, but they are not your primary CTR drivers.
-
-
----
-
-### Summary: Top‑performing link archetypes
-
-Based on CTR and percentiles, the consistently high‑engagement link types are:
-
-1. **Community‑centric AI/tech socials**
-   - Mixers, happy hours, breakfasts, “collectives,” and “clubs” with a clear AI/tech/data focus and a strong networking/social promise.
-
-2. **Builder‑oriented sessions**
-   - Events that promise movement from idea → MVP, app building, or concrete technical outcomes that appeal to founders and engineers.
-
-3. **AI‑infra and advanced topic deep dives with strong brands**
-   - AI Day, AI Tinkerers, context engineering, infra for financial services—especially when co‑branded with known vendors (Pinecone, NVIDIA, etc.).
-
-If you’re optimizing for engagement, skew your programming and naming toward these patterns, and treat generic finance/policy events, broad “innovation” talks, and unspecific recurring programs as secondary or as vehicles for other goals (e.g., ecosystem signaling, partner relations) rather than CTR workhorses.
-</template>
+**❌ What doesn't work:**
+- Finance and healthcare topics consistently underperform vs. AI/tech for this audience.
+- Generic outcome language without a specific tool or skill named.
+</sample>
 """
 
 # Used in annotate_post_html() — system message instructing the LLM to
