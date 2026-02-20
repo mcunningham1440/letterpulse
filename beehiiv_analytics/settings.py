@@ -220,6 +220,9 @@ CREDITS_PER_ANNOTATION = 1      # Per post annotated with improvement tips
 # top and bottom performers from each section are sampled (middle omitted).
 MAX_REPORT_ITEMS = 150
 
+# Whether to show the signup survey modal to new users
+SIGNUP_SURVEY_ENABLED = False
+
 # =============================================================================
 # Progress Bar Expected Durations (seconds)
 # =============================================================================

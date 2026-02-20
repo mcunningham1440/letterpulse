@@ -23,7 +23,7 @@ def usage_context(request):
                 'usage_quota': usage.monthly_quota,
                 'usage_remaining': usage.remaining,
                 'usage_percentage': usage.usage_percentage,
-                'show_survey': not usage.survey_completed,
+                'show_survey': settings.SIGNUP_SURVEY_ENABLED and not usage.survey_completed,
             }
         except UsageAccount.DoesNotExist:
             return {'show_survey': False}
