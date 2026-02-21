@@ -183,14 +183,22 @@ LOGOUT_REDIRECT_URL = 'account_login'
 ACCOUNT_LOGIN_METHODS = {'email'}
 ACCOUNT_SIGNUP_FIELDS = ['email*', 'password1*', 'password2*']
 ACCOUNT_EMAIL_VERIFICATION = 'optional'  # Set to 'mandatory' for production
-ACCOUNT_USER_MODEL_USERNAME_FIELD = None
 ACCOUNT_SESSION_REMEMBER = True
 ACCOUNT_UNIQUE_EMAIL = True
-ACCOUNT_ADAPTER = 'analytics.adapters.NoSignupAccountAdapter'
+ACCOUNT_ADAPTER = 'analytics.adapters.CustomAccountAdapter'
+ACCOUNT_FORMS = {'signup': 'analytics.forms.CustomSignupForm'}
 
-# Email settings (use console backend for development)
-EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
-DEFAULT_FROM_EMAIL = 'LetterPulse <noreply@letterpulse.app>'
+# Email settings
+EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
+EMAIL_HOST = 'smtp.gmail.com'
+EMAIL_PORT = 587
+EMAIL_USE_TLS = True
+EMAIL_HOST_USER = os.environ.get('EMAIL_HOST_USER', '')
+EMAIL_HOST_PASSWORD = os.environ.get('EMAIL_HOST_PASSWORD', '')
+DEFAULT_FROM_EMAIL = os.environ.get('EMAIL_HOST_USER', 'noreply@letterpulse.app')
+
+# Email address to receive signup notifications
+SIGNUP_NOTIFICATION_EMAIL = os.environ.get('SIGNUP_NOTIFICATION_EMAIL', '')
 
 # =============================================================================
 # Messages Framework Configuration
@@ -222,6 +230,9 @@ MAX_REPORT_ITEMS = 150
 
 # Whether to show the signup survey modal to new users
 SIGNUP_SURVEY_ENABLED = False
+
+# Maximum new user signups allowed per rolling 24-hour window (None = unlimited)
+DAILY_SIGNUP_CAP = 5
 
 # =============================================================================
 # Progress Bar Expected Durations (seconds)

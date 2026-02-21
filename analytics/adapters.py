@@ -1,12 +1,39 @@
 from allauth.account.adapter import DefaultAccountAdapter
+from django.conf import settings
+from django.contrib.auth import get_user_model
+from django.utils import timezone
+
+User = get_user_model()
 
 
-class NoSignupAccountAdapter(DefaultAccountAdapter):
-    """Custom adapter that disables user signup and normalizes emails."""
+class CustomAccountAdapter(DefaultAccountAdapter):
+    """Custom adapter that auto-generates usernames and normalizes emails."""
 
     def is_open_for_signup(self, request):
-        """Return False to disable signup."""
-        return False
+        cap = getattr(settings, 'DAILY_SIGNUP_CAP', None)
+        if cap is not None:
+            since = timezone.now() - timezone.timedelta(hours=24)
+            recent = User.objects.filter(date_joined__gte=since).count()
+            if recent >= cap:
+                return False
+        return True
+
+    def _unique_username_from_email(self, email):
+        """Generate a unique username from the email local part."""
+        base = email.split('@')[0].lower()
+        if not User.objects.filter(username=base).exists():
+            return base
+        counter = 1
+        while User.objects.filter(username=f"{base}{counter}").exists():
+            counter += 1
+        return f"{base}{counter}"
+
+    def save_user(self, request, user, form, commit=True):
+        user = super().save_user(request, user, form, commit=False)
+        user.username = self._unique_username_from_email(user.email)
+        if commit:
+            user.save()
+        return user
 
     def clean_email(self, email):
         """Normalize email to lowercase to ensure case-insensitive lookups work."""

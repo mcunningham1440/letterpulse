@@ -64,6 +64,12 @@ class UsageAccount(models.Model):
         default=False,
         help_text="Whether the user has completed the signup survey"
     )
+    newsletter_name = models.CharField(
+        max_length=255,
+        blank=True,
+        default='',
+        help_text="Name of the user's newsletter"
+    )
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

@@ -10,14 +10,138 @@
     </div>
 </div>
 
-<h1 class="auth-title">Request an Account</h1>
-<p class="auth-subtitle">To set up an account with LetterPulse, please contact:</p>
+<h1 class="auth-title">Create your account</h1>
+<p class="auth-subtitle">Get started with LetterPulse</p>
 
-<div class="text-center mb-4">
-    <a href="mailto:mcunningham1440@gmail.com" class="auth-link" style="font-size: 1.1rem; font-weight: 500;">
-        mcunningham1440@gmail.com
-    </a>
-</div>
+<form method="post" action="{% url 'account_signup' %}">
+    {% csrf_token %}
+
+    {% if form.non_field_errors %}
+    <div class="alert alert-danger mb-3">
+        {% for error in form.non_field_errors %}
+        {{ error }}
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    <div class="row mb-3">
+        <div class="col-6">
+            <label for="id_first_name" class="form-label">First name</label>
+            <input type="text"
+                   name="first_name"
+                   id="id_first_name"
+                   class="form-control {% if form.first_name.errors %}is-invalid{% endif %}"
+                   placeholder="First name"
+                   value="{{ form.first_name.value|default:'' }}"
+                   required
+                   autofocus>
+            {% if form.first_name.errors %}
+            <ul class="errorlist">
+                {% for error in form.first_name.errors %}
+                <li>{{ error }}</li>
+                {% endfor %}
+            </ul>
+            {% endif %}
+        </div>
+        <div class="col-6">
+            <label for="id_last_name" class="form-label">Last name</label>
+            <input type="text"
+                   name="last_name"
+                   id="id_last_name"
+                   class="form-control {% if form.last_name.errors %}is-invalid{% endif %}"
+                   placeholder="Last name"
+                   value="{{ form.last_name.value|default:'' }}"
+                   required>
+            {% if form.last_name.errors %}
+            <ul class="errorlist">
+                {% for error in form.last_name.errors %}
+                <li>{{ error }}</li>
+                {% endfor %}
+            </ul>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="mb-3">
+        <label for="id_newsletter_name" class="form-label">Newsletter name</label>
+        <input type="text"
+               name="newsletter_name"
+               id="id_newsletter_name"
+               class="form-control {% if form.newsletter_name.errors %}is-invalid{% endif %}"
+               placeholder="e.g. The Morning Brew"
+               value="{{ form.newsletter_name.value|default:'' }}"
+               required>
+        {% if form.newsletter_name.errors %}
+        <ul class="errorlist">
+            {% for error in form.newsletter_name.errors %}
+            <li>{{ error }}</li>
+            {% endfor %}
+        </ul>
+        {% endif %}
+    </div>
+
+    <div class="mb-3">
+        <label for="id_email" class="form-label">Email address</label>
+        <input type="email"
+               name="email"
+               id="id_email"
+               class="form-control {% if form.email.errors %}is-invalid{% endif %}"
+               placeholder="you@example.com"
+               value="{{ form.email.value|default:'' }}"
+               required>
+        {% if form.email.errors %}
+        <ul class="errorlist">
+            {% for error in form.email.errors %}
+            <li>{{ error }}</li>
+            {% endfor %}
+        </ul>
+        {% endif %}
+    </div>
+
+    <div class="mb-3">
+        <label for="id_password1" class="form-label">Password</label>
+        <div class="password-wrapper">
+            <input type="password"
+                   name="password1"
+                   id="id_password1"
+                   class="form-control {% if form.password1.errors %}is-invalid{% endif %}"
+                   placeholder="Create a password"
+                   required>
+        </div>
+        {% if form.password1.errors %}
+        <ul class="errorlist">
+            {% for error in form.password1.errors %}
+            <li>{{ error }}</li>
+            {% endfor %}
+        </ul>
+        {% endif %}
+    </div>
+
+    <div class="mb-4">
+        <label for="id_password2" class="form-label">Confirm password</label>
+        <div class="password-wrapper">
+            <input type="password"
+                   name="password2"
+                   id="id_password2"
+                   class="form-control {% if form.password2.errors %}is-invalid{% endif %}"
+                   placeholder="Confirm your password"
+                   required>
+        </div>
+        {% if form.password2.errors %}
+        <ul class="errorlist">
+            {% for error in form.password2.errors %}
+            <li>{{ error }}</li>
+            {% endfor %}
+        </ul>
+        {% endif %}
+    </div>
+
+    {{ redirect_field }}
+
+    <button type="submit" class="btn btn-primary">
+        Create Account
+    </button>
+</form>
 
 <div class="auth-footer">
     Already have an account? <a href="{% url 'account_login' %}" class="auth-link">Sign in</a>

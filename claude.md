@@ -41,6 +41,7 @@ app/
 │   ├── utils.py                # Core utility functions (API calls, AI extraction, credit charging)
 │   ├── logsink.py              # Queue-based async logging system
 │   ├── logutils.py             # Logging middleware and decorators
+│   ├── forms.py                # Custom allauth signup form (first/last name, newsletter name)
 │   ├── admin.py                # Django admin configuration
 │   ├── signals.py              # User signals (auto-create UsageAccount)
 │   ├── context_processors.py   # Usage stats for templates
@@ -108,6 +109,7 @@ Tracks AI usage credits and API credentials per user:
 - `available_publications`: JSON list of publications available to the user
 - `timezone`: User's preferred timezone for date display (IANA timezone string, default 'America/Chicago')
 - `survey_completed`: Boolean indicating if the user has completed the signup survey
+- `newsletter_name`: Name of the user's newsletter (collected at signup)
 
 Billing cycle: Credits reset on the same day of the month as the user's signup date (e.g., signup on the 15th means credits renew on the 15th of each month). For months with fewer days, renewal occurs on the last day of the month.
 
@@ -199,12 +201,13 @@ Created when a user initiates report generation. The LLM call runs in a backgrou
 ## Authentication
 
 Uses django-allauth for email-based authentication:
-- Email as primary identifier (no username required)
+- Email as primary identifier; usernames are auto-generated from the email local part (e.g. `user@example.com` → `user`), with progressive integers appended if taken (`user1`, `user2`, etc.)
+- Signup collects first name, last name, newsletter name, email, and password (custom form in `analytics/forms.py`, adapter in `analytics/adapters.py`)
 - Password-based login at `/accounts/login/`
 - Registration at `/accounts/signup/`
 - Password reset via email
 - All views are protected with `@login_required` except the public about page
-- UsageAccount is auto-created for new users via signals
+- UsageAccount is auto-created for new users via signals; a signup notification email is sent in a background thread to `SIGNUP_NOTIFICATION_EMAIL` (if configured)
 - "Successfully signed in as" message is suppressed via custom adapter
 - After login, users without API credentials are redirected to Account page (not Posts); users with credentials go to Posts
 - The "Please configure your Beehiiv API credentials" message only appears when navigating to Posts/Insights without credentials, not immediately after login
@@ -317,6 +320,11 @@ DATABASE_SECRET={"username":"your_db_user","password":"your_db_password"}
 
 # API Keys
 OPENAI_API_KEY=your-openai-api-key
+
+# Email (Gmail SMTP for signup notifications)
+EMAIL_HOST_USER=yourgmail@gmail.com
+EMAIL_HOST_PASSWORD=xxxx-xxxx-xxxx-xxxx
+SIGNUP_NOTIFICATION_EMAIL=yourgmail@gmail.com
 ```
 
 **Important:** `SECRET_KEY` is used to derive the encryption key for user beehiiv tokens (via `EncryptedCharField`). Changing the SECRET_KEY will make existing encrypted tokens unreadable. Always backup the SECRET_KEY alongside database backups.
@@ -434,6 +442,12 @@ CREDITS_PER_ANNOTATION = 1      # Per post annotated with improvement tips
 
 # Maximum items sent to the LLM for report generation
 MAX_REPORT_ITEMS = 150
+
+# Whether to show the signup survey modal to new users
+SIGNUP_SURVEY_ENABLED = False
+
+# Maximum new user signups allowed per rolling 24-hour window (None = unlimited)
+DAILY_SIGNUP_CAP = 5
 ```
 
 Credits are charged at the view level before each AI operation runs.
