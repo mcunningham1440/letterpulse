@@ -293,9 +293,11 @@ def account_view(request):
             return redirect('analytics:account')
 
     from .utils import TIMEZONE_CHOICES
+    has_posts = Post.objects.filter(user=request.user).exists() if usage.api_key_valid else False
     context = {
         'usage': usage,
         'timezone_choices': TIMEZONE_CHOICES,
+        'has_posts': has_posts,
     }
 
     return render(request, 'analytics/account.html', context)

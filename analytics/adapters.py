@@ -41,9 +41,11 @@ class CustomAccountAdapter(DefaultAccountAdapter):
         return email.lower() if email else email
 
     def add_message(self, request, level, message_template, message_context=None, message_text=None):
-        """Suppress the 'Successfully signed in as' message."""
-        if message_template and 'logged_in' in str(message_template):
-            return
+        """Suppress the 'Successfully signed in as' and email confirmation messages."""
+        if message_template:
+            template_str = str(message_template)
+            if 'logged_in' in template_str or 'email_confirmation_sent' in template_str:
+                return
         super().add_message(request, level, message_template, message_context, message_text)
 
     def get_login_redirect_url(self, request):
@@ -56,3 +58,7 @@ class CustomAccountAdapter(DefaultAccountAdapter):
         except UsageAccount.DoesNotExist:
             return '/account/'
         return super().get_login_redirect_url(request)
+
+    def get_signup_redirect_url(self, request):
+        """Redirect new signups to account page to configure API credentials."""
+        return '/account/'

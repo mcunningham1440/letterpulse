@@ -1,5 +1,6 @@
 {% extends 'analytics/base.html' %}
 {% load humanize %}
+{% load static %}
 
 {% block title %}Posts - LetterPulse{% endblock %}
 
@@ -71,6 +72,13 @@
             <div id="refreshPostsProgress" class="px-3"></div>
             <div class="card-body">
                 {% if posts %}
+                {% if not processed_post_ids %}
+                <div class="alert alert-info mb-3 no-auto-dismiss">
+                    <i class="bi bi-lightbulb"></i> <strong>Getting started:</strong> First, try selecting your most recent published post and clicking <strong>Download Click Visualization</strong> to instantly see how well each link performed.
+                    <br><br>
+                    Then select a few of your most recent posts (try 3) and click <strong>Process Selected Posts</strong> to extract content for analysis in the Insights tab.
+                </div>
+                {% endif %}
                 <div class="table-responsive">
                     <table class="table table-hover table-sm" id="postsTable">
                         <thead>
@@ -149,10 +157,12 @@
                                 </button>
                             </div>
 
+                            {% if processed_post_ids %}
                             <!-- Clear Processed Data -->
                             <button type="button" class="btn btn-danger btn-sm" id="clearProcessedBtn">
                                 <i class="bi bi-trash"></i> Clear Data from Selected Posts
                             </button>
+                            {% endif %}
 
                             {% comment %}
                             <!-- Get Improvement Tips Dropdown -->
@@ -209,7 +219,7 @@
                 </div>
                 {% else %}
                 <div class="alert alert-info mb-0 no-auto-dismiss">
-                    Welcome to LetterPulse! To get started, fetch your newsletter's posts from Beehiiv using the Refresh Posts button.
+                    Welcome to LetterPulse! To start, fetch your newsletter's posts from Beehiiv using the <b>Refresh Posts</b> button.
                 </div>
                 {% endif %}
             </div>
@@ -232,6 +242,10 @@
                   style="cursor: help;">
                 <i class="bi bi-info-circle"></i> How to use this feature
             </span>
+            <span class="ms-2">|</span>
+            <a href="{% static 'analytics/processing_example.html' %}" target="_blank" class="text-primary ms-2" style="text-decoration: none;">
+                <i class="bi bi-file-earmark-text"></i> See an example
+            </a>
         </div>
 
         <datalist id="sectionNameOptions"></datalist>
@@ -964,7 +978,8 @@
     // =========================================================================
     // Clear Processed Data
     // =========================================================================
-    document.getElementById('clearProcessedBtn').addEventListener('click', async function() {
+    const clearProcessedBtn = document.getElementById('clearProcessedBtn');
+    if (clearProcessedBtn) clearProcessedBtn.addEventListener('click', async function() {
         const selectedPosts = document.querySelectorAll('.post-checkbox:checked');
         if (selectedPosts.length === 0) {
             alert('Please select at least one post.');
