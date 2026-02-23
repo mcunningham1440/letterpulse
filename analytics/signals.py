@@ -44,9 +44,16 @@ def _send_signup_notification(user):
             name = f"{user.first_name} {user.last_name}".strip() or "N/A"
             newsletter = getattr(user, 'usage_account', None)
             newsletter_name = newsletter.newsletter_name if newsletter else "N/A"
+            db_host = settings.DATABASES['default'].get('HOST', '')
+            if 'prod' in db_host.lower():
+                env_label = "PROD"
+            elif 'dev' in db_host.lower():
+                env_label = "DEV"
+            else:
+                env_label = "UNKNOWN"
             send_mail(
-                subject=f"New LetterPulse signup: {user.email}",
-                message=f"Name: {name}\nEmail: {user.email}\nNewsletter: {newsletter_name}\nJoined: {user.date_joined}",
+                subject=f"[{env_label}] New LetterPulse signup: {user.email}",
+                message=f"Environment: {env_label}\nName: {name}\nEmail: {user.email}\nNewsletter: {newsletter_name}\nJoined: {user.date_joined}",
                 from_email=settings.DEFAULT_FROM_EMAIL,
                 recipient_list=[to_email],
                 fail_silently=True,
