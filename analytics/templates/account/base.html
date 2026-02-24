@@ -1,3 +1,4 @@
+{% load static %}
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -61,8 +62,9 @@
             color: var(--primary-green);
         }
 
-        .auth-brand i {
-            color: var(--primary-green);
+        .auth-brand-logo {
+            height: 1.75rem;
+            width: auto;
         }
 
         .auth-title {
@@ -213,7 +215,7 @@
         <div class="auth-card">
             <div class="auth-brand">
                 <a href="/">
-                    <i class="bi bi-bar-chart-fill"></i>
+                    <img src="{% static 'analytics/images/logo_no_text.png' %}" alt="LetterPulse logo" class="auth-brand-logo">
                     LetterPulse
                 </a>
             </div>
