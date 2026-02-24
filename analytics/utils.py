@@ -587,6 +587,9 @@ async def extract_sections(post_html, sections, clicks_dict, title, post_date,
         List of section dicts: [{"section_name": "...", "items": [...]}, ...]
     """
     # Step 1: Get line numbers for sections matching descriptions
+    # Sanitize section names: double quotes break OpenAI structured output schemas
+    for s in sections:
+        s['name'] = s['name'].replace('"', '')
     section_names = [s['name'] for s in sections]
 
     # Build user message with sections (description is optional)
