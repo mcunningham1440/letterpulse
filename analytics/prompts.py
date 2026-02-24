@@ -34,6 +34,18 @@ The NeoSport also debuts Audi's new "HoloHUD" panoramic projection system, which
 In this case, if the user asked for "new product release", you would make it a single item, returning a single pair of start and end line numbers.
 
 Use your judgement and the content description to determine whether to extract multiple items or a single item.
+
+Remember that portions of text that do not contain links, especially if they are very short, probably aren't good candidates for items.
+For instance, if asked to find the "Ad" section, you would parse the example below as one single item, 
+not as "In partnership with AnyCorp" as a first item and the rest as a second, unless specifically instructed otherwise.
+
+<Example3>
+In partnership with AnyCorp
+
+Have you ever had an issue with one of your products?
+AnyCorp [link] offers a comprehensive solution suite for all kinds of business issues.
+Visit AnyCorp.com [link] to have all your corporate problems solved.
+</Example3>
 """
 
 # Used in extract_items() for backward compatibility
