@@ -1068,7 +1068,7 @@ def generate_click_visualization_html(post_html, clicks_dict, unique_email_opens
         asterisk = soup.new_tag('sup')
         asterisk.string = '*'
         banner.append(asterisk)
-        banner.append(" Links to URLs that appear multiple times in the post are shown in purple. Click counts and CTRs for these links are averaged among clicks for that URL.")
+        banner.append(" If multiple links in a post go to the same URL, those links are shown in purple. Click counts and CTRs for those links are averaged among all links to that URL.")
         if body:
             body.insert(0, banner)
         else:

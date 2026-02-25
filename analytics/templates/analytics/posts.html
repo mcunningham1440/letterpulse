@@ -358,6 +358,9 @@
             <span class="badge bg-secondary fs-6" id="reviewCounter">1 of 1</span>
         </div>
 
+        <div class="alert alert-info py-2 px-3 small d-none no-auto-dismiss" id="reviewAveragedClicksNotice">
+            If multiple links in a post go to the same URL, click counts and CTRs for those links are averaged among those links.
+        </div>
         <div id="reviewSections">
             <!-- Dynamically populated with section tables -->
         </div>
@@ -691,6 +694,21 @@
         const container = document.getElementById('reviewSections');
         container.innerHTML = '';
 
+        // Check if any items have non-integer click counts (averaged due to duplicate URLs)
+        const hasAveragedClicks = post.sections.some(function(section) {
+            return section.items.some(function(item) {
+                return item.clicks && item.clicks.some(function(c) { return !Number.isInteger(c); });
+            });
+        });
+        const reviewNotice = document.getElementById('reviewAveragedClicksNotice');
+        if (reviewNotice) {
+            if (hasAveragedClicks) {
+                reviewNotice.classList.remove('d-none');
+            } else {
+                reviewNotice.classList.add('d-none');
+            }
+        }
+
         post.sections.forEach(function(section, sIdx) {
             const sectionDiv = document.createElement('div');
             sectionDiv.className = 'review-section-table';
@@ -724,6 +742,7 @@
                             <tbody>
                                 ${section.items.map(function(item, iIdx) {
                                     const maxClicks = item.clicks && item.clicks.length > 0 ? Math.max(...item.clicks) : 0;
+                                    const maxClicksDisplay = Number.isInteger(maxClicks) ? maxClicks.toLocaleString() : maxClicks.toFixed(1);
                                     const maxRate = item.click_rate && item.click_rate.length > 0 ? Math.max(...item.click_rate) : 0;
                                     const maxRateFormatted = (maxRate * 100).toFixed(2) + '%';
                                     const linkCount = item.links ? item.links.length : 0;
@@ -731,7 +750,7 @@
                                         '<td><input type="checkbox" class="form-check-input review-item-checkbox" data-section="' + sIdx + '" data-item="' + iIdx + '"></td>' +
                                         '<td>' + truncateText(item.text || '', 15) + '</td>' +
                                         '<td><span class="badge bg-secondary">' + linkCount + ' link' + (linkCount !== 1 ? 's' : '') + '</span></td>' +
-                                        '<td class="text-end">' + maxClicks.toLocaleString() + '</td>' +
+                                        '<td class="text-end">' + maxClicksDisplay + '</td>' +
                                         '<td class="text-end">' + maxRateFormatted + '</td>' +
                                     '</tr>';
                                 }).join('')}

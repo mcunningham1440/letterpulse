@@ -180,6 +180,9 @@
                 </button>
             </div>
             <div class="card-body">
+                <div class="alert alert-info py-2 px-3 small d-none no-auto-dismiss" id="averagedClicksNotice">
+                    If multiple links in a post go to the same URL, click counts and CTRs for those links are averaged among the links.
+                </div>
                 <div class="table-responsive">
                     <table class="table table-hover table-sm" id="contentTable">
                         <thead>
@@ -698,15 +701,26 @@
         const tbody = document.getElementById('contentTableBody');
         tbody.innerHTML = '';
 
+        // Check if any items have non-integer click counts (averaged due to duplicate URLs)
+        const hasAveragedClicks = items.some(item => !Number.isInteger(item.max_clicks));
+        const notice = document.getElementById('averagedClicksNotice');
+        if (hasAveragedClicks) {
+            notice.classList.remove('d-none');
+        } else {
+            notice.classList.add('d-none');
+        }
+
         items.forEach(item => {
             const row = document.createElement('tr');
+            const clicks = Number(item.max_clicks);
+            const clicksDisplay = Number.isInteger(clicks) ? clicks.toLocaleString() : clicks.toFixed(1);
             row.innerHTML = `
                 <td>${item.post_title}</td>
                 <td data-order="${item.post_date_sortable}">${item.post_date_display}</td>
                 <td><span class="badge" style="background-color: ${getColorForSection(item.section_name)};">${item.section_name}</span></td>
                 <td>${truncateText(item.text, 50)}</td>
                 <td><span class="badge bg-secondary">${item.links.length} link${item.links.length !== 1 ? 's' : ''}</span></td>
-                <td class="text-end">${Number(item.max_clicks).toLocaleString()}</td>
+                <td class="text-end">${clicksDisplay}</td>
                 <td class="text-end">${item.max_click_rate}</td>
             `;
             tbody.appendChild(row);
