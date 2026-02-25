@@ -4,6 +4,7 @@ Adapted from the original utils.py for Streamlit.
 """
 
 import json
+from collections import Counter
 from openai import AsyncOpenAI, OpenAI
 from pydantic import BaseModel
 from typing import List, Literal
@@ -420,18 +421,36 @@ def match_links_with_clicks(html_links_raw, clicks_dict):
     count is the sum of clicks from all click URLs that include it among their
     closest matches.
 
+    When a processed URL (stripped of &_bhlid= tracking params) appears multiple
+    times in the HTML, the click count is averaged across all occurrences, since
+    the Beehiiv API cannot distinguish which occurrence was clicked.
+
     Args:
         html_links_raw: List of raw HTML link hrefs (as-is from the HTML)
         clicks_dict: Dictionary mapping click report URLs to click counts
 
     Returns:
-        Dictionary mapping raw HTML links to their accumulated click counts
+        Tuple of (link_to_clicks, duplicate_raw_urls) where:
+        - link_to_clicks: Dictionary mapping raw HTML links to their click counts
+          (averaged for URLs whose processed form appears multiple times)
+        - duplicate_raw_urls: Set of raw URLs whose processed form appears more
+          than once in the HTML
     """
     if not clicks_dict or not html_links_raw:
-        return {}
+        return {}, set()
 
     # Process HTML links by stripping &_bhlid= and everything after (for matching only)
     html_links_processed = [link.split("&_bhlid=")[0] for link in html_links_raw]
+
+    # Count occurrences of each processed URL
+    processed_counts = Counter(html_links_processed)
+
+    # Identify raw URLs whose processed form appears more than once
+    duplicate_raw_urls = {
+        html_links_raw[i]
+        for i in range(len(html_links_raw))
+        if processed_counts[html_links_processed[i]] > 1
+    }
 
     # Result: raw HTML link -> click count
     link_to_clicks = {}
@@ -452,7 +471,13 @@ def match_links_with_clicks(html_links_raw, clicks_dict):
                 raw_url = html_links_raw[i]
                 link_to_clicks[raw_url] = link_to_clicks.get(raw_url, 0) + click_count
 
-    return link_to_clicks
+    # Average clicks for URLs whose processed form appears multiple times
+    for raw_url in duplicate_raw_urls:
+        if raw_url in link_to_clicks:
+            processed = raw_url.split("&_bhlid=")[0]
+            link_to_clicks[raw_url] /= processed_counts[processed]
+
+    return link_to_clicks, duplicate_raw_urls
 
 
 async def extract_items(post_html, content_desc, clicks_dict, title, post_date, unique_email_opens, user=None):
@@ -502,7 +527,7 @@ async def extract_items(post_html, content_desc, clicks_dict, title, post_date, 
     news_items = []
 
     html_links_raw = [link['href'] for link in soup.find_all('a') if link.has_attr('href')]
-    link_to_clicks = match_links_with_clicks(html_links_raw, clicks_dict)
+    link_to_clicks, _ = match_links_with_clicks(html_links_raw, clicks_dict)
 
     for item in output.Items:
         reconstructed_html = "\n".join(all_lines[item.StartLine - 1:item.EndLine])
@@ -635,7 +660,7 @@ async def extract_sections(post_html, sections, clicks_dict, title, post_date,
 
     # Step 2: Extract text and links from each section's items
     html_links_raw = [link['href'] for link in soup.find_all('a') if link.has_attr('href')]
-    link_to_clicks = match_links_with_clicks(html_links_raw, clicks_dict)
+    link_to_clicks, _ = match_links_with_clicks(html_links_raw, clicks_dict)
 
     result_sections = []
     for section in output.Sections:
@@ -1016,39 +1041,67 @@ def generate_click_visualization_html(post_html, clicks_dict, unique_email_opens
     """
     Generate HTML with click counts and CTR displayed next to each link.
     Uses improved link matching with Levenshtein distance.
-    
+    Links to URLs that appear multiple times are shown in purple with averaged
+    click counts; unique links are shown in yellow/orange.
+
     Args:
         post_html: HTML content of the post
         clicks_dict: Dictionary mapping URLs to click counts
         unique_email_opens: Number of unique email opens for CTR calculation
-    
+
     Returns:
         Modified HTML string with click visualizations
     """
     soup = BeautifulSoup(post_html, 'html.parser')
-    
+
     # Find all links
     html_links = soup.find_all('a', href=True)
     html_links_raw = [link['href'] for link in html_links]
-    
-    # Use improved matching to get clicks for each link
-    link_to_clicks = match_links_with_clicks(html_links_raw, clicks_dict)
-    
+
+    # Use improved matching to get clicks for each link (with averaging for duplicates)
+    link_to_clicks, duplicate_raw_urls = match_links_with_clicks(html_links_raw, clicks_dict)
+
+    # Add banner at the top if there are any duplicate links with clicks
+    if duplicate_raw_urls & set(link_to_clicks.keys()):
+        body = soup.find('body')
+        banner = soup.new_tag('div', style='background-color: #7B2D8E; color: white; padding: 12px 20px; margin: 20px auto; max-width: 720px; font-family: Arial, sans-serif; font-size: 14px; line-height: 1.5; border-radius: 0.5rem; text-align: center;')
+        asterisk = soup.new_tag('sup')
+        asterisk.string = '*'
+        banner.append(asterisk)
+        banner.append(" Links to URLs that appear multiple times in the post are shown in purple. Click counts and CTRs for these links are averaged among clicks for that URL.")
+        if body:
+            body.insert(0, banner)
+        else:
+            soup.insert(0, banner)
+
     for link in html_links:
         click_count = link_to_clicks.get(link['href'], 0)
-        
+        is_duplicate = link['href'] in duplicate_raw_urls
+
         # Calculate CTR
         ctr = (click_count / unique_email_opens * 100) if unique_email_opens > 0 else 0
-        
+
         # Create a highlighted span with click info
         if click_count > 0:
-            click_info = soup.new_tag('span', style='background-color: yellow; color: black; padding: 10px; margin: 10px 0; border-left: 4px solid orange; font-weight: bold; font-family: Arial, sans-serif; font-size: 14px; white-space: nowrap; display: inline-block;')
+            if is_duplicate:
+                style = 'background-color: #E8D5F0; color: #4A0E6B; padding: 10px; margin: 10px 0; border-left: 4px solid #7B2D8E; font-weight: bold; font-family: Arial, sans-serif; font-size: 14px; white-space: nowrap; display: inline-block;'
+            else:
+                style = 'background-color: yellow; color: black; padding: 10px; margin: 10px 0; border-left: 4px solid orange; font-weight: bold; font-family: Arial, sans-serif; font-size: 14px; white-space: nowrap; display: inline-block;'
+            click_info = soup.new_tag('span', style=style)
+            # Display as integer if whole number, otherwise 1 decimal place
+            click_display = int(click_count) if click_count == int(click_count) else f"{click_count:.1f}"
             has_s = "s" if click_count != 1 else ""
-            click_info.string = f"{click_count} click{has_s} ({ctr:.1f}% CTR)"
-            
+            if is_duplicate:
+                click_info.append(f"{click_display} click{has_s} ({ctr:.1f}% CTR) average")
+                asterisk = soup.new_tag('sup')
+                asterisk.string = '*'
+                click_info.append(asterisk)
+            else:
+                click_info.string = f"{click_display} click{has_s} ({ctr:.1f}% CTR)"
+
             # Insert the click info after the link
             link.insert_after(click_info)
-    
+
     return str(soup)
 
 
