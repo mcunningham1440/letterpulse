@@ -111,7 +111,7 @@
                             {% endfor %}
                         </select>
                         <div class="form-text">
-                            Select the publication to analyze.
+                            Select the publication to analyze
                         </div>
                     </div>
                 </form>
@@ -146,7 +146,7 @@
         </div>
     </div>
 
-    <!-- Right Column: Account Info -->
+    <!-- Right Column: Account Info + Click Viz Email -->
     <div class="col-md-6">
         <div class="card">
             <div class="card-header">
@@ -181,6 +181,32 @@
                 </div>
             </div>
         </div>
+
+        {% if usage.api_key_valid %}
+        <!-- Click Viz Email Card -->
+        <div class="card">
+            <div class="card-header">
+                <i class="bi bi-envelope me-2"></i>Click Visualization Reports
+            </div>
+            <div class="card-body">
+                <form method="post" action="{% url 'analytics:account' %}" id="clickVizToggleForm">
+                    {% csrf_token %}
+                    <input type="hidden" name="action" value="toggle_click_viz_email">
+                    <div class="form-check form-switch mb-2">
+                        <input class="form-check-input" type="checkbox" role="switch"
+                               id="autoClickVizEmail" name="auto_click_viz_email"
+                               {% if usage.auto_click_viz_email %}checked{% endif %}>
+                        <label class="form-check-label" for="autoClickVizEmail">
+                            Email me a click visualization for my new posts 6 hours after publication
+                        </label>
+                    </div>
+                    <div class="form-text mb-3">
+                        Check your spam folder if you do not receive the emails
+                    </div>
+                </form>
+            </div>
+        </div>
+        {% endif %}
     </div>
 </div>
 {% endblock %}
@@ -228,6 +254,16 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         });
     }
+
+    // Auto-submit click viz toggle on change
+    const clickVizCheckbox = document.getElementById('autoClickVizEmail');
+    if (clickVizCheckbox) {
+        clickVizCheckbox.addEventListener('change', function() {
+            document.getElementById('clickVizToggleForm').submit();
+        });
+    }
+
+
 });
 </script>
 {% endblock %}

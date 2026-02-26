@@ -35,7 +35,7 @@ app/
 │   ├── wsgi.py / asgi.py       # WSGI/ASGI entry points
 │   └── __init__.py
 ├── analytics/                  # Main Django app
-│   ├── models.py               # Post, ContentSet, Report, UsageAccount, ExecutionLog, SurveyResponse, ProcessedPost models
+│   ├── models.py               # Post, ContentSet, Report, UsageAccount, ExecutionLog, SurveyResponse, ProcessedPost, ClickVizEmailLog models
 │   ├── views.py                # All view logic (login-protected)
 │   ├── urls.py                 # App URL patterns (analytics namespace)
 │   ├── utils.py                # Core utility functions (API calls, AI extraction, credit charging)
@@ -110,6 +110,8 @@ Tracks AI usage credits and API credentials per user:
 - `timezone`: User's preferred timezone for date display (IANA timezone string, default 'America/Chicago')
 - `survey_completed`: Boolean indicating if the user has completed the signup survey
 - `newsletter_name`: Name of the user's newsletter (collected at signup)
+- `auto_click_viz_email`: Boolean — whether to auto-email click visualizations after post publication (default False)
+- `auto_click_viz_enabled_at`: DateTimeField (nullable) — when the user enabled the feature; prevents old posts from triggering emails
 
 Billing cycle: Credits reset on the same day of the month as the user's signup date (e.g., signup on the 15th means credits renew on the 15th of each month). For months with fewer days, renewal occurs on the last day of the month.
 
@@ -264,6 +266,17 @@ A modal survey appears on first login for new users, collecting feedback about:
 
 The survey is required (modal blocks interaction until submitted) and responses are stored in the `SurveyResponse` model. Once submitted, `UsageAccount.survey_completed` is set to `True` and the survey won't appear again.
 
+### ClickVizEmailLog
+Log of click visualization emails sent to users:
+- `user`: ForeignKey to User
+- `publication`: ForeignKey to Publication (nullable)
+- `post_id`: CharField — Beehiiv post ID (not FK to Post, since the Post record may not exist in DB)
+- `post_title`: CharField (blank)
+- `sent_at`: DateTimeField (auto_now_add)
+- `success`: BooleanField (default True)
+- `error_message`: TextField (blank)
+- Unique constraint: `(user, post_id)` — prevents duplicate emails
+
 ## API Endpoints
 
 All routes use the `analytics:` namespace.
@@ -297,10 +310,13 @@ All routes use the `analytics:` namespace.
 
 ### Account Routes
 - `GET /account/` - Account settings page
-- `POST /account/` - Update API credentials
+- `POST /account/` - Update API credentials, toggle click viz email, send test click viz email
 
 ### Survey Routes
 - `POST /survey/submit/` - Submit signup survey response
+
+### Cron Routes
+- `POST /cron/click-viz-emails/` - Trigger send_click_viz_emails management command (requires `Authorization: Bearer <CRON_AUTH_TOKEN>` header)
 
 ## Deployment Modes
 
@@ -426,6 +442,25 @@ Views use `get_user_api_credentials(user)` helper to retrieve credentials and re
 - `generate_content_insights()`: Generate performance analysis report. Requires `section_name` column in the DataFrame. Uses water-filling to distribute `MAX_REPORT_ITEMS` across sections; when a section exceeds its budget, top and bottom performers are kept and middle items are omitted (with a note to the LLM).
 - `annotate_post_html(post_id, content_perf_evals, beehiiv_token, beehiiv_pub_id, user=None)`: Insert improvement tips into HTML
 - `annotate_posts_parallel(post_ids, content_perf_evals, beehiiv_token, beehiiv_pub_id, user=None)`: Parallel annotation of multiple posts
+- `fetch_recent_published_posts(beehiiv_token, beehiiv_pub_id, max_pages=3)`: Async — fetch recently published posts ordered by publish_date desc; stops early if oldest post on page is >24h old
+- `build_click_viz_email_html(viz_html, post_title, site_url)`: Wrap click viz HTML with branded header banner and footer for email delivery
+
+## Management Commands
+
+### `send_click_viz_emails`
+Sends click visualization emails for posts published ~6 hours ago.
+
+```bash
+python manage.py send_click_viz_emails [--dry-run] [--user-email=<email>]
+```
+
+**Flow per user** (only users with `auto_click_viz_email=True` and `api_key_valid=True`):
+1. Calls `fetch_recent_published_posts()` to get recent published posts from Beehiiv API
+2. Filters to posts where: `publish_date` > `auto_click_viz_enabled_at`, `publish_date` < `now - 6 hours`, and no successful `ClickVizEmailLog` exists for the user+post_id
+3. Generates click visualization HTML and emails it via Django's `EmailMessage`
+4. Creates `ClickVizEmailLog` entry (success or failure)
+
+Can be triggered via the cron endpoint `POST /cron/click-viz-emails/` (requires `CRON_AUTH_TOKEN`).
 
 ## Credit System Configuration
 
@@ -448,6 +483,10 @@ SIGNUP_SURVEY_ENABLED = False
 
 # Maximum new user signups allowed per rolling 24-hour window (None = unlimited)
 DAILY_SIGNUP_CAP = 5
+
+# Auto click viz email settings
+SITE_URL = 'https://letterpulse.com'  # Base URL for links in emails (env: SITE_URL)
+CRON_AUTH_TOKEN = ''                   # Bearer token for cron endpoint (env: CRON_AUTH_TOKEN)
 ```
 
 Credits are charged at the view level before each AI operation runs.

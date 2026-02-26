@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Post, ContentSet, Report, UsageAccount, Publication, ExecutionLog, SurveyResponse, ProcessedPost, ProcessingTemplate
+from .models import Post, ContentSet, Report, UsageAccount, Publication, ExecutionLog, SurveyResponse, ProcessedPost, ProcessingTemplate, ClickVizEmailLog
 
 
 @admin.register(UsageAccount)
@@ -7,9 +7,9 @@ class UsageAccountAdmin(admin.ModelAdmin):
     list_display = (
         'user', 'monthly_quota', 'used_this_period', 'period_start',
         'beehiiv_token', 'beehiiv_pub_id', 'api_key_valid', 'survey_completed',
-        'created_at', 'updated_at'
+        'auto_click_viz_email', 'created_at', 'updated_at'
     )
-    list_filter = ('period_start', 'api_key_valid', 'survey_completed')
+    list_filter = ('period_start', 'api_key_valid', 'survey_completed', 'auto_click_viz_email')
     search_fields = ('user__email', 'beehiiv_pub_id')
     ordering = ('-period_start',)
     readonly_fields = ('remaining_display', 'created_at', 'updated_at')
@@ -132,3 +132,12 @@ class SurveyResponseAdmin(admin.ModelAdmin):
             return obj.other_tools[:50] + '...' if len(obj.other_tools) > 50 else obj.other_tools
         return '-'
     other_tools_preview.short_description = 'Other Tools'
+
+
+@admin.register(ClickVizEmailLog)
+class ClickVizEmailLogAdmin(admin.ModelAdmin):
+    list_display = ('user', 'post_id', 'post_title', 'success', 'sent_at')
+    list_filter = ('success', 'sent_at', 'publication')
+    search_fields = ('user__email', 'post_id', 'post_title')
+    ordering = ('-sent_at',)
+    readonly_fields = ('user', 'publication', 'post_id', 'post_title', 'sent_at', 'success', 'error_message')

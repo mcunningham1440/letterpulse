@@ -7,6 +7,7 @@ import logging
 from django.shortcuts import render, redirect
 from django.http import JsonResponse, HttpResponse
 from django.views.decorators.http import require_POST
+from django.views.decorators.csrf import csrf_exempt
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.conf import settings
@@ -259,6 +260,82 @@ def account_view(request):
                 messages.success(request, "Timezone updated successfully!")
             else:
                 messages.error(request, "Invalid timezone selected.")
+            return redirect('analytics:account')
+
+        elif action == 'toggle_click_viz_email':
+            if usage.api_key_valid:
+                if usage.auto_click_viz_email:
+                    # Disabling
+                    usage.auto_click_viz_email = False
+                    usage.auto_click_viz_enabled_at = None
+                    usage.save(update_fields=['auto_click_viz_email', 'auto_click_viz_enabled_at'])
+                    messages.success(request, "Auto click visualization emails disabled.")
+                else:
+                    # Enabling
+                    usage.auto_click_viz_email = True
+                    usage.auto_click_viz_enabled_at = timezone.now()
+                    usage.save(update_fields=['auto_click_viz_email', 'auto_click_viz_enabled_at'])
+                    messages.success(request, "Auto click visualization emails enabled.")
+            return redirect('analytics:account')
+
+        elif action == 'test_click_viz_email':
+            if usage.api_key_valid:
+                try:
+                    from .utils import (
+                        fetch_recent_published_posts,
+                        fetch_posts_html_and_clicks_parallel,
+                        generate_click_visualization_html,
+                        build_click_viz_email_html,
+                    )
+                    from django.core.mail import EmailMessage as DjangoEmailMessage
+
+                    # Fetch most recent published post
+                    recent_posts = async_to_sync(fetch_recent_published_posts)(
+                        usage.beehiiv_token, usage.beehiiv_pub_id, max_pages=1
+                    )
+                    if not recent_posts:
+                        messages.error(request, "No published posts found to generate a test email.")
+                        return redirect('analytics:account')
+
+                    post_data = recent_posts[0]
+                    post_id = post_data['id']
+                    post_title = post_data.get('title', 'Untitled')
+
+                    # Fetch HTML and clicks
+                    htmls, clicks_by_id = async_to_sync(fetch_posts_html_and_clicks_parallel)(
+                        [post_id], usage.beehiiv_token, usage.beehiiv_pub_id
+                    )
+
+                    html_filename = f"{post_id}.html"
+                    if html_filename not in htmls or post_id not in clicks_by_id:
+                        messages.error(request, "Failed to fetch post data from Beehiiv.")
+                        return redirect('analytics:account')
+
+                    stats = post_data.get('stats', {}).get('email', {})
+                    unique_email_opens = stats.get('unique_opens', 0)
+
+                    viz_html = generate_click_visualization_html(
+                        htmls[html_filename], clicks_by_id[post_id], unique_email_opens
+                    )
+
+                    site_url = getattr(settings, 'SITE_URL', 'https://letterpulse.com')
+                    email_html = build_click_viz_email_html(viz_html, post_title, site_url)
+
+                    bcc = [settings.SIGNUP_NOTIFICATION_EMAIL] if getattr(settings, 'SIGNUP_NOTIFICATION_EMAIL', '') else []
+                    email = DjangoEmailMessage(
+                        subject=f"[TEST] Click Visualization: {post_title}",
+                        body=email_html,
+                        from_email=settings.DEFAULT_FROM_EMAIL,
+                        to=[request.user.email],
+                        bcc=bcc,
+                    )
+                    email.content_subtype = 'html'
+                    email.send()
+
+                    messages.success(request, f"Test email sent to {request.user.email}.")
+                except Exception as e:
+                    logger.error(f"Test click viz email failed: {e}", exc_info=True)
+                    messages.error(request, f"Failed to send test email: {str(e)}")
             return redirect('analytics:account')
 
         elif action == 'switch_publication':
@@ -2236,3 +2313,30 @@ def clear_processed_posts(request):
     except Exception as e:
         logger.error(f"Error in clear_processed_posts: {str(e)}", exc_info=True)
         return JsonResponse({'success': False, 'error': str(e)}, status=500)
+
+
+@csrf_exempt
+@require_POST
+def cron_click_viz_emails(request):
+    """
+    Protected endpoint to trigger the send_click_viz_emails management command.
+    Validates Authorization: Bearer <token> against settings.CRON_AUTH_TOKEN.
+    """
+    from django.core.management import call_command
+    import io
+
+    cron_token = getattr(settings, 'CRON_AUTH_TOKEN', '')
+    if not cron_token:
+        return JsonResponse({'error': 'Cron endpoint not configured'}, status=503)
+
+    auth_header = request.META.get('HTTP_AUTHORIZATION', '')
+    if not auth_header.startswith('Bearer ') or auth_header[7:] != cron_token:
+        return JsonResponse({'error': 'Unauthorized'}, status=401)
+
+    try:
+        output = io.StringIO()
+        call_command('send_click_viz_emails', stdout=output)
+        return JsonResponse({'success': True, 'output': output.getvalue()})
+    except Exception as e:
+        logger.error(f"Cron click viz emails failed: {e}", exc_info=True)
+        return JsonResponse({'error': str(e)}, status=500)
