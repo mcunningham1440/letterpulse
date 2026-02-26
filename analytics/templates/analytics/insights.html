@@ -557,13 +557,15 @@
             sectionDateGroups[key][item.post_date_sortable][item.post_title].push(item);
         });
 
-        const datasets = [];
+        // Compute per-section, per-date values
+        const sectionValues = {};
+        const allDatesSet = new Set();
 
         selectedSections.forEach(section => {
             const dateGroups = sectionDateGroups[section] || {};
-            const dataPoints = [];
+            sectionValues[section] = {};
 
-            Object.keys(dateGroups).sort().forEach(date => {
+            Object.keys(dateGroups).forEach(date => {
                 const postGroups = dateGroups[date];
                 const perPostValues = [];
 
@@ -583,17 +585,31 @@
                     perPostValues.push(val);
                 });
 
-                // Average across posts sharing the same date
                 const avg = perPostValues.reduce((a, b) => a + b, 0) / perPostValues.length;
-                dataPoints.push({ x: date, y: avg });
+                sectionValues[section][date] = avg;
+                allDatesSet.add(date);
             });
+        });
+
+        // Build a shared sorted date list so all datasets align by index
+        const allDates = Array.from(allDatesSet).sort();
+
+        const datasets = [];
+        selectedSections.forEach(section => {
+            const dataPoints = allDates.map(date => ({
+                x: date,
+                y: section in sectionValues && date in sectionValues[section]
+                    ? sectionValues[section][date]
+                    : null,
+            }));
 
             datasets.push({
                 label: section,
                 data: dataPoints,
                 borderColor: getColorForSection(section),
                 backgroundColor: getColorForSection(section) + '33',
-                tension: 0.3,
+                tension: 0,
+                spanGaps: false,
                 pointRadius: 4,
                 pointHoverRadius: 6,
             });
@@ -699,6 +715,9 @@
                         display: false
                     },
                     tooltip: {
+                        filter: function(tooltipItem) {
+                            return tooltipItem.parsed.y !== null;
+                        },
                         callbacks: {
                             label: function(ctx) {
                                 const val = ctx.parsed.y;
