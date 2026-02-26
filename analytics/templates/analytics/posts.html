@@ -683,7 +683,30 @@
     function truncateText(text, maxWords) {
         const words = text.split(/\s+/);
         if (words.length <= maxWords) return text;
-        return words.slice(0, maxWords).join(' ') + '...';
+        const short = words.slice(0, maxWords).join(' ');
+        return '<span class="truncated-text" style="display:inline-flex;align-items:flex-start;gap:4px;">' +
+            '<a href="#" class="text-toggle text-muted" onclick="toggleText(event, this)" style="font-size:0.75em;text-decoration:none;flex-shrink:0;line-height:1.5;">&#9660;</a>' +
+            '<span>' +
+                '<span class="text-short">' + short + '</span>' +
+                '<span class="text-full" style="display:none;">' + text + '</span>' +
+            '</span>' +
+            '</span>';
+    }
+
+    function toggleText(e, el) {
+        e.preventDefault();
+        const wrapper = el.closest('.truncated-text');
+        const short = wrapper.querySelector('.text-short');
+        const full = wrapper.querySelector('.text-full');
+        if (short.style.display !== 'none') {
+            short.style.display = 'none';
+            full.style.display = 'inline';
+            el.innerHTML = '&#9650;';
+        } else {
+            short.style.display = 'inline';
+            full.style.display = 'none';
+            el.innerHTML = '&#9660;';
+        }
     }
 
     function renderCurrentPost() {
