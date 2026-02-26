@@ -262,6 +262,16 @@ def account_view(request):
                 messages.error(request, "Invalid timezone selected.")
             return redirect('analytics:account')
 
+        elif action == 'update_click_viz_delay':
+            try:
+                delay = int(request.POST.get('click_viz_delay_hours', 6))
+                delay = max(1, min(48, delay))
+                usage.auto_click_viz_delay_hours = delay
+                usage.save(update_fields=['auto_click_viz_delay_hours'])
+            except (ValueError, TypeError):
+                messages.error(request, "Invalid delay value.")
+            return redirect('analytics:account')
+
         elif action == 'toggle_click_viz_email':
             if usage.api_key_valid:
                 if usage.auto_click_viz_email:
@@ -269,13 +279,11 @@ def account_view(request):
                     usage.auto_click_viz_email = False
                     usage.auto_click_viz_enabled_at = None
                     usage.save(update_fields=['auto_click_viz_email', 'auto_click_viz_enabled_at'])
-                    messages.success(request, "Auto click visualization emails disabled.")
                 else:
                     # Enabling
                     usage.auto_click_viz_email = True
                     usage.auto_click_viz_enabled_at = timezone.now()
                     usage.save(update_fields=['auto_click_viz_email', 'auto_click_viz_enabled_at'])
-                    messages.success(request, "Auto click visualization emails enabled.")
             return redirect('analytics:account')
 
         elif action == 'test_click_viz_email':

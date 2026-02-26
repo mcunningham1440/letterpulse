@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 
 
 class Command(BaseCommand):
-    help = "Send click visualization emails for posts published ~6 hours ago"
+    help = "Send click visualization emails for posts published after the user's configured delay"
 
     def add_arguments(self, parser):
         parser.add_argument(
@@ -59,7 +59,6 @@ class Command(BaseCommand):
         self.stdout.write(f"Found {len(users)} eligible user(s)")
 
         now = datetime.now(tz=dt_timezone.utc)
-        six_hours_ago = now - timedelta(hours=6)
 
         total_sent = 0
         total_errors = 0
@@ -69,6 +68,11 @@ class Command(BaseCommand):
             self.stdout.write(f"\nProcessing user: {user.email}")
 
             try:
+                # Use the user's configured delay (clamped to 1-48)
+                delay_hours = max(1, min(48, usage.auto_click_viz_delay_hours))
+                cutoff = now - timedelta(hours=delay_hours)
+                self.stdout.write(f"  Delay: {delay_hours}h")
+
                 # Fetch recent published posts from Beehiiv API
                 recent_posts = async_to_sync(fetch_recent_published_posts)(
                     usage.beehiiv_token, usage.beehiiv_pub_id, max_pages=3
@@ -96,8 +100,8 @@ class Command(BaseCommand):
                     if publish_dt <= usage.auto_click_viz_enabled_at:
                         continue
 
-                    # Post must be published >6 hours ago (enough time for click data)
-                    if publish_dt > six_hours_ago:
+                    # Post must be published longer ago than the user's delay
+                    if publish_dt > cutoff:
                         continue
 
                     # No successful email log yet

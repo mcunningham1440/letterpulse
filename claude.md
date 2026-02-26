@@ -111,6 +111,7 @@ Tracks AI usage credits and API credentials per user:
 - `survey_completed`: Boolean indicating if the user has completed the signup survey
 - `newsletter_name`: Name of the user's newsletter (collected at signup)
 - `auto_click_viz_email`: Boolean — whether to auto-email click visualizations after post publication (default False)
+- `auto_click_viz_delay_hours`: PositiveIntegerField — hours to wait after publication before sending click viz email (1-48, default 6)
 - `auto_click_viz_enabled_at`: DateTimeField (nullable) — when the user enabled the feature; prevents old posts from triggering emails
 
 Billing cycle: Credits reset on the same day of the month as the user's signup date (e.g., signup on the 15th means credits renew on the 15th of each month). For months with fewer days, renewal occurs on the last day of the month.
@@ -456,7 +457,7 @@ python manage.py send_click_viz_emails [--dry-run] [--user-email=<email>]
 
 **Flow per user** (only users with `auto_click_viz_email=True` and `api_key_valid=True`):
 1. Calls `fetch_recent_published_posts()` to get recent published posts from Beehiiv API
-2. Filters to posts where: `publish_date` > `auto_click_viz_enabled_at`, `publish_date` < `now - 6 hours`, and no successful `ClickVizEmailLog` exists for the user+post_id
+2. Filters to posts where: `publish_date` > `auto_click_viz_enabled_at`, `publish_date` < `now - delay_hours` (per-user, 1-48h), and no successful `ClickVizEmailLog` exists for the user+post_id
 3. Generates click visualization HTML and emails it via Django's `EmailMessage`
 4. Creates `ClickVizEmailLog` entry (success or failure)
 

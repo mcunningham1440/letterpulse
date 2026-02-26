@@ -74,6 +74,10 @@ class UsageAccount(models.Model):
         default=False,
         help_text="Whether to auto-email click visualizations after post publication"
     )
+    auto_click_viz_delay_hours = models.PositiveIntegerField(
+        default=6,
+        help_text="Hours to wait after publication before sending click viz email (1-48)"
+    )
     auto_click_viz_enabled_at = models.DateTimeField(
         null=True,
         blank=True,
