@@ -1259,3 +1259,124 @@ async def annotate_posts_parallel(post_ids, content_perf_evals, beehiiv_token, b
             annotated_htmls[post_id] = result
     
     return annotated_htmls
+
+
+async def fetch_recent_published_posts(beehiiv_token, beehiiv_pub_id, max_pages=3):
+    """
+    Fetch recently published posts from Beehiiv API, ordered by publish_date desc.
+    Only fetches confirmed (published) posts. Stops early if oldest post on page is >24h old.
+
+    Args:
+        beehiiv_token: Beehiiv API token
+        beehiiv_pub_id: Beehiiv publication ID
+        max_pages: Maximum pages to fetch (10 posts per page)
+
+    Returns:
+        List of raw API post dicts
+    """
+    from datetime import timezone as dt_timezone
+    posts_list = []
+    pagination_size = 10
+
+    try:
+        timeout = aiohttp.ClientTimeout(total=60)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            for page in range(1, max_pages + 1):
+                url = (
+                    f"https://api.beehiiv.com/v2/publications/{beehiiv_pub_id}/posts"
+                    f"?expand=stats&status=confirmed&order_by=publish_date&direction=desc"
+                    f"&limit={pagination_size}&page={page}"
+                )
+                headers = {"Authorization": beehiiv_token}
+
+                async with session.get(url, headers=headers) as response:
+                    if response.status != 200:
+                        logger.error(f"fetch_recent_published_posts page {page} status: {response.status}")
+                        break
+                    data = await response.json()
+                    page_posts = data.get('data', [])
+
+                if not page_posts:
+                    break
+
+                posts_list.extend(page_posts)
+
+                # Stop early if the oldest post on this page is >24h old
+                oldest_publish_ts = page_posts[-1].get('publish_date')
+                if oldest_publish_ts:
+                    oldest_dt = datetime.fromtimestamp(oldest_publish_ts, tz=dt_timezone.utc)
+                    now = datetime.now(tz=dt_timezone.utc)
+                    if (now - oldest_dt).total_seconds() > 86400:
+                        break
+
+                if len(page_posts) < pagination_size:
+                    break
+
+    except Exception:
+        logger.exception("fetch_recent_published_posts failed")
+        raise
+
+    return posts_list
+
+
+def build_click_viz_email_html(viz_html, post_title, site_url):
+    """
+    Wrap click visualization HTML with a branded header banner and footer for email delivery.
+
+    Args:
+        viz_html: The click visualization HTML string
+        post_title: Title of the newsletter post
+        site_url: Base URL of the LetterPulse site (e.g. https://letterpulse.com)
+
+    Returns:
+        Complete HTML string ready for email
+    """
+    account_url = f"{site_url.rstrip('/')}/account/"
+
+    posts_url = f"{site_url.rstrip('/')}/posts/"
+
+    banner = (
+        '<div style="background-color: #0d6efd; color: white; padding: 16px 24px; '
+        'margin: 0 auto 20px auto; max-width: 720px; font-family: Arial, sans-serif; '
+        'font-size: 14px; line-height: 1.5; border-radius: 0.5rem;">'
+        # Brand name (centered)
+        '<div style="text-align: center; margin-bottom: 12px; font-size: 20px; font-weight: bold;">'
+        'LetterPulse'
+        '</div>'
+        # Post title (centered, larger)
+        '<div style="text-align: center; margin-bottom: 12px; font-size: 16px;">'
+        f'Click visualization for <strong>{post_title}</strong>'
+        '</div>'
+        # Instructions (centered)
+        '<div style="text-align: center;">'
+        f'Process your post in LetterPulse\'s <a href="{posts_url}" style="color: white; text-decoration: underline;">Posts</a> tab '
+        'to see each section\'s performance and compare with previous issues.'
+        '</div>'
+        '<div style="text-align: center; margin-top: 6px;">'
+        f'You can toggle these emails on and off in the <a href="{account_url}" style="color: white; text-decoration: underline;">Account</a> tab.'
+        '</div>'
+        '</div>'
+    )
+
+    footer = (
+        '<div style="text-align: center; padding: 20px; margin: 20px auto; max-width: 720px; '
+        'font-family: Arial, sans-serif; font-size: 12px; color: #6c757d;">'
+        f'<a href="{account_url}" style="color: #0d6efd;">Manage email settings</a> | '
+        f'<a href="{site_url}" style="color: #0d6efd;">LetterPulse</a>'
+        '</div>'
+    )
+
+    # Insert banner after <body> tag (or at start if no body tag)
+    soup = BeautifulSoup(viz_html, 'html.parser')
+    body = soup.find('body')
+    if body:
+        # Insert banner as first child of body
+        banner_soup = BeautifulSoup(banner, 'html.parser')
+        body.insert(0, banner_soup)
+        # Append footer at end of body
+        footer_soup = BeautifulSoup(footer, 'html.parser')
+        body.append(footer_soup)
+    else:
+        return banner + viz_html + footer
+
+    return str(soup)

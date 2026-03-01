@@ -70,6 +70,15 @@ class UsageAccount(models.Model):
         default='',
         help_text="Name of the user's newsletter"
     )
+    auto_click_viz_email = models.BooleanField(
+        default=False,
+        help_text="Whether to auto-email click visualizations after post publication"
+    )
+    auto_click_viz_enabled_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="When the user enabled auto click viz emails; prevents old posts from triggering"
+    )
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -589,3 +598,62 @@ class SurveyResponse(models.Model):
 
     def __str__(self):
         return f"Survey response from {self.user.email}"
+
+
+class CronRunLog(models.Model):
+    """Log of each cron/management command run for monitoring"""
+
+    command = models.CharField(max_length=255, help_text="Management command name")
+    started_at = models.DateTimeField(help_text="When the run started")
+    finished_at = models.DateTimeField(null=True, blank=True, help_text="When the run finished")
+    duration_ms = models.PositiveIntegerField(null=True, blank=True, help_text="Duration in milliseconds")
+    users_processed = models.PositiveIntegerField(default=0)
+    emails_sent = models.PositiveIntegerField(default=0)
+    errors = models.PositiveIntegerField(default=0)
+    output = models.TextField(blank=True, default='', help_text="Captured stdout from the command")
+    success = models.BooleanField(default=True)
+    triggered_by = models.CharField(
+        max_length=50, default='cron',
+        help_text="How the run was triggered: cron, manual, etc."
+    )
+
+    class Meta:
+        ordering = ['-started_at']
+        verbose_name = "Cron Run Log"
+        verbose_name_plural = "Cron Run Logs"
+
+    def __str__(self):
+        status = "OK" if self.success else "FAIL"
+        return f"{self.command} at {self.started_at:%Y-%m-%d %H:%M} ({status})"
+
+
+class ClickVizEmailLog(models.Model):
+    """Log of click visualization emails sent to users"""
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='click_viz_email_logs'
+    )
+    publication = models.ForeignKey(
+        Publication,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='click_viz_email_logs'
+    )
+    post_id = models.CharField(max_length=255, help_text="Beehiiv post ID")
+    post_title = models.CharField(max_length=500, blank=True, default='')
+    sent_at = models.DateTimeField(auto_now_add=True)
+    success = models.BooleanField(default=True)
+    error_message = models.TextField(blank=True, default='')
+
+    class Meta:
+        ordering = ['-sent_at']
+        unique_together = [['user', 'post_id']]
+        verbose_name = "Click Viz Email Log"
+        verbose_name_plural = "Click Viz Email Logs"
+
+    def __str__(self):
+        status = "OK" if self.success else "FAIL"
+        return f"{self.user.email} - {self.post_id} ({status})"

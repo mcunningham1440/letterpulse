@@ -260,3 +260,8 @@ EXECUTION_LOG_QUEUE_MAXSIZE = 2000   # Max entries in queue before overflow
 EXECUTION_LOG_BATCH_SIZE = 50        # Entries per bulk_create
 EXECUTION_LOG_FLUSH_INTERVAL = 1.0   # Seconds between flushes
 EXECUTION_LOG_ON_FULL = 'drop'       # 'drop' or 'sync' when queue is full
+
+# =============================================================================
+# Auto Click Visualization Email Configuration
+# =============================================================================
+SITE_URL = os.environ.get('SITE_URL', 'https://letterpulse.com')
