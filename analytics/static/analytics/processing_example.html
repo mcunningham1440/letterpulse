@@ -8,14 +8,13 @@
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body { background: #f5f5f5; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; }
 
-  .sidebar {
+  .panel {
     position: fixed;
     top: 50%;
     transform: translateY(-50%);
-    width: 450px;
+    width: 350px;
     background: #fff;
     border: 1px solid #dee2e6;
-    border-radius: 8px 0 0 8px;
     box-shadow: 0 2px 12px rgba(0,0,0,0.12);
     padding: 16px;
     z-index: 1000;
@@ -23,13 +22,58 @@
     overflow-y: auto;
   }
 
-  .sidebar h5 {
-    font-size: 14px;
+  .panel-left {
+    left: 0;
+    border-radius: 0 8px 8px 0;
+    border-left: none;
+  }
+
+  .panel-right {
+    border-radius: 8px 0 0 8px;
+    right: 0;
+    border-right: none;
+  }
+
+  .panel h4 {
+    font-size: 15px;
     font-weight: 600;
     color: #333;
     margin-bottom: 12px;
     padding-bottom: 8px;
     border-bottom: 1px solid #eee;
+  }
+
+  .panel p, .panel li {
+    font-size: 13px;
+    color: #495057;
+    line-height: 1.5;
+  }
+
+  .panel-left p, .panel-left li {
+    font-size: 14.5px;
+    line-height: 1.6;
+    margin: 14px 0;
+    padding: 0;
+  }
+
+  .panel-left h4 {
+    font-size: 17px;
+  }
+
+  .panel-right h4 {
+    text-align: center;
+    font-size: 17px;
+    margin-top: 0;
+    padding-top: 0;
+  }
+
+  .panel ul {
+    padding-left: 18px;
+    margin-bottom: 10px;
+  }
+
+  .panel li {
+    margin-bottom: 4px;
   }
 
   .section-pair {
@@ -49,6 +93,11 @@
     border: 1px solid #ced4da;
     border-radius: 4px;
     margin-bottom: 4px;
+  }
+
+  .panel-right .section-pair .section-name {
+    background: #FFFF00;
+    border-color: #cccc00;
   }
 
   .section-pair .desc {
@@ -112,13 +161,49 @@
     border-radius: 3px;
     flex-shrink: 0;
   }
+
+  .example-instruction {
+    font-style: italic;
+    color: #6c757d;
+    font-size: 13.5px;
+    background: #f8f9fa;
+    padding: 6px 8px;
+    border-radius: 4px;
+    margin-top: 2px;
+    margin-bottom: 8px;
+    line-height: 1.5;
+  }
 </style>
 </head>
 <body>
 
-<div class="sidebar">
-  <h4>Example Section Definitions</h4>
-  
+<div class="panel panel-left" id="howToPanel">
+  <p><b>Processing</b> splits your newsletters into <b>sections</b> that you specify. Each of those sections can be made up of one or more <b>items,</b> which are automatically detected by AI.</p>
+  <p>For example, if your newsletter consists of a Deep Dive section with an essay on one topic and a Quick Bites section with a series of 5 news links, the system would extract one item&mdash;the essay&mdash;from Deep Dive and 5 items&mdash;the 5 links&mdash;from Quick Bites. You will then be asked to save these for analysis in the <b>Insights</b> tab.</p>
+  <p>Enter your newsletter's section titles (e.g. "Quick Bites", "Deep Dives") as the <b>name</b> so the AI knows what to extract from each post.</p>
+  <p>If the AI is having trouble finding a section or the items in it, you can add <b>special instructions</b> to help it out. Some examples:</p>
+  <div class="section-pair">
+      <div class="section-name">Analysis & Research</div>
+      <div class="desc">This section is titled "Monday Deep Dive" in the Monday issue and "Thursday Deep Dive" in the Thursday issue.</div>
+  </div>
+  <div class="section-pair">
+      <div class="section-name">News</div>
+      <div class="desc">There are always 6 items in this section.</div>
+  </div>
+  <div class="section-pair">
+      <div class="section-name">Useful Stuff</div>
+      <div class="desc">Do not include the "Thanks for reading!" at the bottom as a separate item.</div>
+  </div>
+  <p>Once you've entered all the sections you want to identify, you can <b>Save</b> the template for re-use on later issues. Start processing the posts by clicking <b>Run</b>.</p>
+  <p><i>Special case:</i> If you have an individual link you want to track the performance of across issues, like a poll response, you can make it its own section and instruct the AI to extract just that link.</p>
+  <div class="section-pair">
+      <div class="section-name">Awesome feedback</div>
+      <div class="desc">The "Awesome" option in the "What did you think of today's issue?" poll, including its link</div>
+  </div>
+</div>
+
+<div class="panel panel-right" id="examplePanel">
+  <h4>Example Sections</h4>
         <div class="section-pair">
             <div class="section-name">In case you missed it</div>
             <div class="desc empty">(No special instructions)</div>
@@ -137,20 +222,16 @@
         </div>
         <div class="section-pair">
             <div class="section-name">Awesome feedback</div>
-            <div class="desc">The "Awesome" option in the feedback section, including its link</div>
+            <div class="desc">The "Awesome" option in the "What did you think of today's issue?" poll, including its link</div>
         </div>
         <div class="section-pair">
             <div class="section-name">Good feedback</div>
-            <div class="desc">The "Good" option in the feedback section, including its link</div>
+            <div class="desc">The "Good" option in the "What did you think of today's issue?" poll, including its link</div>
         </div>
         <div class="section-pair">
             <div class="section-name">Could be better feedback</div>
-            <div class="desc">The "Could be better…" option in the feedback section, including its link</div>
+            <div class="desc">The "Could be better…" option in the "What did you think of today's issue?" poll, including its link</div>
         </div>
-  <div class="highlight-legend">
-    <span class="swatch"></span>
-    <span>Highlighted sections in newsletter</span>
-  </div>
 </div>
 
 <div class="newsletter-container">
@@ -302,11 +383,14 @@
 
 <script>
 (function() {
-  var sidebar = document.querySelector('.sidebar');
+  var howTo = document.getElementById('howToPanel');
+  var example = document.getElementById('examplePanel');
   var frame = document.querySelector('.newsletter-frame');
   function position() {
     var rect = frame.getBoundingClientRect();
-    sidebar.style.left = (rect.left - 450) + 'px';
+    howTo.style.width = (rect.left - 16) + 'px';
+    example.style.left = (rect.right + 16) + 'px';
+    example.style.width = (window.innerWidth - rect.right - 16) + 'px';
   }
   position();
   window.addEventListener('resize', position);

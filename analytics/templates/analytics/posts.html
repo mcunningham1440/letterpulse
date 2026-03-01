@@ -233,18 +233,8 @@
         <h4 class="mb-3" id="processingTitle">Processing 0 posts</h4>
 
         <div class="form-text small mb-3">
-            <span class="text-primary"
-                  data-bs-toggle="tooltip"
-                  data-bs-placement="bottom"
-                  data-bs-html="true"
-                  data-bs-custom-class="extract-tooltip"
-                  title="<b>Processing</b> splits your newsletters into <b>sections</b> that you specify. Each of those sections can be made up of one or more <b>items,</b> which are automatically detected by our AI.<br><br>For example, if your newsletter consists of a Deep Dive section with an essay on one topic and a Quick Bites section with a series of 5 news links, the system would extract one item—the essay—from Deep Dive and 5 items—the 5 links—from Quick Bites. You will then be asked to save these for analysis in the <b>Insights</b> tab.<br><br>Enter your newsletter's section titles (e.g. 'Quick Bites', 'Deep Dives') so the AI knows what to extract from each post.<br><br>For each section, enter a <b>name</b> to allow the AI identify it.<br><br>If the AI is having trouble finding a section or the items in it, you can add <b>special instructions</b> to help it out. Some examples:<br><br><i>This section is titled ‘Monday Deep Dive’ in the Monday issue and ‘Thursday Deep Dive’ in the Thursday issue.</i><br><br><i>There are always 6 items in this section.</i><br><br><i>Do not include the ‘Thanks for reading!’ at the bottom as a separate item.</i><br><br>Once you've entered all the sections you want to identify, you can <b>Save</b> the template for re-use on later issues. Start processing the posts by clicking <b>Run</b>."
-                  style="cursor: help;">
+            <a href="{% static 'analytics/processing_example.html' %}" target="_blank" class="text-primary" style="text-decoration: none;">
                 <i class="bi bi-info-circle"></i> How to use this feature
-            </span>
-            <span class="ms-2">|</span>
-            <a href="{% static 'analytics/processing_example.html' %}" target="_blank" class="text-primary ms-2" style="text-decoration: none;">
-                <i class="bi bi-file-earmark-text"></i> See an example
             </a>
         </div>
 
