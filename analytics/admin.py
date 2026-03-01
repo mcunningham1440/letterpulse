@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Post, ContentSet, Report, UsageAccount, Publication, ExecutionLog, SurveyResponse, ProcessedPost, ProcessingTemplate, ClickVizEmailLog
+from .models import Post, ContentSet, Report, UsageAccount, Publication, ExecutionLog, SurveyResponse, ProcessedPost, ProcessingTemplate, ClickVizEmailLog, CronRunLog
 
 
 @admin.register(UsageAccount)
@@ -141,3 +141,15 @@ class ClickVizEmailLogAdmin(admin.ModelAdmin):
     search_fields = ('user__email', 'post_id', 'post_title')
     ordering = ('-sent_at',)
     readonly_fields = ('user', 'publication', 'post_id', 'post_title', 'sent_at', 'success', 'error_message')
+
+
+@admin.register(CronRunLog)
+class CronRunLogAdmin(admin.ModelAdmin):
+    list_display = ('command', 'started_at', 'duration_ms', 'users_processed', 'emails_sent', 'errors', 'success', 'triggered_by')
+    list_filter = ('success', 'command', 'triggered_by', 'started_at')
+    ordering = ('-started_at',)
+    readonly_fields = (
+        'command', 'started_at', 'finished_at', 'duration_ms',
+        'users_processed', 'emails_sent', 'errors', 'output',
+        'success', 'triggered_by',
+    )

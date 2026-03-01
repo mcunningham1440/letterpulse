@@ -35,7 +35,7 @@ app/
 │   ├── wsgi.py / asgi.py       # WSGI/ASGI entry points
 │   └── __init__.py
 ├── analytics/                  # Main Django app
-│   ├── models.py               # Post, ContentSet, Report, UsageAccount, ExecutionLog, SurveyResponse, ProcessedPost, ClickVizEmailLog models
+│   ├── models.py               # Post, ContentSet, Report, UsageAccount, ExecutionLog, SurveyResponse, ProcessedPost, ClickVizEmailLog, CronRunLog models
 │   ├── views.py                # All view logic (login-protected)
 │   ├── urls.py                 # App URL patterns (analytics namespace)
 │   ├── utils.py                # Core utility functions (API calls, AI extraction, credit charging)
@@ -111,7 +111,6 @@ Tracks AI usage credits and API credentials per user:
 - `survey_completed`: Boolean indicating if the user has completed the signup survey
 - `newsletter_name`: Name of the user's newsletter (collected at signup)
 - `auto_click_viz_email`: Boolean — whether to auto-email click visualizations after post publication (default False)
-- `auto_click_viz_delay_hours`: PositiveIntegerField — hours to wait after publication before sending click viz email (1-48, default 6)
 - `auto_click_viz_enabled_at`: DateTimeField (nullable) — when the user enabled the feature; prevents old posts from triggering emails
 
 Billing cycle: Credits reset on the same day of the month as the user's signup date (e.g., signup on the 15th means credits renew on the 15th of each month). For months with fewer days, renewal occurs on the last day of the month.
@@ -278,6 +277,19 @@ Log of click visualization emails sent to users:
 - `error_message`: TextField (blank)
 - Unique constraint: `(user, post_id)` — prevents duplicate emails
 
+### CronRunLog
+Log of each management command invocation for monitoring:
+- `command`: CharField — management command name (e.g. `send_click_viz_emails`)
+- `started_at`: DateTimeField
+- `finished_at`: DateTimeField (nullable)
+- `duration_ms`: PositiveIntegerField (nullable)
+- `users_processed`: PositiveIntegerField
+- `emails_sent`: PositiveIntegerField
+- `errors`: PositiveIntegerField
+- `output`: TextField — captured stdout from the command
+- `success`: BooleanField
+- `triggered_by`: CharField — `cron`, `manual`, etc.
+
 ## API Endpoints
 
 All routes use the `analytics:` namespace.
@@ -311,13 +323,13 @@ All routes use the `analytics:` namespace.
 
 ### Account Routes
 - `GET /account/` - Account settings page
-- `POST /account/` - Update API credentials, toggle click viz email, send test click viz email
+- `POST /account/` - Update API credentials, toggle click viz email
 
 ### Survey Routes
 - `POST /survey/submit/` - Submit signup survey response
 
 ### Cron Routes
-- `POST /cron/click-viz-emails/` - Trigger send_click_viz_emails management command (requires `Authorization: Bearer <CRON_AUTH_TOKEN>` header)
+- `GET /cron/click-viz-status/` - JSON status page showing recent cron runs, email logs, and eligible users (login required; non-superusers see only their own email logs)
 
 ## Deployment Modes
 
@@ -449,7 +461,7 @@ Views use `get_user_api_credentials(user)` helper to retrieve credentials and re
 ## Management Commands
 
 ### `send_click_viz_emails`
-Sends click visualization emails for posts published ~6 hours ago.
+Sends click visualization emails for posts published more than 24 hours ago.
 
 ```bash
 python manage.py send_click_viz_emails [--dry-run] [--user-email=<email>]
@@ -457,11 +469,11 @@ python manage.py send_click_viz_emails [--dry-run] [--user-email=<email>]
 
 **Flow per user** (only users with `auto_click_viz_email=True` and `api_key_valid=True`):
 1. Calls `fetch_recent_published_posts()` to get recent published posts from Beehiiv API
-2. Filters to posts where: `publish_date` > `auto_click_viz_enabled_at`, `publish_date` < `now - delay_hours` (per-user, 1-48h), and no successful `ClickVizEmailLog` exists for the user+post_id
+2. Filters to posts where: `publish_date` > `auto_click_viz_enabled_at`, `publish_date` < `now - 24h`, and no successful `ClickVizEmailLog` exists for the user+post_id
 3. Generates click visualization HTML and emails it via Django's `EmailMessage`
 4. Creates `ClickVizEmailLog` entry (success or failure)
 
-Can be triggered via the cron endpoint `POST /cron/click-viz-emails/` (requires `CRON_AUTH_TOKEN`).
+Runs automatically every 10 minutes via a background daemon thread started in `AnalyticsConfig.ready()` (gunicorn and runserver only — does not start during migrations or other management commands). Can also be run manually via `python manage.py send_click_viz_emails`.
 
 ## Credit System Configuration
 
@@ -487,7 +499,7 @@ DAILY_SIGNUP_CAP = 5
 
 # Auto click viz email settings
 SITE_URL = 'https://letterpulse.com'  # Base URL for links in emails (env: SITE_URL)
-CRON_AUTH_TOKEN = ''                   # Bearer token for cron endpoint (env: CRON_AUTH_TOKEN)
+
 ```
 
 Credits are charged at the view level before each AI operation runs.

@@ -201,20 +201,9 @@
                         </label>
                     </div>
                 </form>
-                <form method="post" action="{% url 'analytics:account' %}" id="clickVizDelayForm" class="mb-3">
-                    {% csrf_token %}
-                    <input type="hidden" name="action" value="update_click_viz_delay">
-                    <div class="d-flex align-items-center gap-2">
-                        <!-- <label for="clickVizDelay" class="form-label mb-0 text-nowrap">Delay:</label> -->
-                        <input type="number" class="form-control form-control-sm" id="clickVizDelay"
-                               name="click_viz_delay_hours" value="{{ usage.auto_click_viz_delay_hours }}"
-                               min="1" max="48" step="1" style="width: 70px;">
-                        <span class="text-nowrap">hours after publication</span>
-                    </div>
-                    <div class="form-text">
-                        Check your spam folder if you do not receive the emails
-                    </div>
-                </form>
+                <div class="form-text mb-3">
+                    Emails are sent 24 hours after publication. Check your spam folder if you do not receive them.
+                </div>
             </div>
         </div>
         {% endif %}
@@ -274,27 +263,7 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
 
-    // Auto-submit click viz delay on change (with debounce for typing)
-    const clickVizDelay = document.getElementById('clickVizDelay');
-    if (clickVizDelay) {
-        let delayTimer;
-        clickVizDelay.addEventListener('change', function() {
-            clearTimeout(delayTimer);
-            const val = parseInt(this.value, 10);
-            if (val >= 1 && val <= 48) {
-                document.getElementById('clickVizDelayForm').submit();
-            }
-        });
-        clickVizDelay.addEventListener('input', function() {
-            clearTimeout(delayTimer);
-            delayTimer = setTimeout(function() {
-                const val = parseInt(clickVizDelay.value, 10);
-                if (val >= 1 && val <= 48) {
-                    document.getElementById('clickVizDelayForm').submit();
-                }
-            }, 800);
-        });
-    }
+
 });
 </script>
 {% endblock %}

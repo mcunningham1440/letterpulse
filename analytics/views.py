@@ -7,7 +7,7 @@ import logging
 from django.shortcuts import render, redirect
 from django.http import JsonResponse, HttpResponse
 from django.views.decorators.http import require_POST
-from django.views.decorators.csrf import csrf_exempt
+
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.conf import settings
@@ -260,16 +260,6 @@ def account_view(request):
                 messages.success(request, "Timezone updated successfully!")
             else:
                 messages.error(request, "Invalid timezone selected.")
-            return redirect('analytics:account')
-
-        elif action == 'update_click_viz_delay':
-            try:
-                delay = int(request.POST.get('click_viz_delay_hours', 6))
-                delay = max(1, min(48, delay))
-                usage.auto_click_viz_delay_hours = delay
-                usage.save(update_fields=['auto_click_viz_delay_hours'])
-            except (ValueError, TypeError):
-                messages.error(request, "Invalid delay value.")
             return redirect('analytics:account')
 
         elif action == 'toggle_click_viz_email':
@@ -2323,28 +2313,65 @@ def clear_processed_posts(request):
         return JsonResponse({'success': False, 'error': str(e)}, status=500)
 
 
-@csrf_exempt
-@require_POST
-def cron_click_viz_emails(request):
+@login_required
+def cron_status(request):
     """
-    Protected endpoint to trigger the send_click_viz_emails management command.
-    Validates Authorization: Bearer <token> against settings.CRON_AUTH_TOKEN.
+    Status page showing recent cron runs and click viz email logs.
+    Login-required so only authenticated users can view.
+    Only superusers can see all data; regular users see only their own.
     """
-    from django.core.management import call_command
-    import io
+    from .models import CronRunLog, ClickVizEmailLog
 
-    cron_token = getattr(settings, 'CRON_AUTH_TOKEN', '')
-    if not cron_token:
-        return JsonResponse({'error': 'Cron endpoint not configured'}, status=503)
+    is_superuser = request.user.is_superuser
 
-    auth_header = request.META.get('HTTP_AUTHORIZATION', '')
-    if not auth_header.startswith('Bearer ') or auth_header[7:] != cron_token:
-        return JsonResponse({'error': 'Unauthorized'}, status=401)
+    # Recent cron runs (last 20) — superusers only
+    cron_runs = []
+    if is_superuser:
+        for run in CronRunLog.objects.all()[:20]:
+            cron_runs.append({
+                'command': run.command,
+                'started_at': run.started_at.isoformat(),
+                'finished_at': run.finished_at.isoformat() if run.finished_at else None,
+                'duration_ms': run.duration_ms,
+                'users_processed': run.users_processed,
+                'emails_sent': run.emails_sent,
+                'errors': run.errors,
+                'success': run.success,
+                'triggered_by': run.triggered_by,
+                'output': run.output,
+            })
 
-    try:
-        output = io.StringIO()
-        call_command('send_click_viz_emails', stdout=output)
-        return JsonResponse({'success': True, 'output': output.getvalue()})
-    except Exception as e:
-        logger.error(f"Cron click viz emails failed: {e}", exc_info=True)
-        return JsonResponse({'error': str(e)}, status=500)
+    # Recent email logs (last 50)
+    email_log_qs = ClickVizEmailLog.objects.select_related('user', 'publication')
+    if not is_superuser:
+        email_log_qs = email_log_qs.filter(user=request.user)
+
+    email_logs = []
+    for log in email_log_qs[:50]:
+        email_logs.append({
+            'user': log.user.email,
+            'post_id': log.post_id,
+            'post_title': log.post_title,
+            'sent_at': log.sent_at.isoformat(),
+            'success': log.success,
+            'error_message': log.error_message,
+        })
+
+    # Eligible users summary (superusers only)
+    eligible_users = []
+    if is_superuser:
+        for ua in UsageAccount.objects.filter(
+            auto_click_viz_email=True,
+            api_key_valid=True,
+            auto_click_viz_enabled_at__isnull=False,
+        ).select_related('user'):
+            eligible_users.append({
+                'email': ua.user.email,
+                'enabled_at': ua.auto_click_viz_enabled_at.isoformat(),
+            })
+
+    return JsonResponse({
+        'cron_runs': cron_runs,
+        'email_logs': email_logs,
+        'eligible_users': eligible_users,
+    }, json_dumps_params={'indent': 2})

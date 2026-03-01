@@ -1338,12 +1338,23 @@ def build_click_viz_email_html(viz_html, post_title, site_url):
     banner = (
         '<div style="background-color: #0d6efd; color: white; padding: 16px 24px; '
         'margin: 0 auto 20px auto; max-width: 720px; font-family: Arial, sans-serif; '
-        'font-size: 14px; line-height: 1.5; border-radius: 0.5rem; text-align: center;">'
-        f'Click visualization for <strong>{post_title}</strong> sent from LetterPulse. '
+        'font-size: 14px; line-height: 1.5; border-radius: 0.5rem;">'
+        # Brand name (centered)
+        '<div style="text-align: center; margin-bottom: 12px; font-size: 20px; font-weight: bold;">'
+        'LetterPulse'
+        '</div>'
+        # Post title (centered, larger)
+        '<div style="text-align: center; margin-bottom: 12px; font-size: 16px;">'
+        f'Click visualization for <strong>{post_title}</strong>'
+        '</div>'
+        # Instructions (centered)
+        '<div style="text-align: center;">'
         f'Process your post in LetterPulse\'s <a href="{posts_url}" style="color: white; text-decoration: underline;">Posts</a> tab '
-        f'to see each section\'s performance and compare with previous issues.'
-        '<br>'
+        'to see each section\'s performance and compare with previous issues.'
+        '</div>'
+        '<div style="text-align: center; margin-top: 6px;">'
         f'You can toggle these emails on and off in the <a href="{account_url}" style="color: white; text-decoration: underline;">Account</a> tab.'
+        '</div>'
         '</div>'
     )
 

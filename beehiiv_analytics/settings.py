@@ -265,4 +265,3 @@ EXECUTION_LOG_ON_FULL = 'drop'       # 'drop' or 'sync' when queue is full
 # Auto Click Visualization Email Configuration
 # =============================================================================
 SITE_URL = os.environ.get('SITE_URL', 'https://letterpulse.com')
-CRON_AUTH_TOKEN = os.environ.get('CRON_AUTH_TOKEN', '')
