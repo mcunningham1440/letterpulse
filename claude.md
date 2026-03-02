@@ -473,7 +473,7 @@ python manage.py send_click_viz_emails [--dry-run] [--user-email=<email>]
 3. Generates click visualization HTML and emails it via Django's `EmailMessage`
 4. Creates `ClickVizEmailLog` entry (success or failure)
 
-Runs automatically every 10 minutes via a background daemon thread started in `AnalyticsConfig.ready()` (gunicorn and runserver only — does not start during migrations or other management commands). Can also be run manually via `python manage.py send_click_viz_emails`.
+Runs automatically every 30 minutes via a background daemon thread started in `AnalyticsConfig.ready()` (gunicorn and runserver only — does not start during migrations or other management commands). Can also be run manually via `python manage.py send_click_viz_emails`.
 
 ## Credit System Configuration
 

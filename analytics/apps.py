@@ -12,7 +12,7 @@ _click_viz_lock = threading.Lock()
 
 
 def _click_viz_email_loop():
-    """Background loop that runs send_click_viz_emails every 10 minutes."""
+    """Background loop that runs send_click_viz_emails every 30 minutes."""
     # Wait for the app to fully start before first run
     time.sleep(60)
 
@@ -23,7 +23,7 @@ def _click_viz_email_loop():
             call_command('send_click_viz_emails', triggered_by='auto')
         except Exception:
             logger.exception("click_viz_email_loop: error running send_click_viz_emails")
-        time.sleep(600)  # 10 minutes
+        time.sleep(1800)  # 30 minutes
 
 
 class AnalyticsConfig(AppConfig):
