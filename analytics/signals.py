@@ -27,7 +27,8 @@ def create_usage_account(sender, instance, created, **kwargs):
     if created:
         UsageAccount.objects.create(
             user=instance,
-            period_start=timezone.now().date()
+            period_start=timezone.now().date(),
+            auto_click_viz_enabled_at=timezone.now()
         )
         _send_signup_notification(instance)
 
