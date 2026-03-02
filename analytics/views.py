@@ -211,6 +211,10 @@ def account_view(request):
                     else:
                         usage.beehiiv_pub_id = ''
 
+                    # Reset click viz window on every successful validation
+                    if usage.auto_click_viz_email:
+                        usage.auto_click_viz_enabled_at = timezone.now()
+
                     usage.save()
 
                     # Ensure Publication record exists for the selected pub
