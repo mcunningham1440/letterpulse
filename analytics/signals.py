@@ -30,6 +30,7 @@ def create_usage_account(sender, instance, created, **kwargs):
             period_start=timezone.now().date()
         )
         _send_signup_notification(instance)
+        _send_welcome_email(instance)
 
 
 def _send_signup_notification(user):
@@ -60,5 +61,37 @@ def _send_signup_notification(user):
             )
         except Exception:
             logger.exception("Failed to send signup notification email")
+
+    threading.Thread(target=_send, daemon=True).start()
+
+
+def _send_welcome_email(user):
+    """Send a welcome email to the new user in a background thread."""
+    def _send():
+        try:
+            user.refresh_from_db()
+            first_name = user.first_name.strip()
+            greeting = f"Hi {first_name},\n" if first_name else "Hi,\n"
+            body = (
+                f"{greeting}\n"
+                "Thanks for signing up to try out LetterPulse!\n\n"
+                "The app has informational tooltips to walk you through getting started, "
+                "but please reach out if anything is unclear--I'm always happy to help.\n\n"
+                "I'll reach back out in a few days once you've had a chance to try it out, "
+                "but if you have any questions or comments in the meantime, please let me know! "
+                "You're one of the first people to test out LetterPulse so your feedback will be very helpful.\n\n"
+                "Best,\n\n"
+                "Michael Cunningham\n"
+                "Founder, LetterPulse.com"
+            )
+            send_mail(
+                subject="Welcome to LetterPulse!",
+                message=body,
+                from_email=settings.DEFAULT_FROM_EMAIL,
+                recipient_list=[user.email],
+                fail_silently=True,
+            )
+        except Exception:
+            logger.exception("Failed to send welcome email to %s", user.email)
 
     threading.Thread(target=_send, daemon=True).start()
