@@ -233,7 +233,10 @@ def account_view(request):
                     if usage.beehiiv_pub_id != old_pub_id:
                         request.session.pop('extracted_items', None)
 
-                    messages.success(request, "API credentials validated and saved!")
+                    # Only show the banner if user already has posts;
+                    # otherwise the template shows a "Head to Posts" alert instead
+                    if Post.objects.filter(user=request.user).exists():
+                        messages.success(request, "API credentials validated and saved!")
                 else:
                     # Invalid key
                     usage.beehiiv_token = beehiiv_token  # Keep token so user can see it
