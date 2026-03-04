@@ -52,9 +52,9 @@ class ContentSetAdmin(admin.ModelAdmin):
 
 @admin.register(Report)
 class ReportAdmin(admin.ModelAdmin):
-    list_display = ('name', 'content_set', 'created_at', 'updated_at')
-    list_filter = ('content_set', 'created_at')
-    search_fields = ('name', 'content_set__name', 'report_text')
+    list_display = ('section_name', 'name', 'user', 'publication', 'created_at', 'updated_at')
+    list_filter = ('section_name', 'publication', 'user', 'created_at')
+    search_fields = ('section_name', 'name', 'report_text', 'user__email')
     ordering = ('-created_at',)
     readonly_fields = ('created_at', 'updated_at')
 

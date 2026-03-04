@@ -100,7 +100,8 @@ INSIGHTS_PROMPT = """
 <instructions>
 You are an expert newsletter analyst.
 
-You have been given newsletter items grouped by section. Each item has a name/description, CTR, a percentile rank among all items, and a percentile rank within its section.
+You have been given a list of items that appeared in a newsletter.
+Each item has a name/description, CTR, and a percentile rank.
 
 Write a concise performance report following the sample structure below.
 
@@ -110,20 +111,17 @@ Rules:
 - If only one section is present, omit the Overall block and per-section headers — output just the archetype analysis directly.
 - Show up to 5 examples per high/low block. Keep bullet lists to 2–3 points each.
    These do not necessarily need to be the absolute top or bottom performing items within the section.
-   Rather, you should first decide what the characteristics of high- and low-performing items are within each section and THEN identify up to 5 examples that showcase this trend.
+   Rather, you should first decide what the characteristics of high- and low-performing items are within each section and THEN identify up to 5 examples that showcase these trends.
 - Shorten long items to a headline label (≤10 words). Keep the key hook. For example: 
    Too long: "A framework for reliable browser-using agents Notte is a production‑oriented framework for building browser-using web automation agents, intended to be easier and cheaper to use at scale than alternatives like Browser Use and Convergence”
    Better: "Notte: a framework for browser-using agents"
-- Always use 💡 for Content Insights and 🌐 for Across all sections (if it is present, i.e. if there are multiple sections).
-   Choose a suitable emoji for each other section title.
 </instructions>
 
 <sample>
-# 💡 Content Insights
+## Summary
+Your audience is most interested in community events with a social or hands-on builder angle consistently drive the highest click-through rates, especially when tied to recognized brands or concrete outcomes. Finance, crypto, and policy-focused events with abstract titles tend to underperform significantly.
 
-## 🌐 Across all sections
-
-### 📈 High performers
+## 📈 High performers
 || CTR | Percentile |
 |------|-----|:---:|
 | Chicago Tech Mixer | 9.6% | 100% |
@@ -134,10 +132,10 @@ Rules:
 
 **✅ What works:**
 - Social/community framing with a clear AI/tech audience ("mixer," "happy hour," "collective").
-- Concrete outcome tied to builder goals: "Idea to MVP," "Building an MCP."
-- Credible attached brand or known community (Drive Capital, Pinecone, AI Tinkerers).
+- Concrete outcome tied to goals tech founders might want to achieve: "Idea to MVP," "Building an MCP."
+- Attached to a prestigious brand or known community (Drive Capital, Pinecone, AI Tinkerers).
 
-### 📉 Low performers
+## 📉 Low performers
 || CTR | Percentile |
 |------|-----|:---:|
 | Chicago Stablecoin Social | 2.0% | 2% |
@@ -149,66 +147,7 @@ Rules:
 **❌ What doesn't work:**
 - Finance/crypto/policy framing with no builder or practitioner angle.
 - Abstract titles with no specific benefit ("Outlook," "Innovation," "Insights").
-
----
-
-## 🔗 Quick Links section
-
-### 📈 High performers
-|| CTR | Percentile (all items) | Percentile (Quick Links items) |
-|------|-----|:---:|:---:|
-| Chicago Tech Mixer | 9.6% | 100% | 97% |
-| Chicago Coffee Club: Vertical AI Founders | 9.3% | 97% | 96% |
-| The AI Collective | 9.2% | 94% | 95% |
-| Emerging Tech: AI Day | 8.7% | 90% | 100% |
-| AI Tinkerers #21 (Drive Capital) | 8.2% | 88% | 94% |
-
-**✅ What works:**
-- AI-specific focus with a named brand or practitioner community.
-- "Insider" positioning (tinkerers, practitioners) over generic conference language.
-
-### 📉 Low performers
-|| CTR | Percentile (all items) | Percentile (Quick Links items) |
-|------|-----|:---:|:---:|
-| ChiTech Fall: Gravity Outlook | 2.1% | 4% | 8% |
-| Java Global Insights: Innovation | 2.1% | 4% | 6% |
-| Bitwise Crypto Diligence Summit | 3.2% | 22% | 15% |
-| VC/LP Gallery Series | 2.6% | 13% | 10% |
-| Hispanic Heritage Month: 1871 × LIT | 2.4% | 8% | 7% |
-
-**❌ What doesn't work:**
-- Broad tech-adjacent topics that don't speak directly to AI/ML practitioners.
-- Vague framing with no concrete skill or outcome promised.
-
----
-
-## 🤿 Deep Dives section
-
-### 📈 High performers
-|| CTR | Percentile (all items) | Percentile (Deep Dives items) |
-|------|-----|:---:|:---:|
-| From Idea to MVP | 9.3% | 97% | 99% |
-| Context Engineering w/ Pinecone | 9.0% | 92% | 98% |
-| Vibe Coding: App Building with Databricks | 7.5% | 85% | 100% |
-| AI in Healthcare: Innovation & Infrastructure | 6.8% | 74% | 88% |
-| Building an MCP in Node.js | 6.7% | 70% | 92% |
-
-**✅ What works:**
-- Step-by-step "how to build X" framing with named tools.
-- Strong appeal to founders and engineers trying to ship something concrete.
-
-### 📉 Low performers
-|| CTR | Percentile (all items) | Percentile (Deep Dives items) |
-|------|-----|:---:|:---:|
-| Money Moves: Future of Investment Mgmt | 2.5% | 10% | 15% |
-| Blockchain Policy Trends & 2026 Outlook | 2.6% | 13% | 12% |
-| Connect & Grow Chicago | 4.9% | 47% | 52% |
-| Navigate the Patient Landscape | 4.6% | 41% | 48% |
-| ChiTech Fall: Gravity Outlook | 2.1% | 4% | 5% |
-
-**❌ What doesn't work:**
-- Finance and healthcare topics consistently underperform vs. AI/tech for this audience.
-- Generic outcome language without a specific tool or skill named.
+- Non-Python languages like Java or Haskell
 </sample>
 """
 

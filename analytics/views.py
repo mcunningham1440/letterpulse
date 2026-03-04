@@ -6,7 +6,7 @@ import re
 import logging
 from django.shortcuts import render, redirect
 from django.http import JsonResponse, HttpResponse
-from django.views.decorators.http import require_POST
+from django.views.decorators.http import require_GET, require_POST
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
@@ -1059,7 +1059,7 @@ def get_stopwords():
 @require_valid_api_credentials
 def insights_view(request):
     """
-    Display the insights page with trend analysis chart and report generator.
+    Display the insights page with trend analysis chart and section-level insights.
     """
     from .models import Publication
     import json
@@ -1067,29 +1067,32 @@ def insights_view(request):
     # Get current publication for filtering
     _, beehiiv_pub_id, _ = get_user_api_credentials(request.user)
 
-    # Get reports and check for pending generation
+    # Check for processed data and pending tasks
     try:
         publication = Publication.objects.get(pub_id=beehiiv_pub_id)
-        has_reports = Report.objects.filter(
-            user=request.user, publication=publication
-        ).exists()
         has_processed_data = ProcessedPost.objects.filter(
             user=request.user, publication=publication
         ).exists()
-        # Check for any pending report generation
-        pending_report = PendingReport.objects.filter(
+        # Check for any pending report generation tasks
+        pending_reports = PendingReport.objects.filter(
             user=request.user, publication=publication, status='pending'
-        ).order_by('-created_at').first()
+        ).order_by('-created_at')
+        pending_tasks = [
+            {
+                'section_name': p.section_name,
+                'task_id': str(p.task_id),
+                'created_at': p.created_at.isoformat(),
+            }
+            for p in pending_reports
+        ]
     except Publication.DoesNotExist:
-        has_reports = False
         has_processed_data = False
-        pending_report = None
+        pending_tasks = []
 
     context = {
-        'has_reports': has_reports,
         'has_processed_data': has_processed_data,
         'stopwords_json': json.dumps(get_stopwords()),
-        'pending_task_id': str(pending_report.task_id) if pending_report else '',
+        'pending_tasks_json': json.dumps(pending_tasks),
         'max_report_items': settings.MAX_REPORT_ITEMS,
     }
 
@@ -1252,91 +1255,114 @@ def load_content_set(request, set_name):
 
 @login_required
 @require_POST
-def generate_insights(request):
+def generate_section_insights(request):
     """
-    Generate AI insights from items JSON in a background thread.
-    Returns a task_id immediately for polling.
+    Generate AI insights for one or more sections in background threads.
+    Accepts sections_json (list of section name strings) and all_items_json (all items).
+    Returns task_ids for polling.
     """
     import threading
     from .models import Publication
 
     try:
-        items_json = request.POST.get('items_json', '')
+        sections_json = request.POST.get('sections_json', '')
+        all_items_json = request.POST.get('all_items_json', '')
 
-        if not items_json:
+        if not sections_json or not all_items_json:
             return JsonResponse({
                 'success': False,
-                'error': 'Items data is required.'
+                'error': 'Sections and items data are required.'
             }, status=400)
 
         try:
-            items = json.loads(items_json)
+            sections = json.loads(sections_json)
+            all_items = json.loads(all_items_json)
         except json.JSONDecodeError:
             return JsonResponse({
                 'success': False,
-                'error': 'Invalid items JSON.'
+                'error': 'Invalid JSON data.'
             }, status=400)
 
-        if not items:
+        if not sections or not all_items:
             return JsonResponse({
                 'success': False,
-                'error': 'No items provided.'
+                'error': 'No sections or items provided.'
             }, status=400)
 
-        # Build DataFrame from items
-        df = pd.DataFrame(items)
+        # Charge credits upfront for all sections
+        total_credits = len(sections) * settings.CREDITS_PER_REPORT
+        charge_credits(request.user, total_credits)
 
-        if df.empty:
-            return JsonResponse({
-                'success': False,
-                'error': 'Items data is empty.'
-            }, status=400)
-
-        # Charge credits before starting background task
-        charge_credits(request.user, settings.CREDITS_PER_REPORT)
-
-        # Get publication for the pending report
+        # Get publication
         _, beehiiv_pub_id, _ = get_user_api_credentials(request.user)
         try:
             publication = Publication.objects.get(pub_id=beehiiv_pub_id)
         except Publication.DoesNotExist:
             publication = None
 
-        # Create pending report entry
-        pending = PendingReport.objects.create(
-            user=request.user,
-            publication=publication,
-            status='pending'
-        )
-
-        # Run generation in background thread
         user_id = request.user.id
+        tasks = []
 
-        def _run_generation():
-            import django
-            from django.contrib.auth import get_user_model
-            User = get_user_model()
+        for section_name in sections:
+            # Filter items to this section
+            section_items = [i for i in all_items if i.get('section_name') == section_name]
+            if not section_items:
+                continue
 
-            try:
-                user = User.objects.get(id=user_id)
-                response = async_to_sync(generate_content_insights)(df, user=user)
-                insights = response.output[-1].content[0].text
+            # Create pending report entry
+            pending = PendingReport.objects.create(
+                user=request.user,
+                publication=publication,
+                section_name=section_name,
+                status='pending'
+            )
+            tasks.append({'section_name': section_name, 'task_id': str(pending.task_id)})
 
-                pending_obj = PendingReport.objects.get(task_id=pending.task_id)
-                pending_obj.status = 'complete'
-                pending_obj.result_text = insights
-                pending_obj.save()
-            except Exception as e:
+            # Build DataFrame for this section
+            df = pd.DataFrame(section_items)
+            task_id = pending.task_id
+
+            def _run_generation(df=df, task_id=task_id):
+                from django.contrib.auth import get_user_model
+                User = get_user_model()
+
                 try:
-                    pending_obj = PendingReport.objects.get(task_id=pending.task_id)
-                    pending_obj.status = 'error'
-                    pending_obj.error_message = str(e)
-                    pending_obj.save()
-                except Exception:
-                    pass
+                    user = User.objects.get(id=user_id)
+                    response = async_to_sync(generate_content_insights)(df, user=user)
+                    insights = response.output[-1].content[0].text
 
-        thread = threading.Thread(target=_run_generation, daemon=True)
-        thread.start()
+                    pending_obj = PendingReport.objects.get(task_id=task_id)
+                    pending_obj.status = 'complete'
+                    pending_obj.result_text = insights
+                    pending_obj.save()
+                except Exception as e:
+                    try:
+                        pending_obj = PendingReport.objects.get(task_id=task_id)
+                        pending_obj.status = 'error'
+                        pending_obj.error_message = str(e)
+                        pending_obj.save()
+                    except Exception:
+                        pass
+
+            GENERATION_TIMEOUT = 120  # seconds
+
+            def _run_with_timeout(df=df, task_id=task_id):
+                gen_thread = threading.Thread(target=_run_generation, daemon=True)
+                gen_thread.start()
+                gen_thread.join(timeout=GENERATION_TIMEOUT)
+                if gen_thread.is_alive():
+                    # Thread still running after timeout — mark as error
+                    try:
+                        pending_obj = PendingReport.objects.get(task_id=task_id)
+                        if pending_obj.status == 'pending':
+                            pending_obj.status = 'error'
+                            pending_obj.error_message = f'Generation timed out after {GENERATION_TIMEOUT}s'
+                            pending_obj.save()
+                    except Exception:
+                        pass
+
+            thread = threading.Thread(target=_run_with_timeout, daemon=True)
+            thread.start()
 
         # Get updated usage for sidebar
         usage = UsageAccount.objects.get(user=request.user)
@@ -1344,7 +1370,7 @@ def generate_insights(request):
 
         return JsonResponse({
             'success': True,
-            'task_id': str(pending.task_id),
+            'tasks': tasks,
             'credits_used': usage.used_this_period,
             'credits_quota': usage.monthly_quota,
         })
@@ -1372,6 +1398,7 @@ def report_status(request, task_id):
         response_data = {
             'success': True,
             'status': pending.status,
+            'section_name': pending.section_name,
         }
 
         if pending.status == 'complete':
@@ -1986,20 +2013,20 @@ def download_annotated_posts(request):
 
 @login_required
 @require_POST
-def save_report(request):
+def save_section_report(request):
     """
-    Save a generated report to the database.
+    Save a generated report for a specific section (upsert).
     """
     from .models import Publication
 
     try:
-        report_name = request.POST.get('report_name', '').strip()
+        section_name = request.POST.get('section_name', '').strip()
         report_text = request.POST.get('report_text', '').strip()
 
-        if not report_name:
+        if not section_name:
             return JsonResponse({
                 'success': False,
-                'error': 'Report name is required.'
+                'error': 'Section name is required.'
             }, status=400)
 
         if not report_text:
@@ -2015,25 +2042,20 @@ def save_report(request):
         except Publication.DoesNotExist:
             publication = None
 
-        # Check if a report with this name already exists for this user/publication
-        if Report.objects.filter(name=report_name, user=request.user, publication=publication).exists():
-            return JsonResponse({
-                'success': False,
-                'error': f'A report named "{report_name}" already exists.'
-            }, status=400)
-
-        # Create the report
-        report = Report.objects.create(
-            name=report_name,
+        # Upsert: create or overwrite
+        Report.objects.update_or_create(
+            section_name=section_name,
             user=request.user,
             publication=publication,
-            report_text=report_text
+            defaults={
+                'name': f'{section_name} insights',
+                'report_text': report_text,
+            }
         )
 
         return JsonResponse({
             'success': True,
-            'message': f'Report "{report_name}" saved successfully!',
-            'report_id': report.id
+            'message': f'Report for "{section_name}" saved.',
         })
 
     except Exception as e:
@@ -2044,16 +2066,36 @@ def save_report(request):
 
 
 @login_required
-def load_report(request, report_id):
+def load_section_report(request):
     """
-    Load a saved report and return as JSON.
+    Load a saved report for a specific section.
     """
+    from .models import Publication
+
     try:
-        report = Report.objects.get(id=report_id, user=request.user)
+        section_name = request.GET.get('section_name', '').strip()
+
+        if not section_name:
+            return JsonResponse({
+                'success': False,
+                'error': 'Section name is required.'
+            }, status=400)
+
+        _, beehiiv_pub_id, _ = get_user_api_credentials(request.user)
+        try:
+            publication = Publication.objects.get(pub_id=beehiiv_pub_id)
+        except Publication.DoesNotExist:
+            publication = None
+
+        report = Report.objects.get(
+            section_name=section_name,
+            user=request.user,
+            publication=publication
+        )
 
         return JsonResponse({
             'success': True,
-            'report_name': report.name,
+            'section_name': report.section_name,
             'report_text': report.report_text,
             'created_at': report.created_at.strftime('%Y-%m-%d %H:%M:%S')
         })
@@ -2071,35 +2113,45 @@ def load_report(request, report_id):
 
 
 @login_required
-def get_all_reports(request):
+@require_POST
+def delete_section_reports(request):
     """
-    Get all reports for the current user and publication.
+    Delete saved reports for the given section names.
     """
     from .models import Publication
 
     try:
-        _, beehiiv_pub_id, _ = get_user_api_credentials(request.user)
+        sections_json = request.POST.get('sections_json', '')
 
         try:
-            publication = Publication.objects.get(pub_id=beehiiv_pub_id)
-            reports = Report.objects.filter(
-                user=request.user, publication=publication
-            ).order_by('-created_at')
-        except Publication.DoesNotExist:
-            reports = Report.objects.none()
+            sections = json.loads(sections_json)
+        except json.JSONDecodeError:
+            return JsonResponse({
+                'success': False,
+                'error': 'Invalid JSON.'
+            }, status=400)
 
-        reports_data = [
-            {
-                'id': report.id,
-                'name': report.name,
-                'created_at': report.created_at.strftime('created %b %-d, %Y')
-            }
-            for report in reports
-        ]
+        if not sections:
+            return JsonResponse({
+                'success': False,
+                'error': 'No sections provided.'
+            }, status=400)
+
+        _, beehiiv_pub_id, _ = get_user_api_credentials(request.user)
+        try:
+            publication = Publication.objects.get(pub_id=beehiiv_pub_id)
+        except Publication.DoesNotExist:
+            publication = None
+
+        deleted_count, _ = Report.objects.filter(
+            section_name__in=sections,
+            user=request.user,
+            publication=publication
+        ).delete()
 
         return JsonResponse({
             'success': True,
-            'reports': reports_data
+            'deleted_count': deleted_count,
         })
 
     except Exception as e:
@@ -2110,26 +2162,31 @@ def get_all_reports(request):
 
 
 @login_required
-@require_POST
-def delete_report(request, report_id):
+def get_section_report_status(request):
     """
-    Delete a saved report.
+    Return which sections have saved reports for the current user/publication.
     """
+    from .models import Publication
+
     try:
-        report = Report.objects.get(id=report_id, user=request.user)
-        report_name = report.name
-        report.delete()
-        
+        _, beehiiv_pub_id, _ = get_user_api_credentials(request.user)
+        try:
+            publication = Publication.objects.get(pub_id=beehiiv_pub_id)
+        except Publication.DoesNotExist:
+            publication = None
+
+        sections_with_reports = list(
+            Report.objects.filter(
+                user=request.user,
+                publication=publication
+            ).exclude(section_name='').values_list('section_name', flat=True)
+        )
+
         return JsonResponse({
             'success': True,
-            'message': f'Report "{report_name}" deleted successfully.'
+            'sections_with_reports': sections_with_reports,
         })
-        
-    except Report.DoesNotExist:
-        return JsonResponse({
-            'success': False,
-            'error': 'Report not found.'
-        }, status=404)
+
     except Exception as e:
         return JsonResponse({
             'success': False,
@@ -2317,6 +2374,29 @@ def clear_processed_posts(request):
 
     except Exception as e:
         logger.error(f"Error in clear_processed_posts: {str(e)}", exc_info=True)
+        return JsonResponse({'success': False, 'error': str(e)}, status=500)
+
+
+@login_required
+@require_GET
+def load_processed_post(request, post_id):
+    """
+    Load ProcessedPost sections data for a single post (by beehiiv post_id).
+    """
+    try:
+        processed = ProcessedPost.objects.get(
+            user=request.user,
+            post__post_id=post_id
+        )
+        return JsonResponse({
+            'success': True,
+            'post_title': processed.post.title,
+            'sections': processed.sections_data or [],
+        })
+    except ProcessedPost.DoesNotExist:
+        return JsonResponse({'success': False, 'error': 'No processed data found for this post.'}, status=404)
+    except Exception as e:
+        logger.error(f"Error in load_processed_post: {str(e)}", exc_info=True)
         return JsonResponse({'success': False, 'error': str(e)}, status=500)
 
 

@@ -351,9 +351,10 @@ class ContentSet(models.Model):
 
 
 class Report(models.Model):
-    """Model representing a saved content insights report"""
+    """Model representing a saved content insights report for a specific section"""
 
     name = models.CharField(max_length=255)
+    section_name = models.CharField(max_length=255, blank=True, default='')
     content_set = models.ForeignKey(
         ContentSet,
         on_delete=models.CASCADE,
@@ -383,10 +384,10 @@ class Report(models.Model):
 
     class Meta:
         ordering = ['-created_at']
-        unique_together = [['name', 'user', 'publication']]
+        unique_together = [['section_name', 'user', 'publication']]
 
     def __str__(self):
-        return f"{self.name} - {self.user.email}"
+        return f"{self.section_name} - {self.user.email}"
 
 
 class ExecutionLog(models.Model):
@@ -551,6 +552,7 @@ class PendingReport(models.Model):
         blank=True,
         related_name='pending_reports'
     )
+    section_name = models.CharField(max_length=255, blank=True, default='')
     status = models.CharField(
         max_length=20,
         default='pending',

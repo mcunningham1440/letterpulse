@@ -243,7 +243,7 @@ PROGRESS_DURATIONS = {
     'refresh_posts': 10,        # empirical
     'download_annotated': 60,   # empirical
     'extract_content': 12,      # empirical
-    'generate_report': 65,      # empirical
+    'generate_report': 35,      # empirical
     'process_posts': 20,        # empirical
 }
 

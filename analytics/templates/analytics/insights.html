@@ -74,21 +74,21 @@
     }
 
     /* Report markdown rendering */
-    #insightsText h1 {
+    .report-text h1 {
         font-size: 1.35rem;
         font-weight: 700;
         border-bottom: 2px solid #dee2e6;
         padding-bottom: 0.4rem;
         margin-bottom: 1.5rem;
     }
-    #insightsText h2 {
+    .report-text h2 {
         font-size: 1.1rem;
         font-weight: 600;
         margin-top: 2rem;
         margin-bottom: 0.5rem;
         color: #495057;
     }
-    #insightsText h3 {
+    .report-text h3 {
         font-size: 0.75rem;
         font-weight: 700;
         text-transform: uppercase;
@@ -97,8 +97,76 @@
         margin-top: 1.25rem;
         margin-bottom: 0.5rem;
     }
-    #insightsText table + p {
+    .report-text table + p {
         margin-top: 1.25rem;
+    }
+
+    /* Review overlay (reuses posts page pattern) */
+    .processing-overlay {
+        position: fixed;
+        top: 0; left: 0; right: 0; bottom: 0;
+        background-color: rgba(0, 0, 0, 0.6);
+        z-index: 10000;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+    .review-modal {
+        background: white;
+        border-radius: 0.5rem;
+        width: 90%;
+        max-width: 800px;
+        max-height: 90vh;
+        display: flex;
+        flex-direction: column;
+        box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+    }
+    .review-modal-header {
+        padding: 1rem 1.5rem;
+        border-bottom: 1px solid #dee2e6;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+    .review-modal-body {
+        padding: 1.5rem;
+        overflow-y: auto;
+        max-height: 60vh;
+    }
+    .review-modal-footer {
+        padding: 1rem 1.5rem;
+        border-top: 1px solid #dee2e6;
+        display: flex;
+        justify-content: flex-end;
+        gap: 0.75rem;
+    }
+
+    /* Sections table eyeball icon */
+    .insight-eye {
+        cursor: pointer;
+        color: #198754;
+        font-size: 1.1rem;
+    }
+    .insight-eye:hover {
+        color: #146c43;
+    }
+    .insight-trash {
+        cursor: pointer;
+        color: #dc3545;
+        font-size: 1rem;
+        margin-left: 0.5rem;
+    }
+    .insight-trash:hover {
+        color: #a71d2a;
+    }
+
+    /* Toggle label styles */
+    .toggle-label-active {
+        font-weight: 600;
+        color: #212529;
+    }
+    .toggle-label-inactive {
+        color: #6c757d;
     }
 </style>
 {% endblock %}
@@ -106,8 +174,8 @@
 {% block content %}
 <div class="row">
     <div class="col-12">
-        {% if not has_processed_data and not has_reports %}
-        <!-- Fully empty state -->
+        {% if not has_processed_data %}
+        <!-- Empty state -->
         <div class="card">
             <div class="card-body">
                 <div class="alert alert-info mb-0 no-auto-dismiss">
@@ -117,14 +185,6 @@
         </div>
         {% else %}
 
-        {% if not has_processed_data %}
-        <!-- No processed data but has content sets/reports -->
-        <div class="alert alert-info no-auto-dismiss">
-            No processed posts yet. Process posts on the Posts page to see trends here.
-        </div>
-        {% endif %}
-
-        {% if has_processed_data %}
         <!-- Trend Chart Card -->
         <div class="card" id="trendChartCard">
             <div class="card-header">
@@ -173,13 +233,24 @@
 
         <!-- Data Table Card -->
         <div class="card mt-4" id="dataTableCard">
-            <div class="card-header d-flex justify-content-between align-items-center">
-                <h5 class="mb-0" id="dataTableTitle">Processed Items</h5>
-                <button type="button" class="btn btn-info btn-sm" id="downloadFilteredCsvBtn">
-                    <i class="bi bi-download"></i> Download CSV
-                </button>
+            <div class="card-header">
+                <div class="d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0" id="dataTableTitle">Processed Items</h5>
+                    <button type="button" class="btn btn-info btn-sm d-none" id="downloadFilteredCsvBtn">
+                        <i class="bi bi-download"></i> Download CSV
+                    </button>
+                </div>
+                <div class="d-flex align-items-center gap-2 mt-2">
+                    <span class="toggle-label-active" id="sectionsLabel" style="font-size: 0.925rem;">Sections</span>
+                    <div class="form-check form-switch mb-0" style="padding-left: 0;">
+                        <input class="form-check-input" type="checkbox" id="viewModeToggle" role="switch" style="margin-left: 0;">
+                    </div>
+                    <span class="toggle-label-inactive" id="itemsLabel" style="font-size: 0.925rem;">Items</span>
+                </div>
             </div>
-            <div class="card-body">
+
+            <!-- Items View (hidden by default) -->
+            <div class="card-body d-none" id="itemsViewContainer">
                 <div class="alert alert-info py-2 px-3 small d-none no-auto-dismiss" id="averagedClicksNotice">
                     If multiple links in a post go to the same URL, click counts and CTRs for those links are averaged among the links.
                 </div>
@@ -238,93 +309,75 @@
                     </table>
                 </div>
             </div>
-        </div>
-        {% endif %}
 
-        <!-- AI Insights Card (Report Generator) -->
-        {% if has_processed_data or has_reports %}
-        <div class="card mt-4" id="insightsCard">
-            <div class="card-header">
-                <h5 class="mb-0">Content Insights</h5>
-            </div>
-            <div class="card-body">
-                <!-- Mode Toggle Switch -->
-                <div class="d-flex align-items-center gap-2 mb-4">
-                    <span class="form-label mb-0">Create</span>
-                    <div class="form-check form-switch mb-0" style="padding-left: 0;">
-                        <input class="form-check-input" type="checkbox" id="reportModeSwitch" role="switch" style="margin-left: 0;">
-                    </div>
-                    <span class="form-label mb-0">View saved</span>
+            <!-- Sections View (default) -->
+            <div class="card-body" id="sectionsViewContainer">
+                <div class="table-responsive">
+                    <table class="table table-hover table-sm" id="sectionsTable">
+                        <thead>
+                            <tr>
+                                <th style="width: 40px;"><input type="checkbox" id="selectAllSections" checked></th>
+                                <th data-bs-toggle="tooltip" title="Name of the content section">Section</th>
+                                <th class="text-end" data-bs-toggle="tooltip" title="Number of extracted items in this section across all posts">Total Items</th>
+                                <th class="text-end" data-bs-toggle="tooltip" title="Average of the highest click count per item in this section">Avg Max Clicks</th>
+                                <th class="text-end" data-bs-toggle="tooltip" title="Average of the highest click-through rate per item in this section">Avg Max CTR</th>
+                                <th class="text-center" data-bs-toggle="tooltip" title="View or delete insights for this section">Insights</th>
+                            </tr>
+                        </thead>
+                        <tbody id="sectionsTableBody"></tbody>
+                    </table>
                 </div>
-
-                <!-- Create Report Mode -->
-                <div id="createReportMode">
-                    <div id="generateReportProgress" style="display: inline-block;">
-                        <button class="btn btn-primary" type="button" id="generateInsightsBtn">
-                            <i class="bi bi-file-earmark-text"></i> Get Insights
+                <div class="mt-3 d-flex justify-content-end align-items-start gap-2">
+                    <small class="text-muted d-flex align-items-center" id="sectionCreditCost" style="height: 31px;"></small>
+                    <div id="sectionInsightsProgress" style="min-width: 200px;">
+                        <button class="btn btn-primary btn-sm w-100" type="button" id="getSectionInsightsBtn">
+                            <i class="bi bi-file-earmark-text"></i> Get Insights from Selected Sections
                         </button>
-                        <small class="text-muted ms-2">🧠 1 AI credit</small>
                     </div>
-                    <div class="text-muted small mt-2">Generate a report on what types of content your audience likes to click on based on the items in the table above</div>
-                </div>
-
-                <!-- View Report Mode -->
-                <div id="viewReportMode" style="display: none;">
-                    <div class="mb-3">
-                        <label for="reportSelect" class="form-label small fw-bold">Select Report</label>
-                        <select class="form-select" id="reportSelect">
-                            <option value="">-- Select a saved report --</option>
-                        </select>
-                    </div>
-                    <button class="btn btn-sm btn-danger d-none" id="deleteReportBtn">
-                        <i class="bi bi-trash-fill"></i> Delete Report
-                    </button>
-                </div>
-
-                <!-- Report Content (shown after generation or selection) -->
-                <div class="mt-4 d-none" id="insightsContent">
-                    <hr class="my-4">
-
-                    <div class="text-end mb-4">
-                        <div id="saveReportSection" class="dropdown" style="display: inline-block;">
-                            <button class="btn btn-success dropdown-toggle" type="button" id="saveReportDropdown" data-bs-toggle="dropdown" aria-expanded="false" data-bs-auto-close="outside">
-                                <i class="bi bi-save"></i> Save Report
-                            </button>
-                            <div class="dropdown-menu dropdown-menu-end p-3" aria-labelledby="saveReportDropdown" style="min-width: 320px;">
-                                <div class="mb-3">
-                                    <label for="report_name" class="form-label small fw-bold">Report Name</label>
-                                    <input type="text"
-                                           class="form-control form-control-sm"
-                                           id="report_name"
-                                           placeholder="e.g., 'Quick Bites analysis'">
-                                </div>
-                                <div class="d-flex justify-content-end">
-                                    <button type="button" class="btn btn-success btn-sm" id="saveReportBtn">
-                                        <i class="bi bi-check-lg"></i> Save
-                                    </button>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div id="insightsText"></div>
                 </div>
             </div>
         </div>
-        {% endif %}
 
         {% endif %}
     </div>
 </div>
 
-<!-- Low Item Count Confirmation Modal -->
-<div class="confirm-overlay" id="lowItemCountModal" style="display: none;">
+<!-- Overwrite Warning Modal -->
+<div class="confirm-overlay" id="overwriteWarningModal" style="display: none;">
     <div class="confirm-modal">
-        <h5>Generate Report?</h5>
-        <p id="lowItemCountMessage">Report generation works best with at least 10 items. Are you sure you want to proceed with only <span id="lowItemCountNum">0</span>?</p>
+        <h5>Overwrite Existing Insights?</h5>
+        <p id="overwriteWarningMessage"></p>
         <div class="btn-group-confirm">
-            <button type="button" class="btn btn-secondary" id="lowItemCountCancel">Cancel</button>
-            <button type="button" class="btn btn-primary" id="lowItemCountProceed">Proceed</button>
+            <button type="button" class="btn btn-secondary" id="overwriteCancel">Cancel</button>
+            <button type="button" class="btn btn-primary" id="overwriteProceed">Proceed</button>
+        </div>
+    </div>
+</div>
+
+<!-- Section Insights Review Overlay -->
+<div class="processing-overlay" id="insightsReviewOverlay" style="display: none;">
+    <div class="review-modal">
+        <div class="review-modal-header">
+            <h5 class="mb-0" id="reviewSectionTitle">Insights: Section Name</h5>
+            <span class="badge bg-secondary" id="reviewCounter">1 of 1</span>
+        </div>
+        <div class="review-modal-body report-text" id="reviewReportBody"></div>
+        <div class="review-modal-footer">
+            <button class="btn btn-secondary" id="reviewSkipBtn">Skip</button>
+            <button class="btn btn-success" id="reviewAcceptBtn"><i class="bi bi-check-lg"></i> Accept</button>
+        </div>
+    </div>
+</div>
+
+<!-- Read-Only Report Popup -->
+<div class="processing-overlay" id="readOnlyReportOverlay" style="display: none;">
+    <div class="review-modal">
+        <div class="review-modal-header">
+            <h5 class="mb-0" id="readOnlyReportTitle">Insights: Section Name</h5>
+        </div>
+        <div class="review-modal-body report-text" id="readOnlyReportBody"></div>
+        <div class="review-modal-footer">
+            <button class="btn btn-secondary" id="readOnlyExitBtn">Exit</button>
         </div>
     </div>
 </div>
@@ -344,9 +397,11 @@
     let allSectionNames = [];
     let filteredItems = [];
     let trendChart = null;
-    let currentReportText = null;
-    let isViewingSavedReport = false;
-    let activeTaskId = '{{ pending_task_id }}' || null;
+    let currentPhraseData = [];
+    let overallAvgCtr = 0;
+    let sectionsWithReports = [];
+    let viewMode = 'sections'; // 'items' or 'sections'
+    let pendingTasks = JSON.parse('{{ pending_tasks_json|escapejs }}') || [];
 
     function renderMarkdown(text) {
         const div = document.createElement('div');
@@ -356,9 +411,6 @@
         });
         return div.innerHTML;
     }
-    let pollInterval = null;
-    let currentPhraseData = [];
-    let overallAvgCtr = 0;
 
     // Chart color palette (consistent by sorted index)
     const CHART_COLORS = [
@@ -493,7 +545,7 @@
         if (text.length <= maxLength) return text;
         const short = text.substring(0, maxLength);
         return '<span class="truncated-text" style="display:inline-flex;align-items:flex-start;gap:4px;">' +
-            '<a href="#" class="text-toggle text-muted" onclick="toggleText(event, this)" style="font-size:0.75em;text-decoration:none;flex-shrink:0;line-height:1.5;">&#9660;</a>' +
+            '<a href="#" class="text-toggle text-muted" onclick="toggleText(event, this)" style="font-size:0.75em;text-decoration:none;flex-shrink:0;line-height:1.5;">&#9654;</a>' +
             '<span>' +
                 '<span class="text-short">' + short + '</span>' +
                 '<span class="text-full" style="display:none;">' + text + '</span>' +
@@ -509,11 +561,11 @@
         if (short.style.display !== 'none') {
             short.style.display = 'none';
             full.style.display = 'inline';
-            el.innerHTML = '&#9650;';
+            el.innerHTML = '&#9660;';
         } else {
             short.style.display = 'inline';
             full.style.display = 'none';
-            el.innerHTML = '&#9660;';
+            el.innerHTML = '&#9654;';
         }
     }
 
@@ -547,7 +599,7 @@
         // Group items by section, then by date, then by post_title
         const sectionDateGroups = {};
         items.forEach(item => {
-            if (!item.post_date_sortable) return; // exclude items with no date from chart
+            if (!item.post_date_sortable) return;
             const key = item.section_name;
             if (!sectionDateGroups[key]) sectionDateGroups[key] = {};
             if (!sectionDateGroups[key][item.post_date_sortable])
@@ -591,7 +643,6 @@
             });
         });
 
-        // Build a shared sorted date list so all datasets align by index
         const allDates = Array.from(allDatesSet).sort();
 
         const datasets = [];
@@ -735,7 +786,6 @@
     // Data Table
     // =========================================================================
     function renderTable(items) {
-        // Destroy existing DataTable if it exists
         if ($.fn.DataTable.isDataTable('#contentTable')) {
             $('#contentTable').DataTable().destroy();
         }
@@ -743,7 +793,6 @@
         const tbody = document.getElementById('contentTableBody');
         tbody.innerHTML = '';
 
-        // Check if any items have non-integer click counts (averaged due to duplicate URLs)
         const hasAveragedClicks = items.some(item => !Number.isInteger(item.max_clicks));
         const notice = document.getElementById('averagedClicksNotice');
         if (hasAveragedClicks) {
@@ -807,20 +856,21 @@
         filteredItems = getFilteredItems();
         renderChart();
         renderTable(filteredItems);
-        // updatePhraseAnalysis(filteredItems);
         updateDataTableTitle();
-        updateReportItemCount();
     }
 
     function updateDataTableTitle() {
         const titleEl = document.getElementById('dataTableTitle');
         if (!titleEl) return;
+        if (viewMode === 'sections') {
+            titleEl.textContent = 'Sections';
+            return;
+        }
 
         const selectedSections = getSelectedSections();
         const startDate = document.getElementById('startDate').value;
         const endDate = document.getElementById('endDate').value;
 
-        // Section part
         let sectionPart;
         if (selectedSections.length === 1) {
             sectionPart = 'in ' + selectedSections[0];
@@ -830,7 +880,6 @@
             sectionPart = 'in ' + selectedSections.length + ' section' + (selectedSections.length !== 1 ? 's' : '');
         }
 
-        // Date part
         let datePart = '';
         if (startDate && endDate) {
             datePart = ' from ' + formatDateLabel(startDate) + ' to ' + formatDateLabel(endDate);
@@ -844,7 +893,6 @@
     }
 
     function formatDateLabel(dateStr) {
-        // dateStr is YYYY-MM-DD, format as "Mon DD, YYYY"
         const parts = dateStr.split('-');
         const d = new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]));
         const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
@@ -852,7 +900,7 @@
     }
 
     // =========================================================================
-    // Section checkboxes
+    // Section checkboxes (chart filter)
     // =========================================================================
     function renderSectionCheckboxes() {
         const container = document.getElementById('sectionCheckboxes');
@@ -870,12 +918,10 @@
             container.appendChild(label);
         });
 
-        // Attach change handlers
         container.querySelectorAll('.section-filter-cb').forEach(cb => {
             cb.addEventListener('change', refreshAll);
         });
 
-        // Toggle All button
         document.getElementById('toggleAllSections').addEventListener('click', function() {
             const cbs = container.querySelectorAll('.section-filter-cb');
             const allChecked = Array.from(cbs).every(cb => cb.checked);
@@ -885,13 +931,463 @@
     }
 
     // =========================================================================
+    // Credits display update
+    // =========================================================================
+    function updateCreditsDisplay(creditsUsed, creditsQuota) {
+        if (creditsUsed !== undefined && creditsQuota !== undefined) {
+            const usagePercentage = Math.round((creditsUsed / creditsQuota) * 100);
+            const usageBar = document.querySelector('.usage-bar-fill');
+            const usageText = document.querySelector('.usage-text');
+            if (usageBar && usageText) {
+                usageBar.style.width = usagePercentage + '%';
+                usageText.textContent = Math.round(creditsUsed) + ' / ' + Math.round(creditsQuota) + ' used';
+            }
+        }
+    }
+
+    // =========================================================================
+    // Items / Sections toggle
+    // =========================================================================
+    // Toggle: checked = Items (right), unchecked = Sections (left)
+    document.getElementById('viewModeToggle')?.addEventListener('change', function() {
+        if (this.checked) {
+            // Items mode
+            viewMode = 'items';
+            document.getElementById('itemsLabel').className = 'small toggle-label-active';
+            document.getElementById('sectionsLabel').className = 'small toggle-label-inactive';
+            document.getElementById('sectionsViewContainer').classList.add('d-none');
+            document.getElementById('itemsViewContainer').classList.remove('d-none');
+            document.getElementById('downloadFilteredCsvBtn').classList.remove('d-none');
+            refreshAll();
+        } else {
+            // Sections mode
+            viewMode = 'sections';
+            document.getElementById('itemsLabel').className = 'small toggle-label-inactive';
+            document.getElementById('sectionsLabel').className = 'small toggle-label-active';
+            document.getElementById('itemsViewContainer').classList.add('d-none');
+            document.getElementById('phraseAnalysisSection').classList.add('d-none');
+            document.getElementById('downloadFilteredCsvBtn').classList.add('d-none');
+            document.getElementById('sectionsViewContainer').classList.remove('d-none');
+            renderSectionsTable();
+            updateDataTableTitle();
+        }
+    });
+
+    // =========================================================================
+    // Sections table
+    // =========================================================================
+    function renderSectionsTable() {
+        // Destroy existing DataTable if it exists
+        if ($.fn.DataTable.isDataTable('#sectionsTable')) {
+            $('#sectionsTable').DataTable().destroy();
+        }
+
+        const tbody = document.getElementById('sectionsTableBody');
+        tbody.innerHTML = '';
+
+        // Group allItems (unfiltered) by section_name
+        const sectionGroups = {};
+        allItems.forEach(item => {
+            const sn = item.section_name;
+            if (!sectionGroups[sn]) sectionGroups[sn] = [];
+            sectionGroups[sn].push(item);
+        });
+
+        allSectionNames.forEach(sectionName => {
+            const items = sectionGroups[sectionName] || [];
+            const totalItems = items.length;
+            const avgMaxClicks = totalItems > 0
+                ? (items.reduce((sum, i) => sum + (i.max_clicks || 0), 0) / totalItems)
+                : 0;
+            const avgMaxCtr = totalItems > 0
+                ? (items.reduce((sum, i) => sum + (i.max_click_rate_raw || 0), 0) / totalItems)
+                : 0;
+
+            const hasReport = sectionsWithReports.includes(sectionName);
+            const color = getColorForSection(sectionName);
+
+            const row = document.createElement('tr');
+            row.innerHTML = `
+                <td><input type="checkbox" class="section-select-cb" value="${sectionName}" checked></td>
+                <td><span class="badge" style="background-color: ${color};">${sectionName}</span></td>
+                <td class="text-end">${totalItems}</td>
+                <td class="text-end">${avgMaxClicks.toFixed(1)}</td>
+                <td class="text-end" data-order="${avgMaxCtr}">${(avgMaxCtr * 100).toFixed(2)}%</td>
+                <td class="text-center" data-order="${hasReport ? 1 : 0}">
+                    ${hasReport
+                        ? `<i class="bi bi-eye-fill insight-eye" data-section="${sectionName}" title="View saved insights"></i><i class="bi bi-trash-fill insight-trash" data-section="${sectionName}" title="Delete insights"></i>`
+                        : ''}
+                </td>
+            `;
+            tbody.appendChild(row);
+        });
+
+        // Initialize DataTable for sorting
+        const table = $('#sectionsTable').DataTable({
+            paging: false,
+            searching: false,
+            info: false,
+            order: [[1, 'asc']],
+            columnDefs: [
+                { orderable: false, targets: 0 }  // Checkbox column not sortable
+            ]
+        });
+
+        // Attach event listeners (must be after DataTable init since it may re-render)
+        $('#sectionsTable').on('change', '.section-select-cb', updateSectionCreditCost);
+        $('#sectionsTable').on('click', '.insight-eye', function() {
+            openReadOnlyReport(this.dataset.section);
+        });
+        $('#sectionsTable').on('click', '.insight-trash', function() {
+            deleteSectionInsight(this.dataset.section);
+        });
+
+        // Select-all checkbox
+        document.getElementById('selectAllSections').checked = true;
+        updateSectionCreditCost();
+    }
+
+    document.getElementById('selectAllSections')?.addEventListener('change', function() {
+        // Use jQuery to find checkboxes across all DataTable pages
+        $('#sectionsTable').find('.section-select-cb').prop('checked', this.checked);
+        updateSectionCreditCost();
+    });
+
+    function getSelectedSectionNames() {
+        // Use jQuery to find across all DataTable pages (DataTable may detach DOM nodes)
+        return $('#sectionsTable').find('.section-select-cb:checked').map(function() { return this.value; }).get();
+    }
+
+    function updateSectionCreditCost() {
+        const selected = getSelectedSectionNames();
+        const costEl = document.getElementById('sectionCreditCost');
+        if (costEl) {
+            costEl.textContent = selected.length > 0
+                ? `\u{1F9E0} ${selected.length} AI credit${selected.length !== 1 ? 's' : ''}`
+                : '';
+        }
+    }
+
+    // =========================================================================
+    // Load section report status
+    // =========================================================================
+    async function loadSectionReportStatus() {
+        try {
+            const response = await fetch('/insights/section-report-status/');
+            const data = await response.json();
+            if (data.success) {
+                sectionsWithReports = data.sections_with_reports || [];
+            }
+        } catch (error) {
+            console.error('Error loading section report status:', error);
+        }
+    }
+
+    // =========================================================================
+    // Get Section Insights flow
+    // =========================================================================
+    document.getElementById('getSectionInsightsBtn')?.addEventListener('click', function() {
+        const selected = getSelectedSectionNames();
+        if (selected.length === 0) {
+            alert('Please select at least one section.');
+            return;
+        }
+
+        // Check for overwrite
+        const sectionsToOverwrite = selected.filter(s => sectionsWithReports.includes(s));
+        if (sectionsToOverwrite.length > 0) {
+            document.getElementById('overwriteWarningMessage').textContent =
+                `${sectionsToOverwrite.length} of the sections you selected already have saved insights. Re-generating will overwrite them if accepted. Proceed?`;
+            document.getElementById('overwriteWarningModal').style.display = 'flex';
+        } else {
+            executeGenerateSectionInsights(selected);
+        }
+    });
+
+    document.getElementById('overwriteCancel')?.addEventListener('click', function() {
+        document.getElementById('overwriteWarningModal').style.display = 'none';
+    });
+
+    document.getElementById('overwriteProceed')?.addEventListener('click', function() {
+        document.getElementById('overwriteWarningModal').style.display = 'none';
+        const selected = getSelectedSectionNames();
+        executeGenerateSectionInsights(selected);
+    });
+
+    async function executeGenerateSectionInsights(sections) {
+        const button = document.getElementById('getSectionInsightsBtn');
+        button.disabled = true;
+
+        ProgressBar.start({
+            containerId: 'sectionInsightsProgress',
+            expectedDuration: {{ progress_durations.generate_report }},
+            subtext: 'Generating insights for ' + sections.length + ' section' + (sections.length !== 1 ? 's' : '') + '...',
+        });
+
+        try {
+            // Prepare items for the report (all items, not filtered)
+            const itemsForReport = allItems.map(item => ({
+                text: item.text || '',
+                click_rate: item.click_rate_raw || [0],
+                section_name: item.section_name || 'Unknown',
+            }));
+
+            const formData = new FormData();
+            formData.append('sections_json', JSON.stringify(sections));
+            formData.append('all_items_json', JSON.stringify(itemsForReport));
+            formData.append('csrfmiddlewaretoken', '{{ csrf_token }}');
+
+            const response = await fetch('/insights/generate-section-insights/', {
+                method: 'POST',
+                body: formData
+            });
+
+            const data = await response.json();
+
+            if (data.success) {
+                updateCreditsDisplay(data.credits_used, data.credits_quota);
+                // Start polling all tasks
+                pollSectionTasks(data.tasks);
+            } else {
+                ProgressBar.forceClose({ containerId: 'sectionInsightsProgress' });
+                alert(data.error || 'Error generating insights');
+                button.disabled = false;
+            }
+        } catch (error) {
+            ProgressBar.forceClose({ containerId: 'sectionInsightsProgress' });
+            alert('Error: ' + error.message);
+            button.disabled = false;
+        }
+    }
+
+    // =========================================================================
+    // Poll section tasks
+    // =========================================================================
+    function pollSectionTasks(tasks) {
+        // tasks: [{section_name, task_id}, ...]
+        const completedResults = []; // {section_name, result_text}
+        const taskStatuses = {};
+        tasks.forEach(t => { taskStatuses[t.task_id] = 'pending'; });
+
+        const POLL_TIMEOUT_MS = 150000; // 2.5 min client-side safety net
+        const pollStartTime = Date.now();
+
+        const pollInterval = setInterval(async () => {
+            // Client-side timeout: treat all remaining pending tasks as errors
+            if (Date.now() - pollStartTime > POLL_TIMEOUT_MS) {
+                for (const task of tasks) {
+                    if (taskStatuses[task.task_id] === 'pending') {
+                        taskStatuses[task.task_id] = 'error';
+                        completedResults.push({
+                            section_name: task.section_name,
+                            result_text: null,
+                            error: 'Generation timed out',
+                        });
+                    }
+                }
+            }
+
+            let allDone = true;
+
+            for (const task of tasks) {
+                if (taskStatuses[task.task_id] !== 'pending') continue;
+                allDone = false;
+
+                try {
+                    const response = await fetch(`/insights/report-status/${task.task_id}/`);
+                    const data = await response.json();
+
+                    if (data.status === 'complete') {
+                        taskStatuses[task.task_id] = 'complete';
+                        completedResults.push({
+                            section_name: task.section_name,
+                            result_text: data.result_text,
+                        });
+                        if (data.credits_used !== undefined) {
+                            updateCreditsDisplay(data.credits_used, data.credits_quota);
+                        }
+                    } else if (data.status === 'error') {
+                        taskStatuses[task.task_id] = 'error';
+                        completedResults.push({
+                            section_name: task.section_name,
+                            result_text: null,
+                            error: data.error_message || 'Error generating insights',
+                        });
+                    }
+                    // else still pending
+                } catch (err) {
+                    taskStatuses[task.task_id] = 'error';
+                    completedResults.push({
+                        section_name: task.section_name,
+                        result_text: null,
+                        error: err.message,
+                    });
+                }
+            }
+
+            // Check if all done
+            const remaining = Object.values(taskStatuses).filter(s => s === 'pending').length;
+            if (remaining === 0) {
+                clearInterval(pollInterval);
+                ProgressBar.complete({ containerId: 'sectionInsightsProgress', success: true, message: 'Insights generated!' });
+                document.getElementById('getSectionInsightsBtn').disabled = false;
+
+                // Filter to successful results
+                const successfulResults = completedResults.filter(r => r.result_text);
+                const errorResults = completedResults.filter(r => !r.result_text);
+
+                if (errorResults.length > 0) {
+                    showToast(`${errorResults.length} section(s) failed: ${errorResults.map(r => r.section_name).join(', ')}`, 'warning');
+                }
+
+                if (successfulResults.length > 0) {
+                    openReviewOverlay(successfulResults);
+                }
+            }
+        }, 2000);
+    }
+
+    // =========================================================================
+    // Review overlay
+    // =========================================================================
+    let reviewQueue = [];
+    let reviewIndex = 0;
+
+    function openReviewOverlay(results) {
+        reviewQueue = results;
+        reviewIndex = 0;
+        showReviewItem();
+        document.getElementById('insightsReviewOverlay').style.display = 'flex';
+    }
+
+    function showReviewItem() {
+        if (reviewIndex >= reviewQueue.length) {
+            closeReviewOverlay();
+            return;
+        }
+
+        const item = reviewQueue[reviewIndex];
+        document.getElementById('reviewSectionTitle').textContent = 'Insights: ' + item.section_name;
+        document.getElementById('reviewCounter').textContent = (reviewIndex + 1) + ' of ' + reviewQueue.length;
+        document.getElementById('reviewReportBody').innerHTML = renderMarkdown(item.result_text);
+    }
+
+    document.getElementById('reviewAcceptBtn')?.addEventListener('click', async function() {
+        const item = reviewQueue[reviewIndex];
+        // Save the report
+        try {
+            const formData = new FormData();
+            formData.append('section_name', item.section_name);
+            formData.append('report_text', item.result_text);
+            formData.append('csrfmiddlewaretoken', '{{ csrf_token }}');
+
+            const response = await fetch('/insights/save-section-report/', {
+                method: 'POST',
+                body: formData
+            });
+
+            const data = await response.json();
+            if (data.success) {
+                if (!sectionsWithReports.includes(item.section_name)) {
+                    sectionsWithReports.push(item.section_name);
+                }
+            } else {
+                showToast('Error saving report for ' + item.section_name + ': ' + data.error, 'danger');
+            }
+        } catch (error) {
+            showToast('Error saving report: ' + error.message, 'danger');
+        }
+
+        reviewIndex++;
+        showReviewItem();
+    });
+
+    document.getElementById('reviewSkipBtn')?.addEventListener('click', function() {
+        reviewIndex++;
+        showReviewItem();
+    });
+
+    function closeReviewOverlay() {
+        document.getElementById('insightsReviewOverlay').style.display = 'none';
+        reviewQueue = [];
+        reviewIndex = 0;
+        // Re-render sections table to update eyeballs
+        if (viewMode === 'sections') {
+            renderSectionsTable();
+        }
+    }
+
+    // =========================================================================
+    // Read-only report popup (eyeball click)
+    // =========================================================================
+    async function openReadOnlyReport(sectionName) {
+        try {
+            const response = await fetch(`/insights/load-section-report/?section_name=${encodeURIComponent(sectionName)}`);
+            const data = await response.json();
+
+            if (data.success) {
+                document.getElementById('readOnlyReportTitle').textContent = 'Insights: ' + sectionName;
+                document.getElementById('readOnlyReportBody').innerHTML = renderMarkdown(data.report_text);
+                document.getElementById('readOnlyReportOverlay').style.display = 'flex';
+            } else {
+                alert('Error loading report: ' + data.error);
+            }
+        } catch (error) {
+            alert('Error loading report: ' + error.message);
+        }
+    }
+
+    document.getElementById('readOnlyExitBtn')?.addEventListener('click', function() {
+        document.getElementById('readOnlyReportOverlay').style.display = 'none';
+    });
+
+    // =========================================================================
+    // Delete single section insight (trash icon)
+    // =========================================================================
+    async function deleteSectionInsight(sectionName) {
+        if (!confirm(`Delete insights for "${sectionName}"?\n\nThis action cannot be undone.`)) return;
+
+        try {
+            const formData = new FormData();
+            formData.append('sections_json', JSON.stringify([sectionName]));
+            formData.append('csrfmiddlewaretoken', '{{ csrf_token }}');
+
+            const response = await fetch('/insights/delete-section-reports/', {
+                method: 'POST',
+                body: formData
+            });
+
+            const data = await response.json();
+            if (data.success) {
+                sectionsWithReports = sectionsWithReports.filter(s => s !== sectionName);
+                renderSectionsTable();
+                showToast(`Deleted insights for "${sectionName}".`);
+            } else {
+                alert('Error: ' + data.error);
+            }
+        } catch (error) {
+            alert('Error: ' + error.message);
+        }
+    }
+
+    // =========================================================================
     // Initialize processed data view
     // =========================================================================
     {% if has_processed_data %}
     (async function loadProcessedData() {
         try {
-            const response = await fetch('/insights/load-processed-data/');
-            const data = await response.json();
+            // Load data and report status in parallel
+            const [dataResponse, statusResponse] = await Promise.all([
+                fetch('/insights/load-processed-data/'),
+                fetch('/insights/section-report-status/')
+            ]);
+
+            const data = await dataResponse.json();
+            const statusData = await statusResponse.json();
+
+            if (statusData.success) {
+                sectionsWithReports = statusData.sections_with_reports || [];
+            }
 
             if (data.success) {
                 allItems = data.items;
@@ -900,6 +1396,8 @@
 
                 renderSectionCheckboxes();
                 refreshAll();
+                renderSectionsTable();
+                resumePendingTasks();
             } else {
                 console.error('Error loading processed data:', data.error);
             }
@@ -979,358 +1477,43 @@
     });
 
     // =========================================================================
-    // Report generator logic
+    // Resume polling on page load if there are pending tasks
     // =========================================================================
+    function resumePendingTasks() {
+        if (pendingTasks.length === 0) return;
 
-    // Update the item count badge whenever filtered items change
-    function updateReportItemCount() {
-        const badge = document.getElementById('reportItemCount');
-        if (badge) {
-            badge.textContent = filteredItems.length + ' items';
-        }
-    }
+        document.getElementById('getSectionInsightsBtn').disabled = true;
 
-    // Load all reports on page load
-    async function loadAllReports() {
-        try {
-            const response = await fetch('/insights/get-all-reports/');
-            const data = await response.json();
-
-            if (data.success) {
-                const reportSelect = document.getElementById('reportSelect');
-                if (!reportSelect) return;
-                reportSelect.innerHTML = '<option value="">-- Select a saved report --</option>';
-
-                data.reports.forEach(report => {
-                    const option = document.createElement('option');
-                    option.value = report.id;
-                    option.textContent = `${report.name} (${report.created_at})`;
-                    reportSelect.appendChild(option);
-                });
-            }
-        } catch (error) {
-            console.error('Error loading reports:', error);
-        }
-    }
-
-    loadAllReports();
-
-    // Handle report mode switch
-    document.getElementById('reportModeSwitch')?.addEventListener('change', function() {
-        const createMode = document.getElementById('createReportMode');
-        const viewMode = document.getElementById('viewReportMode');
-        const insightsContent = document.getElementById('insightsContent');
-
-        if (this.checked) {
-            // Switching to View saved mode
-            createMode.style.display = 'none';
-            viewMode.style.display = 'block';
-            // Hide generated report content (will show saved report when selected)
-            if (!activeTaskId) {
-                insightsContent.classList.add('d-none');
-            }
-            document.getElementById('deleteReportBtn').classList.add('d-none');
-            document.getElementById('reportSelect').value = '';
-        } else {
-            // Switching back to Create mode
-            createMode.style.display = 'block';
-            viewMode.style.display = 'none';
-            document.getElementById('deleteReportBtn').classList.add('d-none');
-            document.getElementById('reportSelect').value = '';
-            // Restore generated report if one exists and we're not viewing a saved report
-            if (currentReportText && !isViewingSavedReport) {
-                insightsContent.classList.remove('d-none');
-                document.getElementById('saveReportSection').style.display = 'inline-block';
-            } else if (!activeTaskId) {
-                insightsContent.classList.add('d-none');
-            }
-        }
-    });
-
-    // Handle report selection (View mode)
-    document.getElementById('reportSelect')?.addEventListener('change', async function() {
-        const reportId = this.value;
-        const deleteReportBtn = document.getElementById('deleteReportBtn');
-
-        if (!reportId) {
-            document.getElementById('insightsContent').classList.add('d-none');
-            deleteReportBtn.classList.add('d-none');
-            return;
-        }
-
-        deleteReportBtn.classList.remove('d-none');
-
-        try {
-            const response = await fetch(`/insights/load-report/${reportId}/`);
-            const data = await response.json();
-
-            if (data.success) {
-                currentReportText = data.report_text;
-                isViewingSavedReport = true;
-                document.getElementById('insightsText').innerHTML = renderMarkdown(data.report_text);
-                document.getElementById('insightsContent').classList.remove('d-none');
-                document.getElementById('saveReportSection').style.display = 'none';
-            } else {
-                alert('Error loading report: ' + data.error);
-            }
-        } catch (error) {
-            alert('Error loading report: ' + error.message);
-        }
-    });
-
-    // Update sidebar credit display
-    function updateCreditsDisplay(creditsUsed, creditsQuota) {
-        if (creditsUsed !== undefined && creditsQuota !== undefined) {
-            const usagePercentage = Math.round((creditsUsed / creditsQuota) * 100);
-            const usageBar = document.querySelector('.usage-bar-fill');
-            const usageText = document.querySelector('.usage-text');
-            if (usageBar && usageText) {
-                usageBar.style.width = usagePercentage + '%';
-                usageText.textContent = Math.round(creditsUsed) + ' / ' + Math.round(creditsQuota) + ' used';
-            }
-        }
-    }
-
-    const REPORT_TASK_KEY = 'lp_report_task';
-
-    // Poll for report status
-    function startPolling(taskId) {
-        activeTaskId = taskId;
-        // Record start time so progress can be resumed accurately if user navigates away
-        localStorage.setItem(REPORT_TASK_KEY, JSON.stringify({ taskId, startTime: Date.now() }));
-
-        pollInterval = setInterval(async () => {
-            try {
-                const response = await fetch(`/insights/report-status/${taskId}/`);
-                const data = await response.json();
-
-                if (!data.success) {
-                    clearInterval(pollInterval);
-                    pollInterval = null;
-                    activeTaskId = null;
-                    ProgressBar.forceClose({ containerId: 'generateReportProgress' });
-                    alert('Error checking report status: ' + data.error);
-                    document.getElementById('generateInsightsBtn').disabled = false;
-                    return;
-                }
-
-                if (data.status === 'complete') {
-                    clearInterval(pollInterval);
-                    pollInterval = null;
-                    activeTaskId = null;
-                    localStorage.removeItem(REPORT_TASK_KEY);
-
-                    currentReportText = data.result_text;
-                    isViewingSavedReport = false;
-                    document.getElementById('insightsText').innerHTML = renderMarkdown(data.result_text);
-                    document.getElementById('insightsContent').classList.remove('d-none');
-                    document.getElementById('saveReportSection').style.display = 'inline-block';
-                    document.getElementById('report_name').value = '';
-
-                    const reportSelect = document.getElementById('reportSelect');
-                    if (reportSelect) reportSelect.value = '';
-
-                    updateCreditsDisplay(data.credits_used, data.credits_quota);
-                    ProgressBar.complete({ containerId: 'generateReportProgress', success: true, message: 'Report generated!' });
-                    document.getElementById('generateInsightsBtn').disabled = false;
-
-                } else if (data.status === 'error') {
-                    clearInterval(pollInterval);
-                    pollInterval = null;
-                    activeTaskId = null;
-                    localStorage.removeItem(REPORT_TASK_KEY);
-
-                    ProgressBar.forceClose({ containerId: 'generateReportProgress' });
-                    alert(data.error_message || 'Error generating report');
-                    document.getElementById('generateInsightsBtn').disabled = false;
-                }
-                // If still 'pending', keep polling
-            } catch (error) {
-                clearInterval(pollInterval);
-                pollInterval = null;
-                activeTaskId = null;
-                localStorage.removeItem(REPORT_TASK_KEY);
-                ProgressBar.forceClose({ containerId: 'generateReportProgress' });
-                alert('Error polling report status: ' + error.message);
-                document.getElementById('generateInsightsBtn').disabled = false;
-            }
-        }, 2000);
-    }
-
-    // Generate report - actual execution
-    async function executeReportGeneration() {
-        const button = document.getElementById('generateInsightsBtn');
-        button.disabled = true;
-
-        ProgressBar.start({
-            containerId: 'generateReportProgress',
-            expectedDuration: {{ progress_durations.generate_report }},
-            subtext: 'Analyzing content performance...'
-        });
-
-        try {
-            // Collect items from the current filtered table view
-            // click_rate must be an array (generate_content_insights calls .apply(max) on it)
-            // section_name is required for water-filling allocation across sections
-            const itemsForReport = filteredItems.map(item => ({
-                text: item.text || '',
-                click_rate: item.click_rate_raw || [0],
-                section_name: item.section_name || 'Unknown',
-            }));
-
-            const formData = new FormData();
-            formData.append('items_json', JSON.stringify(itemsForReport));
-            formData.append('csrfmiddlewaretoken', '{{ csrf_token }}');
-
-            const response = await fetch('/insights/generate-insights/', {
-                method: 'POST',
-                body: formData
-            });
-
-            const data = await response.json();
-
-            if (data.success) {
-                updateCreditsDisplay(data.credits_used, data.credits_quota);
-                // Start polling for completion
-                startPolling(data.task_id);
-            } else {
-                ProgressBar.forceClose({ containerId: 'generateReportProgress' });
-                alert(data.error || 'Error generating report');
-                button.disabled = false;
-            }
-        } catch (error) {
-            ProgressBar.complete({ containerId: 'generateReportProgress', success: false, message: 'Error: ' + error.message });
-            button.disabled = false;
-        }
-    }
-
-    // Generate report - click handler with confirmation for low item count
-    document.getElementById('generateInsightsBtn')?.addEventListener('click', function() {
-        const itemCount = filteredItems.length;
-
-        if (itemCount === 0) {
-            alert('No items to analyze. Apply filters to show items in the table first.');
-            return;
-        }
-
-        if (itemCount < 10) {
-            document.getElementById('lowItemCountNum').textContent = itemCount;
-            document.getElementById('lowItemCountModal').style.display = 'flex';
-        } else {
-            executeReportGeneration();
-        }
-    });
-
-    // Low item count modal buttons
-    document.getElementById('lowItemCountCancel')?.addEventListener('click', function() {
-        document.getElementById('lowItemCountModal').style.display = 'none';
-    });
-    document.getElementById('lowItemCountProceed')?.addEventListener('click', function() {
-        document.getElementById('lowItemCountModal').style.display = 'none';
-        executeReportGeneration();
-    });
-
-
-    // Resume polling on page load if there's a pending report
-    if (activeTaskId) {
-        document.getElementById('generateInsightsBtn').disabled = true;
-
-        // Calculate how far the bar should already be based on elapsed time
-        const expectedDuration = {{ progress_durations.generate_report }};
-        const intervalMs = (expectedDuration * 1000) / 9;
-        const stored = JSON.parse(localStorage.getItem(REPORT_TASK_KEY) || 'null');
+        // Calculate elapsed time to resume progress bar where it would be
+        const fullDuration = {{ progress_durations.generate_report }};
         let startProgress = 0;
-        if (stored && stored.taskId === activeTaskId) {
-            const elapsedMs = Date.now() - stored.startTime;
-            startProgress = Math.min(Math.floor(elapsedMs / intervalMs) * 10, 90);
+        let remainingDuration = fullDuration;
+        if (pendingTasks[0].created_at) {
+            const createdAt = new Date(pendingTasks[0].created_at);
+            const elapsedSeconds = (Date.now() - createdAt.getTime()) / 1000;
+            // Progress bar reaches 90% over fullDuration, in 10% increments
+            const elapsedSteps = Math.min(9, Math.floor((elapsedSeconds / fullDuration) * 9));
+            startProgress = elapsedSteps * 10;
+            const remainingSteps = 9 - elapsedSteps;
+            // Scale expectedDuration so remaining steps take proportional time
+            remainingDuration = remainingSteps > 0 ? (fullDuration / 9) * remainingSteps : fullDuration;
         }
 
         ProgressBar.start({
-            containerId: 'generateReportProgress',
-            expectedDuration: expectedDuration,
-            subtext: 'Analyzing content performance...',
+            containerId: 'sectionInsightsProgress',
+            expectedDuration: remainingDuration,
             startProgress: startProgress,
+            subtext: 'Generating insights for ' + pendingTasks.length + ' section' + (pendingTasks.length !== 1 ? 's' : '') + '...',
         });
-        startPolling(activeTaskId);
+
+        // Switch to sections view if not already (unchecked = Sections)
+        const toggle = document.getElementById('viewModeToggle');
+        if (toggle && toggle.checked) {
+            toggle.checked = false;
+            toggle.dispatchEvent(new Event('change'));
+        }
+
+        pollSectionTasks(pendingTasks);
     }
-
-    // Save report
-    document.getElementById('saveReportBtn')?.addEventListener('click', async function() {
-        const reportName = document.getElementById('report_name').value.trim();
-
-        if (!reportName) {
-            alert('Please enter a report name.');
-            return;
-        }
-
-        if (!currentReportText) {
-            alert('No report to save.');
-            return;
-        }
-
-        const dropdown = bootstrap.Dropdown.getInstance(document.getElementById('saveReportDropdown'));
-        if (dropdown) dropdown.hide();
-
-        try {
-            const formData = new FormData();
-            formData.append('report_name', reportName);
-            formData.append('report_text', currentReportText);
-            formData.append('csrfmiddlewaretoken', '{{ csrf_token }}');
-
-            const response = await fetch('/insights/save-report/', {
-                method: 'POST',
-                body: formData
-            });
-
-            const data = await response.json();
-
-            if (data.success) {
-                alert(data.message);
-                loadAllReports();
-                document.getElementById('report_name').value = '';
-                document.getElementById('saveReportSection').style.display = 'none';
-            } else {
-                alert('Error saving report: ' + data.error);
-            }
-        } catch (error) {
-            alert('Error saving report: ' + error.message);
-        }
-    });
-
-    // Delete report
-    document.getElementById('deleteReportBtn')?.addEventListener('click', async function() {
-        const reportSelect = document.getElementById('reportSelect');
-        const reportId = reportSelect.value;
-
-        if (!reportId) return;
-
-        const selectedOption = reportSelect.options[reportSelect.selectedIndex];
-        const reportName = selectedOption.textContent.split(' (')[0];
-
-        if (!confirm(`Delete "${reportName}"?\n\nThis action cannot be undone and will permanently delete the report.`)) return;
-
-        try {
-            const formData = new FormData();
-            formData.append('csrfmiddlewaretoken', '{{ csrf_token }}');
-
-            const response = await fetch(`/insights/delete-report/${reportId}/`, {
-                method: 'POST',
-                body: formData
-            });
-
-            const data = await response.json();
-
-            if (data.success) {
-                showToast('Report deleted successfully!');
-                document.getElementById('insightsContent').classList.add('d-none');
-                document.getElementById('deleteReportBtn').classList.add('d-none');
-                loadAllReports();
-            } else {
-                alert('Error deleting report: ' + data.error);
-            }
-        } catch (error) {
-            alert('Error deleting report: ' + error.message);
-        }
-    });
 </script>
 {% endblock %}
