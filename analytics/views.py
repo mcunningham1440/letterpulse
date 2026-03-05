@@ -169,6 +169,11 @@ def index(request):
     return render(request, 'analytics/about.html')
 
 
+def mobile_notice(request):
+    """Show a notice that the app is not optimized for mobile"""
+    return render(request, 'analytics/mobile.html')
+
+
 @login_required
 def account_view(request):
     """

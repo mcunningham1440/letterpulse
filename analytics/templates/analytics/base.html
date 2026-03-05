@@ -591,6 +591,15 @@
         });
     </script>
 
+    <!-- Mobile Redirect -->
+    <script>
+        (function() {
+            if (window.matchMedia('(max-width: 768px)').matches && window.location.pathname !== '{% url "analytics:mobile_notice" %}') {
+                window.location.href = '{% url "analytics:mobile_notice" %}';
+            }
+        })();
+    </script>
+
     {% block extra_js %}{% endblock %}
 
     <!-- Signup Survey Modal -->
