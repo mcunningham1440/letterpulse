@@ -497,11 +497,14 @@ def posts_view(request):
         .values_list('post__post_id', flat=True)
     )
 
+    first_process = request.GET.get('first_process') == '1' and processed_post_ids
+
     context = {
         'posts': posts_data,
         'all_content_sets': all_content_sets,
         'all_reports': all_reports,
         'processed_post_ids': processed_post_ids,
+        'first_process': first_process,
     }
 
     return render(request, 'analytics/posts.html', context)
@@ -1078,6 +1081,9 @@ def insights_view(request):
         has_processed_data = ProcessedPost.objects.filter(
             user=request.user, publication=publication
         ).exists()
+        has_section_insights = Report.objects.filter(
+            user=request.user, publication=publication
+        ).exists()
         # Check for any pending report generation tasks
         pending_reports = PendingReport.objects.filter(
             user=request.user, publication=publication, status='pending'
@@ -1092,10 +1098,12 @@ def insights_view(request):
         ]
     except Publication.DoesNotExist:
         has_processed_data = False
+        has_section_insights = False
         pending_tasks = []
 
     context = {
         'has_processed_data': has_processed_data,
+        'has_section_insights': has_section_insights,
         'stopwords_json': json.dumps(get_stopwords()),
         'pending_tasks_json': json.dumps(pending_tasks),
         'max_report_items': settings.MAX_REPORT_ITEMS,

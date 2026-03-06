@@ -252,6 +252,12 @@
                 </div>
             </div>
 
+            {% if not has_section_insights %}
+            <div class="alert alert-info mt-2 mb-3 mx-3 no-auto-dismiss">
+                <i class="bi bi-lightbulb"></i> <strong>Getting started:</strong> Click <strong>Get Insights from Selected Sections</strong> to see what kind of content your audience likes.
+            </div>
+            {% endif %}
+
             <!-- Items View (hidden by default) -->
             <div class="card-body d-none" id="itemsViewContainer">
                 <div class="alert alert-info py-2 px-3 small d-none no-auto-dismiss" id="averagedClicksNotice">

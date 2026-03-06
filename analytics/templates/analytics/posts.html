@@ -93,6 +93,10 @@
                 <div class="alert alert-info mb-3 no-auto-dismiss">
                     <i class="bi bi-lightbulb"></i> <strong>Getting started:</strong> Select a few of your most recent posts (try 3) and click <strong>Process Selected Posts</strong> to extract content for analysis in the Insights tab.
                 </div>
+                {% elif first_process %}
+                <div class="alert alert-info mb-3 no-auto-dismiss">
+                    <i class="bi bi-lightbulb"></i> <strong>Getting started:</strong> Congrats on processing your first posts! Head to the <a href="{% url 'analytics:insights' %}" class="alert-link">Insights tab</a> to analyze them.
+                </div>
                 {% endif %}
                 <div class="table-responsive">
                     <table class="table table-hover table-sm" id="postsTable">
@@ -244,6 +248,12 @@
             </a>
         </div>
 
+        {% if not processed_post_ids %}
+        <div class="alert alert-info mb-3 py-2 small no-auto-dismiss">
+            <i class="bi bi-lightbulb"></i> <strong>Getting started:</strong> Try entering at least 2–3 real recurring sections from your newsletter, instead of a placeholder like "test".
+        </div>
+        {% endif %}
+
         <datalist id="sectionNameOptions"></datalist>
 
         <div id="sectionFields">
@@ -368,11 +378,6 @@
         <div class="bg-light border-top py-3 mt-3">
             <div class="d-flex justify-content-between align-items-center">
                 <div class="d-flex gap-2">
-                    <button type="button" class="btn btn-success btn-sm" id="approveBtn">
-                        <i class="bi bi-check-lg"></i> Save and Proceed
-                    </button>
-                </div>
-                <div class="d-flex gap-2">
                     <button type="button" class="btn btn-warning btn-sm" id="deleteSelectedReviewBtn">
                         <i class="bi bi-trash"></i> Remove Selected Items
                     </button>
@@ -398,8 +403,13 @@
                             </div>
                         </div>
                     </div>
-                    <button type="button" class="btn btn-secondary btn-sm" id="deletePostBtn">
+                    <button type="button" class="btn btn-danger btn-sm" id="deletePostBtn">
                         <i class="bi bi-arrow-right"></i> Proceed Without Saving
+                    </button>
+                </div>
+                <div class="d-flex gap-2">
+                    <button type="button" class="btn btn-success btn-sm" id="approveBtn">
+                        <i class="bi bi-check-lg"></i> Save and Proceed
                     </button>
                 </div>
             </div>
@@ -662,6 +672,7 @@
 
     let reviewData = null;
     let currentReviewIndex = 0;
+    const hadNoProcessedPosts = {% if not processed_post_ids %}true{% else %}false{% endif %};
 
     function updateCreditsDisplay(creditsUsed, creditsQuota) {
         if (creditsUsed != null && creditsQuota != null) {
@@ -816,7 +827,11 @@
             reviewData = null;
             currentReviewIndex = 0;
             // Reload to update Processed column
-            window.location.reload();
+            if (hadNoProcessedPosts) {
+                window.location.href = window.location.pathname + '?first_process=1';
+            } else {
+                window.location.reload();
+            }
         } else {
             renderCurrentPost();
         }
