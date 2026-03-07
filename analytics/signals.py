@@ -17,6 +17,9 @@ from .models import UsageAccount
 User = get_user_model()
 logger = logging.getLogger(__name__)
 
+# Set to True to suppress the auto welcome email (e.g. when provisioning users manually)
+SUPPRESS_WELCOME_EMAIL = False
+
 
 @receiver(post_save, sender=User)
 def create_usage_account(sender, instance, created, **kwargs):
@@ -30,7 +33,8 @@ def create_usage_account(sender, instance, created, **kwargs):
             period_start=timezone.now().date()
         )
         _send_signup_notification(instance)
-        _send_welcome_email(instance)
+        if not SUPPRESS_WELCOME_EMAIL:
+            _send_welcome_email(instance)
 
 
 def _send_signup_notification(user):
