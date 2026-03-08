@@ -1314,33 +1314,49 @@ def build_click_viz_email_html(viz_html, post_title, site_url):
     posts_url = f"{site_url.rstrip('/')}/posts/"
 
     banner = (
-        '<div style="background-color: #0d6efd; color: white; padding: 16px 24px; '
-        'margin: 0 auto 20px auto; max-width: 720px; font-family: Arial, sans-serif; '
-        'font-size: 14px; line-height: 1.5; border-radius: 0.5rem;">'
-        # Brand name (centered)
-        '<div style="text-align: center; margin-bottom: 12px; font-size: 20px; font-weight: bold;">'
+        # Outer wrapper — dark background matching the app sidebar
+        '<div style="background-color: #212529; margin: 0 auto 24px auto; max-width: 720px; '
+        'font-family: Arial, Helvetica, sans-serif; border-radius: 8px; overflow: hidden;">'
+
+        # Top bar — brand name on dark background with green accent underline
+        '<div style="padding: 20px 24px 16px 24px; text-align: center; '
+        'border-bottom: 3px solid #28a745;">'
+        '<span style="color: #ffffff; font-size: 22px; font-weight: 700; letter-spacing: 0.5px;">'
         'LetterPulse'
+        '</span>'
         '</div>'
-        # Post title (centered, larger)
-        '<div style="text-align: center; margin-bottom: 12px; font-size: 16px;">'
+
+        # Content area — slightly lighter dark panel
+        '<div style="background-color: #2c3034; padding: 20px 24px; color: #dee2e6; '
+        'font-size: 14px; line-height: 1.6;">'
+
+        # Post title
+        '<div style="text-align: center; margin-bottom: 14px; font-size: 16px; color: #ffffff;">'
         f'Click visualization for <strong>{post_title}</strong>'
         '</div>'
-        # Instructions (centered)
-        '<div style="text-align: center;">'
-        f'Process your post in LetterPulse\'s <a href="{posts_url}" style="color: white; text-decoration: underline;">Posts</a> tab '
+
+        # Divider
+        '<div style="border-top: 1px solid #495057; margin: 0 auto 14px auto; max-width: 400px;"></div>'
+
+        # Instructions
+        '<div style="text-align: center; color: #adb5bd; font-size: 13px;">'
+        f'Process your post in the <a href="{posts_url}" style="color: #28a745; text-decoration: none; font-weight: 600;">Posts</a> tab '
         'to see each section\'s performance and compare with previous issues.'
         '</div>'
-        '<div style="text-align: center; margin-top: 6px;">'
-        f'You can toggle these emails on and off in the <a href="{account_url}" style="color: white; text-decoration: underline;">Account</a> tab.'
+        '<div style="text-align: center; margin-top: 6px; color: #adb5bd; font-size: 13px;">'
+        f'Toggle these emails in <a href="{account_url}" style="color: #28a745; text-decoration: none; font-weight: 600;">Account</a> settings.'
         '</div>'
-        '</div>'
+
+        '</div>'  # end content area
+        '</div>'  # end outer wrapper
     )
 
     footer = (
         '<div style="text-align: center; padding: 20px; margin: 20px auto; max-width: 720px; '
-        'font-family: Arial, sans-serif; font-size: 12px; color: #6c757d;">'
-        f'<a href="{account_url}" style="color: #0d6efd;">Manage email settings</a> | '
-        f'<a href="{site_url}" style="color: #0d6efd;">LetterPulse</a>'
+        'font-family: Arial, Helvetica, sans-serif; font-size: 12px; color: #6c757d;">'
+        f'<a href="{account_url}" style="color: #28a745; text-decoration: none;">Manage email settings</a>'
+        ' &nbsp;&middot;&nbsp; '
+        f'<a href="{site_url}" style="color: #28a745; text-decoration: none;">LetterPulse</a>'
         '</div>'
     )
 
