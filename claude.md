@@ -111,7 +111,7 @@ Tracks AI usage credits and API credentials per user:
 - `timezone`: User's preferred timezone for date display (IANA timezone string, default 'America/Chicago')
 - `survey_completed`: Boolean indicating if the user has completed the signup survey
 - `newsletter_name`: Name of the user's newsletter (collected at signup)
-- `auto_click_viz_email`: Boolean — whether to auto-email click visualizations after post publication (default True)
+- `auto_click_viz_email`: Boolean — whether to auto-email click visualizations after post publication (default False)
 - `auto_click_viz_enabled_at`: DateTimeField (nullable) — when the user enabled the feature; prevents old posts from triggering emails
 
 Billing cycle: Credits reset on the same day of the month as the user's signup date (e.g., signup on the 15th means credits renew on the 15th of each month). For months with fewer days, renewal occurs on the last day of the month.
@@ -491,7 +491,7 @@ Credit costs are configured in `settings.py`:
 
 ```python
 # Default monthly credits for new users
-DEFAULT_MONTHLY_CREDITS = 100
+DEFAULT_MONTHLY_CREDITS = 150
 
 # Credit costs per operation
 CREDITS_PER_EXTRACTION = 1      # Per post extracted from

@@ -71,7 +71,7 @@ class UsageAccount(models.Model):
         help_text="Name of the user's newsletter"
     )
     auto_click_viz_email = models.BooleanField(
-        default=True,
+        default=False,
         help_text="Whether to auto-email click visualizations after post publication"
     )
     auto_click_viz_enabled_at = models.DateTimeField(

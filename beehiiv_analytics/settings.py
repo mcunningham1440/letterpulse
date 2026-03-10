@@ -217,7 +217,7 @@ MESSAGE_TAGS = {
 # AI Credit System Configuration
 # =============================================================================
 # Default monthly credits for new users
-DEFAULT_MONTHLY_CREDITS = 100
+DEFAULT_MONTHLY_CREDITS = 150
 
 # Credit costs per operation
 CREDITS_PER_EXTRACTION = 1      # Per post extracted from

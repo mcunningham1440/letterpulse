@@ -82,10 +82,10 @@ def _send_welcome_email(user):
 
                 "<b>Some quick wins to get value from your first session:</b><br><br>"
 
-                "1. Once you've entered your Beehiiv credentials and downloaded your posts, "
+                "1. Once you've entered your Beehiiv credentials, head to the <a href=\"https://letterpulse.com/posts/\">Posts tab</a> and "
                 "<b>process a few of your recent issues</b> with at least 2-3 recurring sections in your newsletter. "
                 "<i>Make sure to use real sections! The app won't work properly if given made-up ones like 'just testing'.</i><br>"
-                "2. <b>Check out the section performance chart</b> in the Insights tab to see how each section is performing over time.<br>"
+                "2. <b>Check out the section performance chart</b> in the <a href=\"https://letterpulse.com/insights/\">Insights tab</a> to see how each section is performing over time.<br>"
                 "3. <b>Run &quot;Get Insights&quot;</b> to see what kind of content in those sections performs best.<br><br>"
 
                 "The app has informational tooltips to walk you through getting started, "
@@ -104,10 +104,10 @@ def _send_welcome_email(user):
 
                 "Some quick wins to get value from your first session:\n\n"
 
-                "1. Once you've entered your Beehiiv credentials and downloaded your posts, "
+                "1. Once you've entered your Beehiiv credentials, head to the Posts tab (https://letterpulse.com/posts/) and "
                 "process a few of your recent issues with at least 2-3 recurring sections in your newsletter. "
                 "Make sure to use real sections! The app won't work properly if given made-up ones like 'just testing'.\n"
-                "2. Check out the section performance chart in the Insights tab to see how each section is performing over time.\n"
+                "2. Check out the section performance chart in the Insights tab (https://letterpulse.com/insights/) to see how each section is performing over time.\n"
                 "3. Run \"Get Insights\" to see what kind of content in those sections performs best.\n\n"
 
                 "The app has informational tooltips to walk you through getting started, "
