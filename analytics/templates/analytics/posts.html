@@ -344,18 +344,6 @@
     </div>
 </div>
 
-<!-- Overwrite Warning Modal -->
-<div class="processing-overlay" id="overwriteOverlay" style="display: none;">
-    <div class="processing-modal" style="max-width: 450px;">
-        <h5 class="mb-3">Overwrite Warning</h5>
-        <p id="overwriteMessage" class="mb-4"></p>
-        <div class="d-flex justify-content-end gap-2">
-            <button type="button" class="btn btn-secondary btn-sm" id="overwriteCancelBtn">Cancel</button>
-            <button type="button" class="btn btn-danger btn-sm" id="overwriteConfirmBtn">Proceed</button>
-        </div>
-    </div>
-</div>
-
 <!-- Review Modal (overlay popup) -->
 <div class="processing-overlay" id="reviewOverlay" style="display: none;">
     <div class="review-modal">
@@ -486,10 +474,6 @@
         document.getElementById('removeSectionBtn').style.display = count > 1 ? '' : 'none';
     }
 
-    // Pending processing data (used when overwrite confirmation is needed)
-    let pendingSections = null;
-    let pendingIndices = null;
-
     // Open modal
     document.getElementById('processPostsBtn').addEventListener('click', function() {
         const selectedPosts = document.querySelectorAll('.post-checkbox:checked');
@@ -608,7 +592,7 @@
     }
 
     // Run processing (with overwrite check)
-    document.getElementById('runProcessingBtn').addEventListener('click', function() {
+    document.getElementById('runProcessingBtn').addEventListener('click', async function() {
         const pairs = document.querySelectorAll('.section-pair');
         const sections = [];
         const seenNames = new Set();
@@ -636,34 +620,13 @@
         const processedCount = Array.from(selectedPosts).filter(cb => cb.dataset.processed === 'true').length;
 
         if (processedCount > 0) {
-            // Show overwrite warning
-            pendingSections = sections;
-            pendingIndices = selectedIndices;
             const msg = processedCount + ' of the post' + (processedCount !== 1 ? 's' : '') +
                         ' you\'re processing already ha' + (processedCount !== 1 ? 've' : 's') +
                         ' saved data. Re-processing will overwrite it. Do you wish to proceed?';
-            document.getElementById('overwriteMessage').textContent = msg;
-            document.getElementById('overwriteOverlay').style.display = 'flex';
-        } else {
-            executeProcessing(sections, selectedIndices);
+            if (!await showConfirm(msg, 'Overwrite Warning')) return;
         }
-    });
 
-    // Overwrite confirm
-    document.getElementById('overwriteConfirmBtn').addEventListener('click', function() {
-        document.getElementById('overwriteOverlay').style.display = 'none';
-        if (pendingSections && pendingIndices) {
-            executeProcessing(pendingSections, pendingIndices);
-            pendingSections = null;
-            pendingIndices = null;
-        }
-    });
-
-    // Overwrite cancel
-    document.getElementById('overwriteCancelBtn').addEventListener('click', function() {
-        document.getElementById('overwriteOverlay').style.display = 'none';
-        pendingSections = null;
-        pendingIndices = null;
+        executeProcessing(sections, selectedIndices);
     });
 
     // =========================================================================
@@ -682,18 +645,6 @@
             const usageText = document.querySelector('.usage-text');
             if (usageText) usageText.textContent = Math.round(parseFloat(creditsUsed)) + ' / ' + Math.round(parseFloat(creditsQuota)) + ' used';
         }
-    }
-
-    const GENERIC_ERROR_TOAST = 'An error occurred. Please note this in the <a href="https://docs.google.com/forms/d/e/1FAIpQLSfbCptLUP5Hdg9An8sCbAV2H0twWNjyuhK9hXAfB6GBthOCtw/viewform?usp=header" target="_blank">feedback form</a>.';
-
-    function showToast(message, type) {
-        type = type || 'success';
-        const alertDiv = document.createElement('div');
-        alertDiv.className = 'alert alert-' + type + ' alert-dismissible fade show position-fixed';
-        alertDiv.style.cssText = 'top: 20px; right: 20px; z-index: 10000; min-width: 300px;';
-        alertDiv.innerHTML = message + '<button type="button" class="btn-close" data-bs-dismiss="alert"></button>';
-        document.body.appendChild(alertDiv);
-        setTimeout(function() { alertDiv.remove(); }, 5000);
     }
 
     function startReview(data) {
@@ -825,15 +776,17 @@
         if (currentReviewIndex >= reviewData.total_posts) {
             // Review complete — close overlay
             document.getElementById('reviewOverlay').style.display = 'none';
-            showToast('Review complete! All posts have been processed.', 'success');
+            showToast('Review complete! All posts have been processed. Head to the Insights tab to see data on their performance.', 'success');
             reviewData = null;
             currentReviewIndex = 0;
-            // Reload to update Processed column
-            if (hadNoProcessedPosts) {
-                window.location.href = window.location.pathname + '?first_process=1';
-            } else {
-                window.location.reload();
-            }
+            // Delay reload so the user can read the toast
+            setTimeout(function() {
+                if (hadNoProcessedPosts) {
+                    window.location.href = window.location.pathname + '?first_process=1';
+                } else {
+                    window.location.reload();
+                }
+            }, 10000);
         } else {
             renderCurrentPost();
         }
@@ -1125,7 +1078,7 @@
     // =========================================================================
     $(document).on('click', '.processed-trash', async function() {
         const postId = this.dataset.postId;
-        if (!confirm('Clear processed data for this post? This cannot be undone.')) return;
+        if (!await showConfirm('Clear processed data for this post? This cannot be undone.')) return;
 
         try {
             const response = await fetch("{% url 'analytics:clear_processed_posts' %}", {

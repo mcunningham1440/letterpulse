@@ -9,45 +9,6 @@
         text-align: left;
     }
 
-    /* Confirmation Modal (same style as survey) */
-    .confirm-overlay {
-        position: fixed;
-        top: 0;
-        left: 0;
-        right: 0;
-        bottom: 0;
-        background-color: rgba(0, 0, 0, 0.6);
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        z-index: 9999;
-    }
-
-    .confirm-modal {
-        background: white;
-        border-radius: 0.5rem;
-        padding: 2rem;
-        max-width: 500px;
-        width: 90%;
-        box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
-    }
-
-    .confirm-modal h5 {
-        color: #212529;
-        margin-bottom: 1rem;
-    }
-
-    .confirm-modal p {
-        color: #6c757d;
-        margin-bottom: 1.5rem;
-    }
-
-    .confirm-modal .btn-group-confirm {
-        display: flex;
-        gap: 0.75rem;
-        justify-content: flex-end;
-    }
-
     /* Section checkbox colors */
     .section-checkbox-label {
         display: inline-flex;
@@ -351,18 +312,6 @@
     </div>
 </div>
 
-<!-- Overwrite Warning Modal -->
-<div class="confirm-overlay" id="overwriteWarningModal" style="display: none;">
-    <div class="confirm-modal">
-        <h5>Overwrite Existing Insights?</h5>
-        <p id="overwriteWarningMessage"></p>
-        <div class="btn-group-confirm">
-            <button type="button" class="btn btn-secondary" id="overwriteCancel">Cancel</button>
-            <button type="button" class="btn btn-primary" id="overwriteProceed">Proceed</button>
-        </div>
-    </div>
-</div>
-
 <!-- Section Insights Review Overlay -->
 <div class="processing-overlay" id="insightsReviewOverlay" style="display: none;">
     <div class="review-modal">
@@ -436,27 +385,6 @@
     // =========================================================================
     // Toast helper
     // =========================================================================
-    const GENERIC_ERROR_TOAST = 'An error occurred. Please note this in the <a href="https://docs.google.com/forms/d/e/1FAIpQLSfbCptLUP5Hdg9An8sCbAV2H0twWNjyuhK9hXAfB6GBthOCtw/viewform?usp=header" target="_blank">feedback form</a>.';
-
-    function showToast(message, type = 'success') {
-        const container = document.querySelector('.main-content');
-        let messagesDiv = container.querySelector('.toast-messages');
-        if (!messagesDiv) {
-            messagesDiv = document.createElement('div');
-            messagesDiv.className = 'toast-messages mb-4';
-            container.insertBefore(messagesDiv, container.firstChild);
-        }
-        const alertDiv = document.createElement('div');
-        alertDiv.className = `alert alert-${type} alert-dismissible fade show`;
-        alertDiv.setAttribute('role', 'alert');
-        alertDiv.innerHTML = `${message}<button type="button" class="btn-close" data-bs-dismiss="alert"></button>`;
-        messagesDiv.appendChild(alertDiv);
-        setTimeout(() => {
-            const bsAlert = bootstrap.Alert.getOrCreateInstance(alertDiv);
-            bsAlert.close();
-        }, 8000);
-    }
-
     // =========================================================================
     // Phrase analysis (same algorithm as before)
     // =========================================================================
@@ -1097,7 +1025,7 @@
     // =========================================================================
     // Get Section Insights flow
     // =========================================================================
-    document.getElementById('getSectionInsightsBtn')?.addEventListener('click', function() {
+    document.getElementById('getSectionInsightsBtn')?.addEventListener('click', async function() {
         const selected = getSelectedSectionNames();
         if (selected.length === 0) {
             showToast('Please select at least one section.', 'warning');
@@ -1107,21 +1035,10 @@
         // Check for overwrite
         const sectionsToOverwrite = selected.filter(s => sectionsWithReports.includes(s));
         if (sectionsToOverwrite.length > 0) {
-            document.getElementById('overwriteWarningMessage').textContent =
-                `${sectionsToOverwrite.length} of the sections you selected already have saved insights. Re-generating will overwrite them if accepted. Proceed?`;
-            document.getElementById('overwriteWarningModal').style.display = 'flex';
-        } else {
-            executeGenerateSectionInsights(selected);
+            const msg = `${sectionsToOverwrite.length} of the sections you selected already have saved insights. Re-generating will overwrite them if accepted. Proceed?`;
+            if (!await showConfirm(msg, 'Overwrite Existing Insights?')) return;
         }
-    });
 
-    document.getElementById('overwriteCancel')?.addEventListener('click', function() {
-        document.getElementById('overwriteWarningModal').style.display = 'none';
-    });
-
-    document.getElementById('overwriteProceed')?.addEventListener('click', function() {
-        document.getElementById('overwriteWarningModal').style.display = 'none';
-        const selected = getSelectedSectionNames();
         executeGenerateSectionInsights(selected);
     });
 
@@ -1369,7 +1286,7 @@
     // Delete single section insight (trash icon)
     // =========================================================================
     async function deleteSectionInsight(sectionName) {
-        if (!confirm(`Delete insights for "${sectionName}"?\n\nThis action cannot be undone.`)) return;
+        if (!await showConfirm(`Delete insights for "${sectionName}"?\n\nThis action cannot be undone.`)) return;
 
         try {
             const formData = new FormData();

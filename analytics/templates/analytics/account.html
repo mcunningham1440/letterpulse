@@ -247,8 +247,8 @@ document.addEventListener('DOMContentLoaded', function() {
     // Clear credentials
     const clearBtn = document.getElementById('clearCredentials');
     if (clearBtn) {
-        clearBtn.addEventListener('click', function() {
-            if (confirm('Are you sure you want to clear your API credentials?')) {
+        clearBtn.addEventListener('click', async function() {
+            if (await showConfirm('Are you sure you want to clear your API credentials?')) {
                 document.getElementById('beehiiv_token').value = '';
                 document.getElementById('credentialsForm').submit();
             }

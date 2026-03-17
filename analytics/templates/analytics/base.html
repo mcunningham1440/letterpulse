@@ -403,6 +403,25 @@
             width: 1rem;
             height: 1rem;
         }
+
+        /* Confirm overlay */
+        .confirm-overlay {
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background-color: rgba(0, 0, 0, 0.6);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 10002;
+        }
+        .confirm-modal {
+            background: white;
+            border-radius: 0.5rem;
+            padding: 2rem;
+            max-width: 450px;
+            width: 90%;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+        }
     </style>
 
     {% block extra_css %}{% endblock %}
@@ -553,14 +572,14 @@
                 });
             }
 
-            // Check for credit-related errors and show them as alert() dialogs
+            // Check for credit-related errors and show them as toasts
             document.querySelectorAll('.main-content > .mb-4 > .alert').forEach(function(alertEl) {
                 const text = alertEl.textContent.trim();
                 if (text.includes('Not enough AI credits')) {
                     // Remove the banner element
                     alertEl.remove();
-                    // Show as browser alert
-                    alert(text);
+                    // Show as toast
+                    showToast(text, 'danger');
                 }
             });
 
@@ -598,6 +617,55 @@
                 window.location.href = '{% url "analytics:mobile_notice" %}';
             }
         })();
+    </script>
+
+    <!-- Confirm Overlay (reusable replacement for confirm()) -->
+    <div class="confirm-overlay" id="confirmOverlay" style="display: none;">
+        <div class="confirm-modal">
+            <h5 class="mb-3" id="confirmTitle">Confirm</h5>
+            <p id="confirmMessage" class="mb-4" style="white-space: pre-line;"></p>
+            <div class="d-flex justify-content-end gap-2">
+                <button type="button" class="btn btn-secondary btn-sm" id="confirmCancelBtn">Cancel</button>
+                <button type="button" class="btn btn-danger btn-sm" id="confirmProceedBtn">Proceed</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const GENERIC_ERROR_TOAST = 'An error occurred. Please note this in the <a href="https://docs.google.com/forms/d/e/1FAIpQLSfbCptLUP5Hdg9An8sCbAV2H0twWNjyuhK9hXAfB6GBthOCtw/viewform?usp=header" target="_blank">feedback form</a>.';
+
+        function showToast(message, type) {
+            type = type || 'success';
+            var alertDiv = document.createElement('div');
+            alertDiv.className = 'alert alert-' + type + ' alert-dismissible fade show position-fixed';
+            alertDiv.style.cssText = 'top: 20px; right: 20px; z-index: 10000; min-width: 300px;';
+            alertDiv.innerHTML = message + '<button type="button" class="btn-close" data-bs-dismiss="alert"></button>';
+            document.body.appendChild(alertDiv);
+            setTimeout(function() { alertDiv.remove(); }, 5000);
+        }
+
+        function showConfirm(message, title) {
+            return new Promise(function(resolve) {
+                var overlay = document.getElementById('confirmOverlay');
+                document.getElementById('confirmTitle').textContent = title || 'Confirm';
+                document.getElementById('confirmMessage').textContent = message;
+                overlay.style.display = 'flex';
+
+                var proceedBtn = document.getElementById('confirmProceedBtn');
+                var cancelBtn = document.getElementById('confirmCancelBtn');
+
+                function cleanup() {
+                    overlay.style.display = 'none';
+                    proceedBtn.removeEventListener('click', onProceed);
+                    cancelBtn.removeEventListener('click', onCancel);
+                }
+                function onProceed() { cleanup(); resolve(true); }
+                function onCancel() { cleanup(); resolve(false); }
+
+                proceedBtn.addEventListener('click', onProceed);
+                cancelBtn.addEventListener('click', onCancel);
+            });
+        }
     </script>
 
     {% block extra_js %}{% endblock %}
@@ -709,14 +777,14 @@
                             // Close the modal
                             surveyOverlay.style.display = 'none';
                         } else {
-                            alert('Error submitting survey: ' + (data.error || 'Unknown error'));
+                            showToast(GENERIC_ERROR_TOAST, 'danger');
                             submitBtn.disabled = false;
                             submitBtn.textContent = 'Submit';
                         }
                     })
                     .catch(error => {
                         console.error('Survey submission error:', error);
-                        alert('Error submitting survey. Please try again.');
+                        showToast(GENERIC_ERROR_TOAST, 'danger');
                         submitBtn.disabled = false;
                         submitBtn.textContent = 'Submit';
                     });

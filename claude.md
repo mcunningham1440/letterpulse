@@ -2,6 +2,13 @@
 
 Any time you make a change to the code, determine whether it makes any information in this file obsolete. If so, update it; otherwise, state that no update to claude.md was necessary. This should ALWAYS be the last thing you do when editing the code.
 
+### Frontend error handling rules
+
+- **Never use `alert()`** in JavaScript. Use `showToast()` instead (defined in base.html, available globally).
+- **Error messages shown to users must be generic**: "An error occurred. Please note this in the feedback form." with a link to the Google Form. This message is stored in the `GENERIC_ERROR_TOAST` constant in base.html (available globally).
+- **Validation messages** (e.g., "Please select at least one post") can be specific but must still use `showToast(..., 'warning')`, not `alert()`.
+- **Never use `confirm()`** for confirmation dialogs. Use `showConfirm(message, title)` instead (defined in base.html). It returns a Promise that resolves to `true` (Proceed) or `false` (Cancel). The caller must be `async` and use `await`. Example: `if (!await showConfirm('Delete this item?')) return;`
+
 # LetterPulse
 
 A Django web application for analyzing newsletter engagement data from the Beehiiv platform. The app extracts content from newsletter posts, tracks click-through rates (CTR), generates AI-powered insights, and provides annotated HTML exports with improvement tips.
