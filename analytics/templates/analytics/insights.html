@@ -436,6 +436,8 @@
     // =========================================================================
     // Toast helper
     // =========================================================================
+    const GENERIC_ERROR_TOAST = 'An error occurred. Please note this in the <a href="https://docs.google.com/forms/d/e/1FAIpQLSfbCptLUP5Hdg9An8sCbAV2H0twWNjyuhK9hXAfB6GBthOCtw/viewform?usp=header" target="_blank">feedback form</a>.';
+
     function showToast(message, type = 'success') {
         const container = document.querySelector('.main-content');
         let messagesDiv = container.querySelector('.toast-messages');
@@ -1098,7 +1100,7 @@
     document.getElementById('getSectionInsightsBtn')?.addEventListener('click', function() {
         const selected = getSelectedSectionNames();
         if (selected.length === 0) {
-            alert('Please select at least one section.');
+            showToast('Please select at least one section.', 'warning');
             return;
         }
 
@@ -1153,18 +1155,23 @@
 
             const data = await response.json();
 
-            if (data.success) {
+            if (data.success && data.tasks && data.tasks.length > 0) {
                 updateCreditsDisplay(data.credits_used, data.credits_quota);
                 // Start polling all tasks
                 pollSectionTasks(data.tasks);
+            } else if (data.success) {
+                // Server returned success but no tasks were created
+                ProgressBar.forceClose({ containerId: 'sectionInsightsProgress' });
+                showToast('No items found for the selected sections. Try re-processing your posts.', 'warning');
+                button.disabled = false;
             } else {
                 ProgressBar.forceClose({ containerId: 'sectionInsightsProgress' });
-                alert(data.error || 'Error generating insights');
+                showToast(GENERIC_ERROR_TOAST, 'danger');
                 button.disabled = false;
             }
         } catch (error) {
             ProgressBar.forceClose({ containerId: 'sectionInsightsProgress' });
-            alert('Error: ' + error.message);
+            showToast(GENERIC_ERROR_TOAST, 'danger');
             button.disabled = false;
         }
     }
@@ -1238,15 +1245,23 @@
             const remaining = Object.values(taskStatuses).filter(s => s === 'pending').length;
             if (remaining === 0) {
                 clearInterval(pollInterval);
-                ProgressBar.complete({ containerId: 'sectionInsightsProgress', success: true, message: 'Insights generated!' });
                 document.getElementById('getSectionInsightsBtn').disabled = false;
 
                 // Filter to successful results
                 const successfulResults = completedResults.filter(r => r.result_text);
                 const errorResults = completedResults.filter(r => !r.result_text);
 
-                if (errorResults.length > 0) {
-                    showToast(`${errorResults.length} section(s) failed: ${errorResults.map(r => r.section_name).join(', ')}`, 'warning');
+                if (errorResults.length > 0 && successfulResults.length === 0) {
+                    // All sections failed
+                    ProgressBar.complete({ containerId: 'sectionInsightsProgress', success: false, message: 'All sections failed' });
+                    showToast(GENERIC_ERROR_TOAST, 'danger');
+                } else if (errorResults.length > 0) {
+                    // Partial failure
+                    ProgressBar.complete({ containerId: 'sectionInsightsProgress', success: true, message: 'Insights generated (with errors)' });
+                    const failedNames = errorResults.map(r => r.section_name).join(', ');
+                    showToast(`Some sections failed (${failedNames}). Please note this in the <a href="https://docs.google.com/forms/d/e/1FAIpQLSfbCptLUP5Hdg9An8sCbAV2H0twWNjyuhK9hXAfB6GBthOCtw/viewform?usp=header" target="_blank">feedback form</a>.`, 'warning');
+                } else {
+                    ProgressBar.complete({ containerId: 'sectionInsightsProgress', success: true, message: 'Insights generated!' });
                 }
 
                 if (successfulResults.length > 0) {
@@ -1339,10 +1354,10 @@
                 document.getElementById('readOnlyReportBody').innerHTML = renderMarkdown(data.report_text);
                 document.getElementById('readOnlyReportOverlay').style.display = 'flex';
             } else {
-                alert('Error loading report: ' + data.error);
+                showToast(GENERIC_ERROR_TOAST, 'danger');
             }
         } catch (error) {
-            alert('Error loading report: ' + error.message);
+            showToast(GENERIC_ERROR_TOAST, 'danger');
         }
     }
 
@@ -1372,10 +1387,10 @@
                 renderSectionsTable();
                 showToast(`Deleted insights for "${sectionName}".`);
             } else {
-                alert('Error: ' + data.error);
+                showToast(GENERIC_ERROR_TOAST, 'danger');
             }
         } catch (error) {
-            alert('Error: ' + error.message);
+            showToast(GENERIC_ERROR_TOAST, 'danger');
         }
     }
 
@@ -1454,7 +1469,7 @@
     // =========================================================================
     document.getElementById('downloadFilteredCsvBtn')?.addEventListener('click', function() {
         if (!filteredItems || filteredItems.length === 0) {
-            alert('No items to download.');
+            showToast('No items to download.', 'warning');
             return;
         }
 

@@ -5,7 +5,7 @@ Adapted from the original utils.py for Streamlit.
 
 import json
 from collections import Counter
-from openai import AsyncOpenAI, OpenAI
+from openai import AsyncOpenAI, OpenAI, BadRequestError
 from pydantic import BaseModel
 from typing import List, Literal
 import pandas as pd
@@ -755,6 +755,7 @@ async def generate_content_insights(items_display, user=None):
     max_items = django_settings.MAX_REPORT_ITEMS
 
     items_display = items_display.copy()
+    items_display = items_display[items_display["click_rate"].apply(lambda x: len(x) > 0)]
     items_display["max_click_rate"] = items_display["click_rate"].apply(max)
     items_display["max_click_rate_percentile"] = items_display["max_click_rate"].rank(pct=True)
 
@@ -792,7 +793,28 @@ async def generate_content_insights(items_display, user=None):
         {"role": "user", "content": newsletter_items}
     ]
 
-    response = await llm_call("generate_content_insights", messages, "gpt-5.1", "medium", user=user)
+    try:
+        response = await llm_call("generate_content_insights", messages, "gpt-5.1", "medium", user=user)
+    except BadRequestError as e:
+        if e.code != "context_length_exceeded":
+            raise
+
+        # Truncate each item's text to 2500 chars and retry
+        logger.warning("Context length exceeded — truncating item texts to 2500 chars and retrying")
+        newsletter_items = ""
+        newsletter_items += truncation_note
+        for i, row in items_display.iterrows():
+            newsletter_items += f"<item {i+1}>\n" + row["text"][:2500] + "\n"
+            newsletter_items += f"CTR: {round(row['max_click_rate'] * 100, 2)}% "
+            newsletter_items += f"(percentile {row['max_click_rate_percentile']:.0%})\n"
+            newsletter_items += f"</item {i+1}>\n\n"
+
+        messages = [
+            {"role": "user", "content": INSIGHTS_PROMPT},
+            {"role": "user", "content": newsletter_items}
+        ]
+
+        response = await llm_call("generate_content_insights", messages, "gpt-5.1", "medium", user=user)
 
     return response
 

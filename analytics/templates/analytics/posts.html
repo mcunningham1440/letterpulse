@@ -494,7 +494,7 @@
     document.getElementById('processPostsBtn').addEventListener('click', function() {
         const selectedPosts = document.querySelectorAll('.post-checkbox:checked');
         if (selectedPosts.length === 0) {
-            alert('Please select at least one post.');
+            showToast('Please select at least one post.', 'warning');
             return;
         }
         const n = selectedPosts.length;
@@ -584,7 +584,7 @@
 
             if (!data.success) {
                 ProgressBar.complete({ containerId: 'processModalProgress', success: false, message: data.error || 'Error' });
-                alert(data.error || 'An error occurred during processing.');
+                showToast(GENERIC_ERROR_TOAST, 'danger');
                 return;
             }
 
@@ -600,7 +600,7 @@
         } catch (error) {
             console.error('Error:', error);
             ProgressBar.complete({ containerId: 'processModalProgress', success: false, message: 'Error' });
-            alert('An error occurred during processing.');
+            showToast(GENERIC_ERROR_TOAST, 'danger');
         } finally {
             runBtn.disabled = false;
             runBtn.innerHTML = originalBtnHtml;
@@ -618,11 +618,11 @@
             const desc = pair.querySelector('.section-desc').value.trim();
 
             if (!name) {
-                alert('Please fill in all section names.');
+                showToast('Please fill in all section names.', 'warning');
                 return;
             }
             if (seenNames.has(name.toLowerCase())) {
-                alert('Duplicate section name: "' + name + '"');
+                showToast('Duplicate section name: "' + name + '"', 'warning');
                 return;
             }
             seenNames.add(name.toLowerCase());
@@ -683,6 +683,8 @@
             if (usageText) usageText.textContent = Math.round(parseFloat(creditsUsed)) + ' / ' + Math.round(parseFloat(creditsQuota)) + ' used';
         }
     }
+
+    const GENERIC_ERROR_TOAST = 'An error occurred. Please note this in the <a href="https://docs.google.com/forms/d/e/1FAIpQLSfbCptLUP5Hdg9An8sCbAV2H0twWNjyuhK9hXAfB6GBthOCtw/viewform?usp=header" target="_blank">feedback form</a>.';
 
     function showToast(message, type) {
         type = type || 'success';
@@ -858,7 +860,7 @@
 
             const data = await response.json();
             if (!data.success) {
-                alert(data.error || 'Error approving post.');
+                showToast(GENERIC_ERROR_TOAST, 'danger');
                 return;
             }
 
@@ -867,7 +869,7 @@
 
         } catch (error) {
             console.error('Error:', error);
-            alert('An error occurred while approving.');
+            showToast(GENERIC_ERROR_TOAST, 'danger');
         } finally {
             btn.disabled = false;
         }
@@ -877,7 +879,7 @@
     document.getElementById('deleteSelectedReviewBtn').addEventListener('click', function() {
         const checked = document.querySelectorAll('.review-item-checkbox:checked');
         if (checked.length === 0) {
-            alert('Please select at least one item to remove.');
+            showToast('Please select at least one item to remove.', 'warning');
             return;
         }
 
@@ -939,7 +941,7 @@
             const data = await response.json();
             if (!data.success) {
                 ProgressBar.complete({ containerId: 'reprocessProgress', success: false, message: data.error || 'Error' });
-                alert(data.error || 'Error re-processing post.');
+                showToast(GENERIC_ERROR_TOAST, 'danger');
                 return;
             }
 
@@ -956,7 +958,7 @@
         } catch (error) {
             console.error('Error:', error);
             ProgressBar.complete({ containerId: 'reprocessProgress', success: false, message: 'Error' });
-            alert('An error occurred during re-processing.');
+            showToast(GENERIC_ERROR_TOAST, 'danger');
         } finally {
             btn.disabled = false;
             btn.innerHTML = originalHtml;
@@ -1004,7 +1006,7 @@
             const selectedCheckboxes = document.querySelectorAll('.post-checkbox:checked');
 
             if (selectedCheckboxes.length === 0) {
-                alert('Please select at least one post.');
+                showToast('Please select at least one post.', 'warning');
                 return;
             }
 
@@ -1107,10 +1109,10 @@
 
                 document.getElementById('processedDataOverlay').style.display = 'flex';
             } else {
-                alert('Error loading processed data: ' + data.error);
+                showToast(GENERIC_ERROR_TOAST, 'danger');
             }
         } catch (error) {
-            alert('Error: ' + error.message);
+            showToast(GENERIC_ERROR_TOAST, 'danger');
         }
     });
 
@@ -1140,10 +1142,10 @@
                 showToast(data.message, 'success');
                 window.location.reload();
             } else {
-                alert(data.error || 'Error clearing data.');
+                showToast(GENERIC_ERROR_TOAST, 'danger');
             }
         } catch (error) {
-            alert('Error: ' + error.message);
+            showToast(GENERIC_ERROR_TOAST, 'danger');
         }
     });
 
@@ -1156,7 +1158,7 @@
         const nameInput = document.getElementById('templateNameInput');
         const name = nameInput.value.trim();
         if (!name) {
-            alert('Please enter a template name.');
+            showToast('Please enter a template name.', 'warning');
             return;
         }
 
@@ -1167,7 +1169,7 @@
             const sName = pair.querySelector('.section-name').value.trim();
             const sDesc = pair.querySelector('.section-desc').value.trim();
             if (!sName) {
-                alert('Please fill in all section names before saving.');
+                showToast('Please fill in all section names before saving.', 'warning');
                 return;
             }
             sections.push({ name: sName, description: sDesc });
@@ -1194,11 +1196,11 @@
                 const dropdown = bootstrap.Dropdown.getInstance(document.getElementById('saveTemplateDropdown'));
                 if (dropdown) dropdown.hide();
             } else {
-                alert(data.error || 'Error saving template.');
+                showToast(GENERIC_ERROR_TOAST, 'danger');
             }
         } catch (error) {
             console.error('Error:', error);
-            alert('An error occurred while saving the template.');
+            showToast(GENERIC_ERROR_TOAST, 'danger');
         } finally {
             btn.disabled = false;
         }
@@ -1312,11 +1314,11 @@
                 }
                 showToast(data.message, 'success');
             } else {
-                alert(data.error || 'Error deleting template.');
+                showToast(GENERIC_ERROR_TOAST, 'danger');
             }
         } catch (error) {
             console.error('Error:', error);
-            alert('An error occurred while deleting the template.');
+            showToast(GENERIC_ERROR_TOAST, 'danger');
         }
     }
 
@@ -1336,14 +1338,14 @@
             const selectedPostCheckboxes = document.querySelectorAll('.post-checkbox:checked');
 
             if (selectedPostCheckboxes.length === 0) {
-                alert('Please select at least one post.');
+                showToast('Please select at least one post.', 'warning');
                 return;
             }
 
             const selectedReportCheckboxes = document.querySelectorAll('.report-checkbox:checked');
 
             if (selectedReportCheckboxes.length === 0) {
-                alert('Please select at least one report.');
+                showToast('Please select at least one report.', 'warning');
                 return;
             }
 
@@ -1381,14 +1383,8 @@
                 });
 
                 if (!response.ok) {
-                    try {
-                        const errorData = await response.json();
-                        ProgressBar.forceClose({ containerId: 'downloadAnnotatedProgress' });
-                        alert(errorData.error || 'An error occurred');
-                    } catch (e) {
-                        ProgressBar.forceClose({ containerId: 'downloadAnnotatedProgress' });
-                        alert('An error occurred');
-                    }
+                    ProgressBar.forceClose({ containerId: 'downloadAnnotatedProgress' });
+                    showToast(GENERIC_ERROR_TOAST, 'danger');
                     return;
                 }
 

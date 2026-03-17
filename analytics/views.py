@@ -1336,6 +1336,7 @@ def generate_section_insights(request):
             task_id = pending.task_id
 
             def _run_generation(df=df, task_id=task_id):
+                import traceback as tb
                 from django.contrib.auth import get_user_model
                 User = get_user_model()
 
@@ -1352,7 +1353,7 @@ def generate_section_insights(request):
                     try:
                         pending_obj = PendingReport.objects.get(task_id=task_id)
                         pending_obj.status = 'error'
-                        pending_obj.error_message = str(e)
+                        pending_obj.error_message = f'{type(e).__name__}: {e}\n\n{tb.format_exc()}'
                         pending_obj.save()
                     except Exception:
                         pass
@@ -1376,6 +1377,14 @@ def generate_section_insights(request):
 
             thread = threading.Thread(target=_run_with_timeout, daemon=True)
             thread.start()
+
+        # Guard: if no tasks were created, no items matched any section name
+        if not tasks:
+            return JsonResponse({
+                'success': False,
+                'error': f'No items found for the selected sections. Section names requested: {sections}. '
+                         f'Item section names in data: {list(set(i.get("section_name") for i in all_items))}',
+            }, status=400)
 
         # Get updated usage for sidebar
         usage = UsageAccount.objects.get(user=request.user)
