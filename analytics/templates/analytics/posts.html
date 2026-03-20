@@ -109,9 +109,6 @@
                                 <th data-bs-toggle="tooltip" title="Draft, Scheduled, or Published">Status</th>
                                 <th data-bs-toggle="tooltip" title="When the post was or will be sent to subscribers (in your timezone)">Publish Date</th>
                                 <th data-bs-toggle="tooltip" title="Title of the post">Title</th>
-                                <th class="text-end" data-bs-toggle="tooltip" title="Number of subscribers who received this post by email">Recipients</th>
-                                <th class="text-end" data-bs-toggle="tooltip" title="Unique subscribers who opened the email">Opens</th>
-                                <th class="text-end" data-bs-toggle="tooltip" title="Unique subscribers who clicked any link">Clicks</th>
                                 <th class="text-center" data-bs-toggle="tooltip" title="View or delete saved data from this post">Processed</th>
                             </tr>
                         </thead>
@@ -136,9 +133,6 @@
                                 </td>
                                 <td data-order="{{ post.publish_date_sortable }}">{{ post.publish_date_display }}</td>
                                 <td>{{ post.title }}</td>
-                                <td class="text-end">{{ post.recipients|default:0|intcomma }}</td>
-                                <td class="text-end">{{ post.unique_email_opens|default:0|intcomma }}</td>
-                                <td class="text-end">{{ post.unique_email_clicks|default:0|intcomma }}</td>
                                 <td class="text-center">
                                     {% if post.id in processed_post_ids %}
                                         <i class="bi bi-eye-fill processed-eye" data-post-id="{{ post.id }}" title="View processed data"></i><i class="bi bi-trash-fill processed-trash" data-post-id="{{ post.id }}" title="Clear processed data"></i>
@@ -167,12 +161,6 @@
                                 </button>
                             </div>
 
-                            <!-- Download Click Visualization -->
-                            <div id="downloadClickVizProgress" style="min-width: 200px;">
-                                <button type="button" class="btn btn-info btn-sm w-100" id="downloadClickVizBtn">
-                                    <i class="bi bi-download"></i> Download Click Visualization
-                                </button>
-                            </div>
 
                             {% comment %}
                             <!-- Get Improvement Tips Dropdown -->
@@ -433,7 +421,7 @@
             scrollCollapse: true,
             columnDefs: [
                 { orderable: false, targets: 0 },
-                { orderable: false, targets: 8 }
+                { orderable: false, targets: 5 }
             ]
         });
     });
@@ -949,51 +937,6 @@
             requestAnimationFrame(function() {
                 refreshForm.submit();
             });
-        });
-    }
-
-    // Handle download click visualization button
-    const downloadClickVizBtn = document.getElementById('downloadClickVizBtn');
-    if (downloadClickVizBtn) {
-        downloadClickVizBtn.addEventListener('click', function() {
-            const selectedCheckboxes = document.querySelectorAll('.post-checkbox:checked');
-
-            if (selectedCheckboxes.length === 0) {
-                showToast('Please select at least one post.', 'warning');
-                return;
-            }
-
-            const form = document.createElement('form');
-            form.method = 'POST';
-            form.action = "{% url 'analytics:download_click_visualization' %}";
-
-            const csrfInput = document.createElement('input');
-            csrfInput.type = 'hidden';
-            csrfInput.name = 'csrfmiddlewaretoken';
-            csrfInput.value = csrfToken;
-            form.appendChild(csrfInput);
-
-            selectedCheckboxes.forEach(checkbox => {
-                const input = document.createElement('input');
-                input.type = 'hidden';
-                input.name = 'selected_posts';
-                input.value = checkbox.value;
-                form.appendChild(input);
-            });
-
-            document.body.appendChild(form);
-
-            downloadClickVizBtn.disabled = true;
-            const originalHtml = downloadClickVizBtn.innerHTML;
-            downloadClickVizBtn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
-
-            form.submit();
-
-            setTimeout(function() {
-                downloadClickVizBtn.disabled = false;
-                downloadClickVizBtn.innerHTML = originalHtml;
-                document.body.removeChild(form);
-            }, 3000);
         });
     }
 
