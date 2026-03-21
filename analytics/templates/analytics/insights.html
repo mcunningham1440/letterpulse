@@ -136,18 +136,46 @@
 {% endblock %}
 
 {% block content %}
+{% if not has_posts %}
+<!-- Coach mark: no posts loaded -->
+<div class="confirm-overlay" id="noPostsOverlay" style="display: flex;">
+    <div class="confirm-modal">
+        <h5 class="mb-3">No Posts Loaded</h5>
+        <p class="mb-4">Fetch your newsletter's posts on the Posts page before viewing Insights.</p>
+        <div class="d-flex justify-content-end">
+            <a href="{% url 'analytics:posts' %}" class="btn btn-primary">Go to Posts</a>
+        </div>
+    </div>
+</div>
+{% elif not has_processed_data %}
+<!-- Coach mark: posts exist but none processed -->
+<div class="confirm-overlay" id="noProcessedOverlay" style="display: flex;">
+    <div class="confirm-modal">
+        <h5 class="mb-3">No Processed Posts Yet</h5>
+        <p class="mb-4">Process some posts on the Posts page first to see trends and insights here.</p>
+        <div class="d-flex justify-content-end">
+            <a href="{% url 'analytics:posts' %}" class="btn btn-primary">Go to Posts</a>
+        </div>
+    </div>
+</div>
+{% elif not has_section_insights %}
+<!-- Coach mark: has processed data but no insights yet -->
+<div class="confirm-overlay" id="noInsightsOverlay" style="display: flex;">
+    <div class="confirm-modal">
+        <h5 class="mb-3"><b>See Section Insights</b></h5>
+        <p>You can use the <b>Section Performance</b> chart to see how well each section has performed over time.</p>
+        <p>Below, in <b>Sections</b>, you can <b>Get Insights</b> on what kinds of content your audience engages with.</p>
+        <p class="mb-4">Switching the <b>Sections</b> table to <b>Items</b> lets you see and download all of your content items in a CSV.</p>
+        <div class="d-flex justify-content-end">
+            <button type="button" class="btn btn-primary" id="noInsightsDismissBtn">Got it</button>
+        </div>
+    </div>
+</div>
+{% endif %}
+
 <div class="row">
     <div class="col-12">
-        {% if not has_processed_data %}
-        <!-- Empty state -->
-        <div class="card">
-            <div class="card-body">
-                <div class="alert alert-info mb-0 no-auto-dismiss">
-                    No processed posts yet. Process posts on the Posts page to see trends here.
-                </div>
-            </div>
-        </div>
-        {% else %}
+        {% if has_processed_data %}
 
         <!-- Trend Chart Card -->
         <div class="card" id="trendChartCard">
@@ -213,11 +241,6 @@
                 </div>
             </div>
 
-            {% if not has_section_insights %}
-            <div class="alert alert-info mt-2 mb-3 mx-3 no-auto-dismiss">
-                <i class="bi bi-lightbulb"></i> <strong>Getting started:</strong> Click <strong>Get Insights from Selected Sections</strong> to see what kind of content your audience likes.
-            </div>
-            {% endif %}
 
             <!-- Items View (hidden by default) -->
             <div class="card-body d-none" id="itemsViewContainer">
@@ -351,6 +374,14 @@
     // =========================================================================
     // Global state
     // =========================================================================
+    // Coach mark dismiss
+    const noInsightsBtn = document.getElementById('noInsightsDismissBtn');
+    if (noInsightsBtn) {
+        noInsightsBtn.addEventListener('click', function() {
+            document.getElementById('noInsightsOverlay').style.display = 'none';
+        });
+    }
+
     let allItems = [];
     let allSectionNames = [];
     let filteredItems = [];

@@ -10,6 +10,13 @@
         max-width: 350px;
         text-align: left;
     }
+    @keyframes coach-mark-pulse {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.5; }
+    }
+    .coach-mark-flash {
+        animation: coach-mark-pulse 1.2s ease-in-out infinite;
+    }
     .extract-tooltip {
         z-index: 10001 !important;
     }
@@ -71,6 +78,39 @@
 {% endblock %}
 
 {% block content %}
+{% if not posts %}
+<!-- Coach mark: no posts loaded -->
+<div class="confirm-overlay" id="refreshPostsOverlay" style="display: flex;">
+    <div class="confirm-modal">
+        <h5 class="mb-3">Fetch Your Posts</h5>
+        <p class="mb-0">Click the <b>Refresh Posts</b> button in the top-right to fetch your newsletter's posts from Beehiiv.</p>
+    </div>
+</div>
+{% elif not processed_post_ids %}
+<!-- Coach mark: posts exist but none processed -->
+<div class="confirm-overlay" id="processPostsOverlay" style="display: flex;">
+    <div class="confirm-modal">
+        <h5 class="mb-3">Process Your Posts</h5>
+        <p class="mb-4">Select a few of your most recent posts (try 3) and click <b>Process Selected Posts</b>.</p>
+        <div class="d-flex justify-content-end">
+            <button type="button" class="btn btn-primary" id="processPostsDismissBtn">Got it</button>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<!-- Coach mark: review complete, go to insights (shown via JS after review finishes) -->
+<div class="confirm-overlay" id="reviewCompleteOverlay" style="display: none;">
+    <div class="confirm-modal">
+        <h5 class="mb-3">Review Complete</h5>
+        <p class="mb-4">Head to the <b>Insights</b> tab to see analytics on your processed posts.</p>
+        <div class="d-flex justify-content-end gap-2">
+            <a href="{% url 'analytics:insights' %}" class="btn btn-success">Go to Insights</a>
+            <button type="button" class="btn btn-secondary" id="reviewCompleteStayBtn">Process More Posts</button>
+        </div>
+    </div>
+</div>
+
 <div class="row">
     <div class="col-12">
         <!-- Posts Selection Card -->
@@ -89,15 +129,6 @@
             <div id="refreshPostsProgress" class="px-3"></div>
             <div class="card-body">
                 {% if posts %}
-                {% if not processed_post_ids %}
-                <div class="alert alert-info mb-3 no-auto-dismiss">
-                    <i class="bi bi-lightbulb"></i> <strong>Getting started:</strong> Select a few of your most recent posts (try 3) and click <strong>Process Selected Posts</strong> to extract content for analysis in the Insights tab.
-                </div>
-                {% elif first_process %}
-                <div class="alert alert-info mb-3 no-auto-dismiss">
-                    <i class="bi bi-lightbulb"></i> <strong>Getting started:</strong> Congrats on processing your first posts! Head to the <a href="{% url 'analytics:insights' %}" class="alert-link">Insights tab</a> to analyze them.
-                </div>
-                {% endif %}
                 <div class="table-responsive">
                     <table class="table table-hover table-sm" id="postsTable">
                         <thead>
@@ -215,15 +246,26 @@
                         </div>
                     </div>
                 </div>
-                {% else %}
-                <div class="alert alert-info mb-0 no-auto-dismiss">
-                    Welcome to LetterPulse! To start, fetch your newsletter's posts from Beehiiv using the <b>Refresh Posts</b> button.
-                </div>
                 {% endif %}
             </div>
         </div>
     </div>
 </div>
+
+{% if not processed_post_ids %}
+<!-- Coach mark: processing instructions (shown when processing overlay opens) -->
+<div class="confirm-overlay" id="processingCoachMark" style="display: none; z-index: 10002;">
+    <div class="confirm-modal">
+        <h5 class="mb-3">Processing Posts</h5>
+        <p>Enter the names of each of the sections that regularly appear in your newsletter.</p>
+        <p><i>Try at least 2–3 real ones. If you just enter a name like "test", the AI won't know where to look.</i></p>
+        <p class="mb-4">See <a href="{% static 'analytics/processing_example.html' %}" target="_blank" class="text-primary" style="text-decoration: none;"><i class="bi bi-info-circle"></i> How to use this feature</a> for more details.</p>
+        <div class="d-flex justify-content-end">
+            <button type="button" class="btn btn-primary" id="processingCoachMarkDismissBtn">Got it</button>
+        </div>
+    </div>
+</div>
+{% endif %}
 
 <!-- Processing Modal (survey-style overlay) -->
 <div class="processing-overlay" id="processingOverlay" style="display: none;">
@@ -235,12 +277,6 @@
                 <i class="bi bi-info-circle"></i> How to use this feature
             </a>
         </div>
-
-        {% if not processed_post_ids %}
-        <div class="alert alert-info mb-3 py-2 small no-auto-dismiss">
-            <i class="bi bi-lightbulb"></i> <strong>Getting started:</strong> Try entering at least 2–3 real recurring sections from your newsletter, instead of a placeholder like "test".
-        </div>
-        {% endif %}
 
         <datalist id="sectionNameOptions"></datalist>
 
@@ -332,6 +368,24 @@
     </div>
 </div>
 
+{% if not processed_post_ids %}
+<!-- Coach mark: first-time review instructions -->
+<div class="confirm-overlay" id="reviewCoachMark" style="display: none; z-index: 10002;">
+    <div class="confirm-modal">
+        <h5 class="mb-3"><b>Posts Processed</b></h5>
+        <p>You can now review the post data to make sure the AI recognized your content.</p>
+        <p>See if each section and each of the individual items in them appears correctly.</p>
+        <p>If it does, you can click <span class="btn btn-success btn-sm" style="pointer-events:none;">Save and Proceed</span>.</p>
+        <p>If the AI added extra items that should not appear, you can delete them with <span class="btn btn-warning btn-sm" style="pointer-events:none;">Remove Selected Items</span>.</p>
+        <p>If you want to re-process the post with different instructions, use <span class="btn btn-info btn-sm" style="pointer-events:none;">Re-Process Post</span>.</p>
+        <p class="mb-4">Use <span class="btn btn-danger btn-sm" style="pointer-events:none;">Proceed Without Saving</span> if you do not want to save the content.</p>
+        <div class="d-flex justify-content-end">
+            <button type="button" class="btn btn-primary" id="reviewCoachMarkDismissBtn">Got it</button>
+        </div>
+    </div>
+</div>
+{% endif %}
+
 <!-- Review Modal (overlay popup) -->
 <div class="processing-overlay" id="reviewOverlay" style="display: none;">
     <div class="review-modal">
@@ -362,7 +416,7 @@
                         <button class="btn btn-info btn-sm dropdown-toggle" type="button"
                                 id="reprocessDropdown" data-bs-toggle="dropdown"
                                 aria-expanded="false" data-bs-auto-close="outside">
-                            <i class="bi bi-arrow-clockwise"></i> Re-process Post
+                            <i class="bi bi-arrow-clockwise"></i> Re-Process Post
                         </button>
                         <div class="dropdown-menu dropdown-menu-end p-3" aria-labelledby="reprocessDropdown" style="min-width: 360px;">
                             <div class="mb-3">
@@ -411,6 +465,32 @@
 {% block extra_js %}
 <script>
     const csrfToken = '{{ csrf_token }}';
+
+    // Coach mark: spotlight Refresh Posts button when no posts
+    {% if not posts %}
+    (function() {
+        var overlay = document.getElementById('refreshPostsOverlay');
+        var btn = document.getElementById('refreshPostsBtn');
+
+        btn.style.position = 'relative';
+        btn.style.zIndex = '10003';
+        btn.classList.add('coach-mark-flash');
+
+        btn.addEventListener('click', function() {
+            overlay.style.display = 'none';
+            btn.style.position = '';
+            btn.style.zIndex = '';
+            btn.classList.remove('coach-mark-flash');
+        });
+    })();
+    {% elif not processed_post_ids %}
+    // Coach mark: dismiss process posts overlay
+    (function() {
+        document.getElementById('processPostsDismissBtn').addEventListener('click', function() {
+            document.getElementById('processPostsOverlay').style.display = 'none';
+        });
+    })();
+    {% endif %}
 
     // Initialize DataTables for posts table
     $(document).ready(function() {
@@ -472,6 +552,22 @@
         const n = selectedPosts.length;
         document.getElementById('processingTitle').textContent = 'Processing ' + n + ' post' + (n !== 1 ? 's' : '');
         document.getElementById('processingOverlay').style.display = 'flex';
+        {% if not processed_post_ids %}
+        document.getElementById('processingCoachMark').style.display = 'flex';
+        {% endif %}
+    });
+
+    {% if not processed_post_ids %}
+    document.getElementById('processingCoachMarkDismissBtn').addEventListener('click', function() {
+        document.getElementById('processingCoachMark').style.display = 'none';
+    });
+    document.getElementById('reviewCoachMarkDismissBtn').addEventListener('click', function() {
+        document.getElementById('reviewCoachMark').style.display = 'none';
+    });
+    {% endif %}
+
+    document.getElementById('reviewCompleteStayBtn').addEventListener('click', function() {
+        window.location.reload();
     });
 
     // Cancel
@@ -640,6 +736,9 @@
         currentReviewIndex = 0;
         document.getElementById('reviewOverlay').style.display = 'flex';
         renderCurrentPost();
+        {% if not processed_post_ids %}
+        document.getElementById('reviewCoachMark').style.display = 'flex';
+        {% endif %}
     }
 
     function truncateText(text, maxWords) {
@@ -762,19 +861,11 @@
     function advanceToNext() {
         currentReviewIndex++;
         if (currentReviewIndex >= reviewData.total_posts) {
-            // Review complete — close overlay
+            // Review complete — close overlay and show completion coach mark
             document.getElementById('reviewOverlay').style.display = 'none';
-            showToast('Review complete! All posts have been processed. Head to the Insights tab to see data on their performance.', 'success');
             reviewData = null;
             currentReviewIndex = 0;
-            // Delay reload so the user can read the toast
-            setTimeout(function() {
-                if (hadNoProcessedPosts) {
-                    window.location.href = window.location.pathname + '?first_process=1';
-                } else {
-                    window.location.reload();
-                }
-            }, 10000);
+            document.getElementById('reviewCompleteOverlay').style.display = 'flex';
         } else {
             renderCurrentPost();
         }
@@ -805,7 +896,6 @@
                 return;
             }
 
-            showToast('Post "' + post.post_title + '" approved and saved.', 'success');
             advanceToNext();
 
         } catch (error) {
@@ -1137,7 +1227,6 @@
                     // Close dropdown
                     const dropdown = bootstrap.Dropdown.getInstance(document.getElementById('loadTemplateDropdown'));
                     if (dropdown) dropdown.hide();
-                    showToast('Template "' + tmpl.name + '" loaded.', 'success');
                 });
 
                 const deleteBtn = document.createElement('button');

@@ -54,11 +54,11 @@ class CustomAccountAdapter(DefaultAccountAdapter):
         try:
             usage = UsageAccount.objects.get(user=request.user)
             if not usage.has_api_credentials:
-                return '/account/'
+                return '/account/?setup=configure'
         except UsageAccount.DoesNotExist:
-            return '/account/'
+            return '/account/?setup=configure'
         return super().get_login_redirect_url(request)
 
     def get_signup_redirect_url(self, request):
         """Redirect new signups to account page to configure API credentials."""
-        return '/account/'
+        return '/account/?setup=configure'

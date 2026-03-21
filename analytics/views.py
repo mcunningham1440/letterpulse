@@ -5,6 +5,7 @@ Views for the analytics app.
 import re
 import logging
 from django.shortcuts import render, redirect
+from django.urls import reverse
 from django.http import JsonResponse, HttpResponse
 from django.views.decorators.http import require_GET, require_POST
 
@@ -111,7 +112,6 @@ def validate_set_name(name: str) -> tuple[bool, str]:
 from .utils import (
     load_posts_from_db,
     fetch_posts_html_and_clicks_parallel,
-    extract_items_parallel,
     extract_sections,
     extract_sections_parallel,
     generate_content_insights,
@@ -150,12 +150,10 @@ def require_valid_api_credentials(view_func):
         token, pub_id, is_valid = get_user_api_credentials(request.user)
 
         if not token or not pub_id:
-            messages.error(request, "Please configure your Beehiiv API credentials in your Account settings.")
-            return redirect('analytics:account')
+            return redirect(reverse('analytics:account') + '?setup=configure')
 
         if not is_valid:
-            messages.error(request, "Your API key is invalid. Please update it in your Account settings.")
-            return redirect('analytics:account')
+            return redirect(reverse('analytics:account') + '?setup=invalid')
 
         return view_func(request, *args, **kwargs)
 
@@ -248,7 +246,7 @@ def account_view(request):
                     usage.api_key_valid = False
                     usage.available_publications = []
                     usage.save()
-                    messages.error(request, f"API key validation failed: {result}")
+                    # Coach mark overlay on page reload will inform the user
             else:
                 # Clear credentials and extracted items
                 usage.beehiiv_token = ''
@@ -497,14 +495,11 @@ def posts_view(request):
         .values_list('post__post_id', flat=True)
     )
 
-    first_process = request.GET.get('first_process') == '1' and processed_post_ids
-
     context = {
         'posts': posts_data,
         'all_content_sets': all_content_sets,
         'all_reports': all_reports,
         'processed_post_ids': processed_post_ids,
-        'first_process': first_process,
     }
 
     return render(request, 'analytics/posts.html', context)
@@ -1075,6 +1070,9 @@ def insights_view(request):
     # Get current publication for filtering
     _, beehiiv_pub_id, _ = get_user_api_credentials(request.user)
 
+    # Check if user has any posts loaded
+    has_posts = Post.objects.filter(user=request.user).exists()
+
     # Check for processed data and pending tasks
     try:
         publication = Publication.objects.get(pub_id=beehiiv_pub_id)
@@ -1102,6 +1100,7 @@ def insights_view(request):
         pending_tasks = []
 
     context = {
+        'has_posts': has_posts,
         'has_processed_data': has_processed_data,
         'has_section_insights': has_section_insights,
         'stopwords_json': json.dumps(get_stopwords()),

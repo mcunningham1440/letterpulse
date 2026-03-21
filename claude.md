@@ -9,6 +9,20 @@ Any time you make a change to the code, determine whether it makes any informati
 - **Validation messages** (e.g., "Please select at least one post") can be specific but must still use `showToast(..., 'warning')`, not `alert()`.
 - **Never use `confirm()`** for confirmation dialogs. Use `showConfirm(message, title)` instead (defined in base.html). It returns a Promise that resolves to `true` (Proceed) or `false` (Cancel). The caller must be `async` and use `await`. Example: `if (!await showConfirm('Delete this item?')) return;`
 
+### Coach mark / spotlight pattern
+
+For onboarding and guided UI hints, use the **coach mark** pattern instead of static alert banners. This reuses the existing `confirm-overlay` CSS from base.html (dimmed backdrop at `z-index: 10002`) with a `confirm-modal` dialog inside it.
+
+**To spotlight a specific UI element** (make it interactive while the rest of the page is dimmed), set `position: relative` and `z-index: 10003` on that element when the overlay is active. Reset both when dismissed.
+
+Implementation checklist:
+1. Add a `confirm-overlay` div (hidden by default) containing a `confirm-modal` with your message and a dismiss button
+2. Trigger it via JS (e.g., based on a URL query param like `?setup=configure`, or a Django template variable)
+3. To spotlight an element: give it `z-index: 10003` so it sits above the overlay
+4. On dismiss: hide the overlay, reset the spotlighted element's z-index, and clean up the URL if a query param was used (`window.history.replaceState`)
+5. Use default-sized buttons (`btn btn-primary`), not `btn-sm` — coach marks are more prominent than confirm dialogs
+
+
 # LetterPulse
 
 A Django web application for analyzing newsletter engagement data from the Beehiiv platform. The app extracts content from newsletter posts, tracks click-through rates (CTR), generates AI-powered insights, and provides annotated HTML exports with improvement tips.

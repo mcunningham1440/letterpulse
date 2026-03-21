@@ -438,7 +438,7 @@
         <ul class="sidebar-nav">
             <li class="nav-item">
                 <a class="nav-link {% if request.resolver_match.url_name == 'posts' %}active{% endif %}"
-                   href="{% url 'analytics:posts' %}" title="Posts">
+                   href="{% url 'analytics:posts' %}" title="Posts" id="navPostsLink">
                     <i class="bi bi-file-earmark-text"></i>
                     <span class="nav-link-text">Posts</span>
                 </a>
@@ -459,24 +459,7 @@
             </li>
         </ul>
 
-        <!-- API Status Warning -->
-        {% if user.is_authenticated %}
-        {% if usage.beehiiv_token and not usage.api_key_valid %}
-        <div class="px-3 mb-3">
-            <a href="{% url 'analytics:account' %}" class="alert alert-danger no-auto-dismiss d-flex align-items-center py-2 px-3 mb-0 text-decoration-none" style="font-size: 0.8rem;">
-                <i class="bi bi-exclamation-triangle-fill me-2"></i>
-                <span>Invalid API Key</span>
-            </a>
-        </div>
-        {% elif not usage.has_api_credentials %}
-        <div class="px-3 mb-3">
-            <a href="{% url 'analytics:account' %}" class="alert alert-warning no-auto-dismiss d-flex align-items-center py-2 px-3 mb-0 text-decoration-none" style="font-size: 0.8rem;">
-                <i class="bi bi-exclamation-triangle me-2"></i>
-                <span>Configure API</span>
-            </a>
-        </div>
-        {% endif %}
-        {% endif %}
+        <!-- API Status Warning (removed — now handled by coach mark on Account page) -->
 
         <!-- User section at bottom of sidebar -->
         {% if user.is_authenticated %}
@@ -620,7 +603,7 @@
     </script>
 
     <!-- Confirm Overlay (reusable replacement for confirm()) -->
-    <div class="confirm-overlay" id="confirmOverlay" style="display: none;">
+    <div class="confirm-overlay" id="confirmOverlay" style="display: none; z-index: 10004;">
         <div class="confirm-modal">
             <h5 class="mb-3" id="confirmTitle">Confirm</h5>
             <p id="confirmMessage" class="mb-4" style="white-space: pre-line;"></p>

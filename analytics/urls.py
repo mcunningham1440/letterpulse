@@ -8,7 +8,6 @@ urlpatterns = [
     path('mobile/', views.mobile_notice, name='mobile_notice'),
     path('account/', views.account_view, name='account'),
     path('posts/', views.posts_view, name='posts'),
-    path('posts/run/', views.run_extraction, name='run_extraction'),
     path('posts/save/', views.save_content_set, name='save_content_set'),
     path('posts/delete-items/', views.delete_items, name='delete_items'),
     path('posts/refresh-posts/', views.refresh_posts, name='refresh_posts'),
