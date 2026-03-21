@@ -22,7 +22,7 @@ from django.db import transaction
 from django.db.models import F
 from Levenshtein import distance as levenshtein_distance
 from dotenv import load_dotenv
-from analytics.prompts import PARSING_PROMPT, SECTION_PARSING_PROMPT, INSIGHTS_PROMPT, TIP_PROMPT
+from analytics.prompts import SECTION_PARSING_PROMPT, INSIGHTS_PROMPT, TIP_PROMPT
 
 logger = logging.getLogger(__name__)
 
@@ -480,79 +480,79 @@ def match_links_with_clicks(html_links_raw, clicks_dict):
     return link_to_clicks, duplicate_raw_urls
 
 
-async def extract_items(post_html, content_desc, clicks_dict, title, post_date, unique_email_opens, user=None):
-    """
-    Extract items from a single post HTML using AI.
+# async def extract_items(post_html, content_desc, clicks_dict, title, post_date, unique_email_opens, user=None):
+#     """
+#     Extract items from a single post HTML using AI.
 
-    Args:
-        post_html: HTML content of the post
-        content_desc: Description of the content to extract
-        clicks_dict: Dictionary mapping URLs to click counts for this post
-        title: Post title
-        post_date: Date the post was published
-        unique_email_opens: Number of unique email opens
-        user: Django user object for credit charging (optional)
+#     Args:
+#         post_html: HTML content of the post
+#         content_desc: Description of the content to extract
+#         clicks_dict: Dictionary mapping URLs to click counts for this post
+#         title: Post title
+#         post_date: Date the post was published
+#         unique_email_opens: Number of unique email opens
+#         user: Django user object for credit charging (optional)
 
-    Returns:
-        DataFrame containing extracted items
-    """
-    # Step 1: Get line numbers for sections matching the content description    
-    content_description = f"""<ContentDescription>
-{content_desc}
-</ContentDescription>"""
+#     Returns:
+#         DataFrame containing extracted items
+#     """
+#     # Step 1: Get line numbers for sections matching the content description    
+#     content_description = f"""<ContentDescription>
+# {content_desc}
+# </ContentDescription>"""
     
-    soup = BeautifulSoup(post_html, 'html.parser')
-    all_lines = soup.prettify().split('\n')
-    numbered_lines = [f"{i+1}\t{line}" for i, line in enumerate(all_lines)]
+#     soup = BeautifulSoup(post_html, 'html.parser')
+#     all_lines = soup.prettify().split('\n')
+#     numbered_lines = [f"{i+1}\t{line}" for i, line in enumerate(all_lines)]
     
-    class Item(BaseModel):
-        StartLine: int
-        EndLine: int
+#     class Item(BaseModel):
+#         StartLine: int
+#         EndLine: int
 
-    class AllItems(BaseModel):
-        Items: List[Item]
+#     class AllItems(BaseModel):
+#         Items: List[Item]
 
-    messages = [
-        {"role": "system", "content": PARSING_PROMPT},
-        {"role": "user", "content": '\n'.join(numbered_lines)},
-        {"role": "user", "content": content_description}
-    ]
+#     messages = [
+#         {"role": "system", "content": PARSING_PROMPT},
+#         {"role": "user", "content": '\n'.join(numbered_lines)},
+#         {"role": "user", "content": content_description}
+#     ]
 
-    # 5.1: 'none', 'low', 'medium', and 'high'
-    # 5-mini: 'minimal', 'low', 'medium', and 'high'
-    response = await llm_call("extract_items", messages, "gpt-5.1", "low", response_format=AllItems, user=user)
-    output = response.output[-1].content[0].parsed
+#     # 5.1: 'none', 'low', 'medium', and 'high'
+#     # 5-mini: 'minimal', 'low', 'medium', and 'high'
+#     response = await llm_call("extract_items", messages, "gpt-5.1", "low", response_format=AllItems, user=user)
+#     output = response.output[-1].content[0].parsed
 
-    # Step 2: Extract text and links from each section
-    news_items = []
+#     # Step 2: Extract text and links from each section
+#     news_items = []
 
-    html_links_raw = [link['href'] for link in soup.find_all('a') if link.has_attr('href')]
-    link_to_clicks, _ = match_links_with_clicks(html_links_raw, clicks_dict)
+#     html_links_raw = [link['href'] for link in soup.find_all('a') if link.has_attr('href')]
+#     link_to_clicks, _ = match_links_with_clicks(html_links_raw, clicks_dict)
 
-    for item in output.Items:
-        reconstructed_html = "\n".join(all_lines[item.StartLine - 1:item.EndLine])
-        soup = BeautifulSoup(reconstructed_html, 'html.parser')
+#     for item in output.Items:
+#         reconstructed_html = "\n".join(all_lines[item.StartLine - 1:item.EndLine])
+#         soup = BeautifulSoup(reconstructed_html, 'html.parser')
         
-        # Extract text
-        text = soup.get_text(" ", strip=True)
+#         # Extract text
+#         text = soup.get_text(" ", strip=True)
                         
-        selected_links = [link['href'] for link in soup.find_all('a') if link.has_attr('href')]
+#         selected_links = [link['href'] for link in soup.find_all('a') if link.has_attr('href')]
         
-        # Get clicks for each link using the matched results
-        clicks = [link_to_clicks.get(link, 0) for link in selected_links]
+#         # Get clicks for each link using the matched results
+#         clicks = [link_to_clicks.get(link, 0) for link in selected_links]
 
-        news_items.append({
-            "post_title": title,
-            "post_date": post_date,
-            "text": text,
-            "links": selected_links,
-            "clicks": clicks,
-            "click_rate": [clicks / unique_email_opens if unique_email_opens > 0 else 0 for clicks in clicks]
-        })
+#         news_items.append({
+#             "post_title": title,
+#             "post_date": post_date,
+#             "text": text,
+#             "links": selected_links,
+#             "clicks": clicks,
+#             "click_rate": [clicks / unique_email_opens if unique_email_opens > 0 else 0 for clicks in clicks]
+#         })
 
-    items = pd.DataFrame(news_items)
+#     items = pd.DataFrame(news_items)
 
-    return items
+#     return items
 
 
 async def extract_items_parallel(posts_data, content_desc, htmls, clicks_by_id, user=None):
@@ -794,7 +794,7 @@ async def generate_content_insights(items_display, user=None):
     ]
 
     try:
-        response = await llm_call("generate_content_insights", messages, "gpt-5.1", "medium", user=user)
+        response = await llm_call("generate_content_insights", messages, "gpt-5.4", "medium", user=user)
     except BadRequestError as e:
         if e.code != "context_length_exceeded":
             raise
@@ -814,7 +814,7 @@ async def generate_content_insights(items_display, user=None):
             {"role": "user", "content": newsletter_items}
         ]
 
-        response = await llm_call("generate_content_insights", messages, "gpt-5.1", "medium", user=user)
+        response = await llm_call("generate_content_insights", messages, "gpt-5.4", "medium", user=user)
 
     return response
 
