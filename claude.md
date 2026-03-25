@@ -227,18 +227,8 @@ Uses django-allauth for email-based authentication:
 - **Download Improvement Tips**: ZIP of HTML files with AI-generated improvement tips
 
 ### 2. Insights Page (`/insights/`)
-- **Trend Chart**: Chart.js time-series line chart showing link performance over time, driven by LinkData
-  - Metric selector: "Average max CTR" (default), "CTR of most clicked link", "Average max clicks", "Clicks of most clicked link"
-  - Date range filters (start/end) with "All" clear buttons
-  - Section checkboxes below chart (color-coded, all checked by default)
-- **Data Table Card** with Items/Sections toggle:
-  - **Items view** (default): Filtered LinkData items showing Post Title, Post Date, Section, Item Text, Links, Max Clicks, Max CTR. Download CSV button.
-  - **Sections view**: Aggregated per-section table (Total Items, Avg Max Clicks, Avg Max CTR, Insights status). Uses all items (unaffected by chart filters).
-    - **Get Insights**: Select sections, click "Get Insights from Selected Sections" to generate per-section AI reports in parallel background threads. Credits charged upfront (1 per section). Shows overwrite warning if sections already have saved reports.
-    - **Review overlay**: After generation completes, a review popup shows each section's report sequentially with Accept/Skip buttons. Accepted reports are saved via `update_or_create`.
-    - **Eyeball icon**: Green eye icon appears for sections with saved reports. Clicking opens a read-only popup showing the saved report.
-    - **Clear Insights**: Delete saved reports for selected sections.
-- **Phrase Analysis**: Same n-gram algorithm, recalculates on every filter change using currently displayed items
+- **Link Data Table**: DataTable showing all LinkData for the current publication — Post Title, Post Date, Description, URL, Rank, Mean Clicks, Mean CTR. Sortable and scrollable. Download CSV button (client-side).
+- **Phrase Analysis**: N-gram analysis of link descriptions. Shows best/worst performing phrases by CTR with configurable minimum appearances. Requires at least 10 items.
 
 ### 3. Account Page (`/account/`)
 - **Usage Stats**: View AI credits used and remaining
@@ -298,17 +288,8 @@ All routes use the `analytics:` namespace.
 - `POST /posts/clear-processed/` - Delete ProcessedPost and LinkData records for selected posts (AJAX)
 
 ### Insights Routes
-- `GET /insights/` - Insights dashboard (trend chart + section-level insights)
-- `GET /insights/load-processed-data/` - Load all LinkData items as JSON (with section_name="All Links")
-- `GET /insights/load-content-set/<name>/` - Load ContentSet as JSON
-- `POST /insights/generate-section-insights/` - Start parallel background AI report generation for selected sections (accepts sections_json + all_items_json, returns list of task_ids)
-- `GET /insights/report-status/<uuid:task_id>/` - Poll background report generation status (includes section_name in response)
-- `POST /insights/save-section-report/` - Save/upsert a section report (accepts section_name + report_text)
-- `GET /insights/load-section-report/?section_name=...` - Load a saved section report
-- `POST /insights/delete-section-reports/` - Delete reports for given section names (accepts sections_json)
-- `GET /insights/section-report-status/` - Get list of section names that have saved reports
-- `GET /insights/download-csv/<name>/` - Export as CSV
-- `POST /insights/rename-set/`, `/copy-set/`, `/merge-sets/`, `/delete-set/`, `/delete-items/`
+- `GET /insights/` - Insights dashboard (link data table + phrase analysis)
+- `GET /insights/load-processed-data/` - Load all LinkData items as JSON for the current user/publication
 
 ### Account Routes
 - `GET /account/` - Account settings page

@@ -8,130 +8,6 @@
         max-width: 350px;
         text-align: left;
     }
-
-    /* Section checkbox colors */
-    .section-checkbox-label {
-        display: inline-flex;
-        align-items: center;
-        gap: 0.35rem;
-        margin-right: 1rem;
-        margin-bottom: 0.25rem;
-        cursor: pointer;
-        font-size: 0.875rem;
-    }
-
-    .section-color-dot {
-        width: 12px;
-        height: 12px;
-        border-radius: 50%;
-        display: inline-block;
-        flex-shrink: 0;
-    }
-
-    /* Chart container */
-    #trendChartContainer {
-        position: relative;
-        height: 350px;
-    }
-
-    /* Report markdown rendering */
-    .report-text h1 {
-        font-size: 1.35rem;
-        font-weight: 700;
-        border-bottom: 2px solid #dee2e6;
-        padding-bottom: 0.4rem;
-        margin-bottom: 1.5rem;
-    }
-    .report-text h2 {
-        font-size: 1.1rem;
-        font-weight: 600;
-        margin-top: 2rem;
-        margin-bottom: 0.5rem;
-        color: #495057;
-    }
-    .report-text > h2:first-child {
-        margin-top: 0;
-    }
-    .report-text h3 {
-        font-size: 0.75rem;
-        font-weight: 700;
-        text-transform: uppercase;
-        letter-spacing: 0.06em;
-        color: #6c757d;
-        margin-top: 1.25rem;
-        margin-bottom: 0.5rem;
-    }
-    .report-text table + p {
-        margin-top: 1.25rem;
-    }
-
-    /* Review overlay (reuses posts page pattern) */
-    .processing-overlay {
-        position: fixed;
-        top: 0; left: 0; right: 0; bottom: 0;
-        background-color: rgba(0, 0, 0, 0.6);
-        z-index: 10000;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-    }
-    .review-modal {
-        background: white;
-        border-radius: 0.5rem;
-        width: 90%;
-        max-width: 800px;
-        max-height: 90vh;
-        display: flex;
-        flex-direction: column;
-        box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
-    }
-    .review-modal-header {
-        padding: 1rem 1.5rem;
-        border-bottom: 1px solid #dee2e6;
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-    }
-    .review-modal-body {
-        padding: 1.5rem;
-        overflow-y: auto;
-        max-height: 60vh;
-    }
-    .review-modal-footer {
-        padding: 1rem 1.5rem;
-        border-top: 1px solid #dee2e6;
-        display: flex;
-        justify-content: flex-end;
-        gap: 0.75rem;
-    }
-
-    /* Sections table eyeball icon */
-    .insight-eye {
-        cursor: pointer;
-        color: #198754;
-        font-size: 1.1rem;
-    }
-    .insight-eye:hover {
-        color: #146c43;
-    }
-    .insight-trash {
-        cursor: pointer;
-        color: #dc3545;
-        font-size: 1rem;
-        margin-left: 0.5rem;
-    }
-    .insight-trash:hover {
-        color: #a71d2a;
-    }
-
-    /* Toggle label styles */
-    .toggle-label-active {
-        font-weight: 600;
-        color: #212529;
-    }
-    .toggle-label-inactive {
-        color: #6c757d;
-    }
 </style>
 {% endblock %}
 
@@ -152,22 +28,9 @@
 <div class="confirm-overlay" id="noProcessedOverlay" style="display: flex;">
     <div class="confirm-modal">
         <h5 class="mb-3">No Processed Posts Yet</h5>
-        <p class="mb-4">Process some posts on the Posts page first to see trends and insights here.</p>
+        <p class="mb-4">Process some posts on the Posts page first to see link data here.</p>
         <div class="d-flex justify-content-end">
             <a href="{% url 'analytics:posts' %}" class="btn btn-primary">Go to Posts</a>
-        </div>
-    </div>
-</div>
-{% elif not has_section_insights %}
-<!-- Coach mark: has processed data but no insights yet -->
-<div class="confirm-overlay" id="noInsightsOverlay" style="display: flex;">
-    <div class="confirm-modal">
-        <h5 class="mb-3"><b>See Section Insights</b></h5>
-        <p>You can use the <b>Section Performance</b> chart to see how well each section has performed over time.</p>
-        <p>Below, in <b>Sections</b>, you can <b>Get Insights</b> on what kinds of content your audience engages with.</p>
-        <p class="mb-4">Switching the <b>Sections</b> table to <b>Items</b> lets you see and download all of your content items in a CSV.</p>
-        <div class="d-flex justify-content-end">
-            <button type="button" class="btn btn-primary" id="noInsightsDismissBtn">Got it</button>
         </div>
     </div>
 </div>
@@ -177,94 +40,40 @@
     <div class="col-12">
         {% if has_processed_data %}
 
-        <!-- Trend Chart Card -->
-        <div class="card" id="trendChartCard">
-            <div class="card-header">
-                <h5 class="mb-3">Section Performance</h5>
-                <div class="d-flex flex-wrap gap-3 align-items-end">
-                    <!-- Metric selector -->
-                    <div>
-                        <label for="metricSelect" class="form-label small text-muted mb-1">Metric</label>
-                        <select class="form-select form-select-sm" id="metricSelect" style="width: auto; min-width: 220px;">
-                            <option value="avg_max_ctr" selected>Average max CTR</option>
-                            <option value="top_ctr">CTR of most clicked link</option>
-                            <option value="avg_max_clicks">Average max clicks</option>
-                            <option value="top_clicks">Clicks of most clicked link</option>
-                        </select>
-                    </div>
-                    <!-- Start date -->
-                    <div>
-                        <label for="startDate" class="form-label small text-muted mb-1">Start date</label>
-                        <div class="input-group input-group-sm" style="width: auto;">
-                            <input type="date" class="form-control form-control-sm" id="startDate">
-                            <button class="btn btn-outline-secondary btn-sm" type="button" id="clearStartDate">All</button>
-                        </div>
-                    </div>
-                    <!-- End date -->
-                    <div>
-                        <label for="endDate" class="form-label small text-muted mb-1">End date</label>
-                        <div class="input-group input-group-sm" style="width: auto;">
-                            <input type="date" class="form-control form-control-sm" id="endDate">
-                            <button class="btn btn-outline-secondary btn-sm" type="button" id="clearEndDate">All</button>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            <div class="card-body">
-                <div class="mb-2 small text-muted" id="metricDescription"></div>
-                <div id="trendChartContainer">
-                    <canvas id="trendChart"></canvas>
-                </div>
-                <!-- Section checkboxes -->
-                <div class="mt-3 d-flex align-items-start flex-wrap gap-2">
-                    <button type="button" class="btn btn-outline-secondary btn-sm flex-shrink-0" id="toggleAllSections" style="font-size: 0.8rem;">Show/hide All</button>
-                    <div id="sectionCheckboxes" class="d-flex flex-wrap"></div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Data Table Card -->
-        <div class="card mt-4" id="dataTableCard">
+        <!-- Link Data Table Card -->
+        <div class="card" id="dataTableCard">
             <div class="card-header">
                 <div class="d-flex justify-content-between align-items-center">
-                    <h5 class="mb-0" id="dataTableTitle">Processed Items</h5>
-                    <button type="button" class="btn btn-info btn-sm d-none" id="downloadFilteredCsvBtn">
+                    <h5 class="mb-0">Link Data</h5>
+                    <button type="button" class="btn btn-info btn-sm" id="downloadCsvBtn">
                         <i class="bi bi-download"></i> Download CSV
                     </button>
                 </div>
-                <div class="d-flex align-items-center gap-2 mt-2">
-                    <span class="toggle-label-active" id="sectionsLabel" style="font-size: 0.925rem;">Sections</span>
-                    <div class="form-check form-switch mb-0" style="padding-left: 0;">
-                        <input class="form-check-input" type="checkbox" id="viewModeToggle" role="switch" style="margin-left: 0;">
-                    </div>
-                    <span class="toggle-label-inactive" id="itemsLabel" style="font-size: 0.925rem;">Items</span>
-                </div>
             </div>
 
-
-            <!-- Items View (hidden by default) -->
-            <div class="card-body d-none" id="itemsViewContainer">
+            <div class="card-body" id="tableContainer">
                 <div class="alert alert-info py-2 px-3 small d-none no-auto-dismiss" id="averagedClicksNotice">
-                    If multiple links in a post go to the same URL, click counts and CTRs for those links are averaged among the links.
+                    If multiple links in a post go to the same URL, click counts and CTRs are averaged among those links.
                 </div>
                 <div class="table-responsive">
-                    <table class="table table-hover table-sm" id="contentTable">
+                    <table class="table table-hover table-sm" id="linkDataTable">
                         <thead>
                             <tr>
                                 <th data-bs-toggle="tooltip" title="Title of the source post">Post Title</th>
                                 <th data-bs-toggle="tooltip" title="When the source post was published">Post Date</th>
-                                <th data-bs-toggle="tooltip" title="Section the item belongs to">Section</th>
-                                <th data-bs-toggle="tooltip" title="Text of the extracted content">Item Text</th>
-                                <th data-bs-toggle="tooltip" title="Number of links in this item">Links</th>
-                                <th class="text-end" data-bs-toggle="tooltip" title="Highest unique click count among all links in this item">Max Clicks</th>
-                                <th class="text-end" data-bs-toggle="tooltip" title="Highest unique click-through rate among all links in this item">Max CTR</th>
+                                <th data-bs-toggle="tooltip" title="AI-generated description of what the link points to">Description</th>
+                                <th data-bs-toggle="tooltip" title="The link URL">URL</th>
+                                <th class="text-end" data-bs-toggle="tooltip" title="Rank by CTR within the post (1 = highest)">Rank</th>
+                                <th class="text-end" data-bs-toggle="tooltip" title="Mean unique clicks (averaged if duplicated in the post)">Mean Clicks</th>
+                                <th class="text-end" data-bs-toggle="tooltip" title="Mean click-through rate (averaged if duplicated in the post)">Mean CTR</th>
                             </tr>
                         </thead>
-                        <tbody id="contentTableBody">
+                        <tbody id="linkDataTableBody">
                         </tbody>
                     </table>
                 </div>
             </div>
+
             <!-- Phrase Analysis -->
             <div class="card-body border-top d-none" id="phraseAnalysisSection">
                 <div class="d-flex justify-content-between align-items-center mb-3">
@@ -292,41 +101,14 @@
                     <table class="table table-hover table-sm" id="phraseTable">
                         <thead>
                             <tr>
-                                <th data-bs-toggle="tooltip" title="Word or two-word phrase found in the content items, excluding very common words like 'it'">Phrase</th>
-                                <th class="text-end" data-bs-toggle="tooltip" title="Average of maximum click-through rates across all items containing this phrase">Avg Max CTR</th>
-                                <th class="text-end" data-bs-toggle="tooltip" title="Difference from the overall average CTR across all items">vs All Items</th>
-                                <th class="text-end" data-bs-toggle="tooltip" title="Number of content items containing this phrase">Appearances</th>
+                                <th data-bs-toggle="tooltip" title="Word or two-word phrase found in the link descriptions, excluding very common words">Phrase</th>
+                                <th class="text-end" data-bs-toggle="tooltip" title="Average CTR across all links containing this phrase">Avg CTR</th>
+                                <th class="text-end" data-bs-toggle="tooltip" title="Difference from the overall average CTR across all links">vs All Links</th>
+                                <th class="text-end" data-bs-toggle="tooltip" title="Number of links containing this phrase">Appearances</th>
                             </tr>
                         </thead>
                         <tbody id="phraseTableBody"></tbody>
                     </table>
-                </div>
-            </div>
-
-            <!-- Sections View (default) -->
-            <div class="card-body" id="sectionsViewContainer">
-                <div class="table-responsive">
-                    <table class="table table-hover table-sm" id="sectionsTable">
-                        <thead>
-                            <tr>
-                                <th style="width: 40px;"><input type="checkbox" id="selectAllSections" checked></th>
-                                <th data-bs-toggle="tooltip" title="Name of the content section">Section</th>
-                                <th class="text-end" data-bs-toggle="tooltip" title="Number of extracted items in this section across all posts">Total Items</th>
-                                <th class="text-end" data-bs-toggle="tooltip" title="Average of the highest click count per item in this section">Avg Max Clicks</th>
-                                <th class="text-end" data-bs-toggle="tooltip" title="Average of the highest click-through rate per item in this section">Avg Max CTR</th>
-                                <th class="text-center" data-bs-toggle="tooltip" title="View or delete insights for this section">Insights</th>
-                            </tr>
-                        </thead>
-                        <tbody id="sectionsTableBody"></tbody>
-                    </table>
-                </div>
-                <div class="mt-3 d-flex justify-content-end align-items-start gap-2">
-                    <small class="text-muted d-flex align-items-center" id="sectionCreditCost" style="height: 31px;"></small>
-                    <div id="sectionInsightsProgress" style="min-width: 200px;">
-                        <button class="btn btn-primary btn-sm w-100" type="button" id="getSectionInsightsBtn">
-                            <i class="bi bi-file-earmark-text"></i> Get Insights from Selected Sections
-                        </button>
-                    </div>
                 </div>
             </div>
         </div>
@@ -335,89 +117,19 @@
     </div>
 </div>
 
-<!-- Section Insights Review Overlay -->
-<div class="processing-overlay" id="insightsReviewOverlay" style="display: none;">
-    <div class="review-modal">
-        <div class="review-modal-header">
-            <h5 class="mb-0" id="reviewSectionTitle">Insights: Section Name</h5>
-            <span class="badge bg-secondary" id="reviewCounter">1 of 1</span>
-        </div>
-        <div class="review-modal-body report-text" id="reviewReportBody"></div>
-        <div class="review-modal-footer">
-            <button class="btn btn-secondary" id="reviewSkipBtn">Skip</button>
-            <button class="btn btn-success" id="reviewAcceptBtn"><i class="bi bi-check-lg"></i> Accept</button>
-        </div>
-    </div>
-</div>
-
-<!-- Read-Only Report Popup -->
-<div class="processing-overlay" id="readOnlyReportOverlay" style="display: none;">
-    <div class="review-modal">
-        <div class="review-modal-header">
-            <h5 class="mb-0" id="readOnlyReportTitle">Insights: Section Name</h5>
-        </div>
-        <div class="review-modal-body report-text" id="readOnlyReportBody"></div>
-        <div class="review-modal-footer">
-            <button class="btn btn-secondary" id="readOnlyExitBtn">Exit</button>
-        </div>
-    </div>
-</div>
-
 {% endblock %}
 
 {% block extra_js %}
-<!-- Chart.js -->
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
-
 <script>
     // =========================================================================
     // Global state
     // =========================================================================
-    // Coach mark dismiss
-    const noInsightsBtn = document.getElementById('noInsightsDismissBtn');
-    if (noInsightsBtn) {
-        noInsightsBtn.addEventListener('click', function() {
-            document.getElementById('noInsightsOverlay').style.display = 'none';
-        });
-    }
-
     let allItems = [];
-    let allSectionNames = [];
-    let filteredItems = [];
-    let trendChart = null;
     let currentPhraseData = [];
     let overallAvgCtr = 0;
-    let sectionsWithReports = [];
-    let viewMode = 'sections'; // 'items' or 'sections'
-    let pendingTasks = JSON.parse('{{ pending_tasks_json|escapejs }}') || [];
-
-    function renderMarkdown(text) {
-        const div = document.createElement('div');
-        div.innerHTML = marked.parse(text);
-        div.querySelectorAll('table').forEach(t => {
-            t.classList.add('table', 'table-bordered', 'table-sm');
-        });
-        return div.innerHTML;
-    }
-
-    // Chart color palette (consistent by sorted index)
-    const CHART_COLORS = [
-        '#4e79a7', '#f28e2b', '#e15759', '#76b7b2', '#59a14f',
-        '#edc948', '#b07aa1', '#ff9da7', '#9c755f', '#bab0ac',
-        '#af7aa1', '#86bcb6', '#d4a6c8', '#8cd17d', '#499894'
-    ];
-
-    function getColorForSection(sectionName) {
-        const idx = allSectionNames.indexOf(sectionName);
-        return CHART_COLORS[idx % CHART_COLORS.length];
-    }
 
     // =========================================================================
-    // Toast helper
-    // =========================================================================
-    // =========================================================================
-    // Phrase analysis (same algorithm as before)
+    // Phrase analysis
     // =========================================================================
     const EXCLUDED_WORDS = new Set({{ stopwords_json|safe }});
 
@@ -443,25 +155,24 @@
 
     function calculatePhraseStats(items) {
         const ngramStats = {};
-        const allMaxCtrs = [];
+        const allCtrs = [];
 
         items.forEach(item => {
-            const text = item.text || '';
-            const clickRates = item.click_rate_raw || [];
-            const maxCtr = clickRates.length > 0 ? Math.max(...clickRates) : 0;
-            allMaxCtrs.push(maxCtr);
+            const text = item.description || '';
+            const ctr = item.mean_ctr || 0;
+            allCtrs.push(ctr);
 
             [1, 2].forEach(n => {
                 getNgrams(text, n).forEach(ngram => {
                     if (!containsExcludedWord(ngram)) {
                         if (!ngramStats[ngram]) ngramStats[ngram] = [];
-                        ngramStats[ngram].push(maxCtr);
+                        ngramStats[ngram].push(ctr);
                     }
                 });
             });
         });
 
-        overallAvgCtr = allMaxCtrs.length > 0 ? allMaxCtrs.reduce((a, b) => a + b, 0) / allMaxCtrs.length : 0;
+        overallAvgCtr = allCtrs.length > 0 ? allCtrs.reduce((a, b) => a + b, 0) / allCtrs.length : 0;
 
         return Object.entries(ngramStats).map(([ngram, ctrs]) => ({
             ngram,
@@ -495,11 +206,11 @@
         const colorClass = mode === 'best' ? 'text-success' : 'text-danger';
         top15.forEach(item => {
             const diff = item.avgCtr - overallAvgCtr;
-            const diffStr = (diff >= 0 ? '+' : '') + (diff * 100).toFixed(2) + '%';
+            const diffStr = (diff >= 0 ? '+' : '') + diff.toFixed(2) + '%';
             const row = document.createElement('tr');
             row.innerHTML = `
                 <td><code>${item.ngram}</code></td>
-                <td class="text-end">${(item.avgCtr * 100).toFixed(2)}%</td>
+                <td class="text-end">${item.avgCtr.toFixed(2)}%</td>
                 <td class="text-end ${colorClass}">${diffStr}</td>
                 <td class="text-end">${item.count}</td>
             `;
@@ -540,230 +251,17 @@
     }
 
     // =========================================================================
-    // Filtering logic
-    // =========================================================================
-    function getSelectedSections() {
-        const checkboxes = document.querySelectorAll('.section-filter-cb:checked');
-        return Array.from(checkboxes).map(cb => cb.value);
-    }
-
-    function getFilteredItems() {
-        const selectedSections = getSelectedSections();
-        const startDate = document.getElementById('startDate').value;
-        const endDate = document.getElementById('endDate').value;
-
-        return allItems.filter(item => {
-            if (!selectedSections.includes(item.section_name)) return false;
-            if (startDate && item.post_date_sortable && item.post_date_sortable < startDate) return false;
-            if (endDate && item.post_date_sortable && item.post_date_sortable > endDate) return false;
-            return true;
-        });
-    }
-
-    // =========================================================================
-    // Chart logic
-    // =========================================================================
-    function calculateChartData(items, metric) {
-        const selectedSections = getSelectedSections();
-
-        // Group items by section, then by date, then by post_title
-        const sectionDateGroups = {};
-        items.forEach(item => {
-            if (!item.post_date_sortable) return;
-            const key = item.section_name;
-            if (!sectionDateGroups[key]) sectionDateGroups[key] = {};
-            if (!sectionDateGroups[key][item.post_date_sortable])
-                sectionDateGroups[key][item.post_date_sortable] = {};
-            if (!sectionDateGroups[key][item.post_date_sortable][item.post_title])
-                sectionDateGroups[key][item.post_date_sortable][item.post_title] = [];
-            sectionDateGroups[key][item.post_date_sortable][item.post_title].push(item);
-        });
-
-        // Compute per-section, per-date values
-        const sectionValues = {};
-        const allDatesSet = new Set();
-
-        selectedSections.forEach(section => {
-            const dateGroups = sectionDateGroups[section] || {};
-            sectionValues[section] = {};
-
-            Object.keys(dateGroups).forEach(date => {
-                const postGroups = dateGroups[date];
-                const perPostValues = [];
-
-                Object.values(postGroups).forEach(postItems => {
-                    let val;
-                    if (metric === 'avg_max_ctr') {
-                        const ctrs = postItems.map(i => i.max_click_rate_raw || 0);
-                        val = ctrs.reduce((a, b) => a + b, 0) / ctrs.length;
-                    } else if (metric === 'top_ctr') {
-                        val = Math.max(...postItems.map(i => i.max_click_rate_raw || 0));
-                    } else if (metric === 'avg_max_clicks') {
-                        const clicks = postItems.map(i => i.max_clicks || 0);
-                        val = clicks.reduce((a, b) => a + b, 0) / clicks.length;
-                    } else if (metric === 'top_clicks') {
-                        val = Math.max(...postItems.map(i => i.max_clicks || 0));
-                    }
-                    perPostValues.push(val);
-                });
-
-                const avg = perPostValues.reduce((a, b) => a + b, 0) / perPostValues.length;
-                sectionValues[section][date] = avg;
-                allDatesSet.add(date);
-            });
-        });
-
-        const allDates = Array.from(allDatesSet).sort();
-
-        const datasets = [];
-        selectedSections.forEach(section => {
-            const dataPoints = allDates.map(date => ({
-                x: date,
-                y: section in sectionValues && date in sectionValues[section]
-                    ? sectionValues[section][date]
-                    : null,
-            }));
-
-            datasets.push({
-                label: section,
-                data: dataPoints,
-                borderColor: getColorForSection(section),
-                backgroundColor: getColorForSection(section) + '33',
-                tension: 0,
-                spanGaps: false,
-                pointRadius: 4,
-                pointHoverRadius: 6,
-            });
-        });
-
-        return datasets;
-    }
-
-    function isCtrMetric(metric) {
-        return metric === 'avg_max_ctr' || metric === 'top_ctr';
-    }
-
-    function getYAxisLabel(metric) {
-        const labels = {
-            'avg_max_ctr': 'Average Max CTR',
-            'top_ctr': 'CTR of Most Clicked Link',
-            'avg_max_clicks': 'Average Max Clicks',
-            'top_clicks': 'Clicks of Most Clicked Link',
-        };
-        return labels[metric] || '';
-    }
-
-    const METRIC_DESCRIPTIONS = {
-        'avg_max_ctr': 'Average click-through rate (CTR) for the best-performing link in each item in the section',
-        'top_ctr': 'Unique click-through rate (CTR) for the best-performing link in the section',
-        'avg_max_clicks': 'Average number of unique clicks for the best-performing link in each item in the section',
-        'top_clicks': 'Number of unique clicks for the best-performing link in the section',
-    };
-
-    function updateMetricDescription(metric) {
-        const el = document.getElementById('metricDescription');
-        if (el) el.textContent = METRIC_DESCRIPTIONS[metric] || '';
-    }
-
-    function renderChart() {
-        const metric = document.getElementById('metricSelect').value;
-        const datasets = calculateChartData(filteredItems, metric);
-        const isCtr = isCtrMetric(metric);
-
-        updateMetricDescription(metric);
-
-        if (trendChart) {
-            trendChart.destroy();
-        }
-
-        const ctx = document.getElementById('trendChart').getContext('2d');
-        trendChart = new Chart(ctx, {
-            type: 'line',
-            data: { datasets },
-            plugins: [{
-                id: 'yearLabels',
-                afterDraw: function(chart) {
-                    const xScale = chart.scales && chart.scales.x;
-                    if (!xScale || !xScale.ticks || !xScale.ticks.length) return;
-                    const c = chart.ctx;
-                    c.save();
-                    c.fillStyle = Chart.defaults.color || 'rgba(0,0,0,0.5)';
-                    c.font = '12px ' + ((Chart.defaults.font && Chart.defaults.font.family) || 'sans-serif');
-                    c.textAlign = 'center';
-                    c.textBaseline = 'top';
-                    let lastYear = null;
-                    xScale.ticks.forEach(tick => {
-                        const year = new Date(tick.value).getFullYear();
-                        if (isNaN(year) || (lastYear !== null && lastYear === year)) return;
-                        lastYear = year;
-                        const x = xScale.getPixelForValue(tick.value);
-                        const y = xScale.bottom + 4;
-                        if (y + 14 <= chart.height) c.fillText(String(year), x, y);
-                    });
-                    c.restore();
-                }
-            }],
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                layout: { padding: { bottom: 20 } },
-                interaction: {
-                    mode: 'index',
-                    intersect: false,
-                },
-                scales: {
-                    x: {
-                        type: 'time',
-                        time: {
-                            unit: 'day',
-                            tooltipFormat: 'MMM d, yyyy',
-                            displayFormats: { day: 'MMM d' }
-                        },
-                        title: { display: false }
-                    },
-                    y: {
-                        beginAtZero: true,
-                        title: { display: true, text: getYAxisLabel(metric) },
-                        ticks: {
-                            callback: function(value) {
-                                return isCtr ? (value * 100).toFixed(1) + '%' : value;
-                            }
-                        }
-                    }
-                },
-                plugins: {
-                    legend: {
-                        display: false
-                    },
-                    tooltip: {
-                        filter: function(tooltipItem) {
-                            return tooltipItem.parsed.y !== null;
-                        },
-                        callbacks: {
-                            label: function(ctx) {
-                                const val = ctx.parsed.y;
-                                const formatted = isCtr ? (val * 100).toFixed(2) + '%' : val.toFixed(1);
-                                return ctx.dataset.label + ': ' + formatted;
-                            }
-                        }
-                    }
-                }
-            }
-        });
-    }
-
-    // =========================================================================
     // Data Table
     // =========================================================================
     function renderTable(items) {
-        if ($.fn.DataTable.isDataTable('#contentTable')) {
-            $('#contentTable').DataTable().destroy();
+        if ($.fn.DataTable.isDataTable('#linkDataTable')) {
+            $('#linkDataTable').DataTable().destroy();
         }
 
-        const tbody = document.getElementById('contentTableBody');
+        const tbody = document.getElementById('linkDataTableBody');
         tbody.innerHTML = '';
 
-        const hasAveragedClicks = items.some(item => !Number.isInteger(item.max_clicks));
+        const hasAveragedClicks = items.some(item => !Number.isInteger(item.mean_clicks));
         const notice = document.getElementById('averagedClicksNotice');
         if (hasAveragedClicks) {
             notice.classList.remove('d-none');
@@ -772,25 +270,25 @@
         }
 
         items.forEach(item => {
-            const row = document.createElement('tr');
-            const clicks = Number(item.max_clicks);
+            const clicks = Number(item.mean_clicks);
             const clicksDisplay = Number.isInteger(clicks) ? clicks.toLocaleString() : clicks.toFixed(1);
+            const row = document.createElement('tr');
             row.innerHTML = `
                 <td>${item.post_title}</td>
                 <td data-order="${item.post_date_sortable}">${item.post_date_display}</td>
-                <td><span class="badge" style="background-color: ${getColorForSection(item.section_name)};">${item.section_name}</span></td>
-                <td>${truncateText(item.text, 50)}</td>
-                <td><span class="badge bg-secondary">${item.links.length} link${item.links.length !== 1 ? 's' : ''}</span></td>
+                <td>${truncateText(item.description, 60)}</td>
+                <td>${truncateText(item.raw_url, 40)}</td>
+                <td class="text-end">${item.rank_in_post}</td>
                 <td class="text-end">${clicksDisplay}</td>
-                <td class="text-end">${item.max_click_rate}</td>
+                <td class="text-end">${item.mean_ctr.toFixed(2)}%</td>
             `;
             tbody.appendChild(row);
         });
 
-        const table = $('#contentTable').DataTable({
+        const table = $('#linkDataTable').DataTable({
             order: [[1, 'desc']],
             paging: false,
-            scrollY: '400px',
+            scrollY: '500px',
             scrollCollapse: true
         });
 
@@ -820,87 +318,6 @@
     }
 
     // =========================================================================
-    // Master refresh: called on every filter change
-    // =========================================================================
-    function refreshAll() {
-        filteredItems = getFilteredItems();
-        renderChart();
-        renderTable(filteredItems);
-        updateDataTableTitle();
-    }
-
-    function updateDataTableTitle() {
-        const titleEl = document.getElementById('dataTableTitle');
-        if (!titleEl) return;
-        if (viewMode === 'sections') {
-            titleEl.textContent = 'Sections';
-            return;
-        }
-
-        const selectedSections = getSelectedSections();
-        const startDate = document.getElementById('startDate').value;
-        const endDate = document.getElementById('endDate').value;
-
-        let sectionPart;
-        if (selectedSections.length === 1) {
-            sectionPart = 'in ' + selectedSections[0];
-        } else if (selectedSections.length === allSectionNames.length) {
-            sectionPart = 'in all sections';
-        } else {
-            sectionPart = 'in ' + selectedSections.length + ' section' + (selectedSections.length !== 1 ? 's' : '');
-        }
-
-        let datePart = '';
-        if (startDate && endDate) {
-            datePart = ' from ' + formatDateLabel(startDate) + ' to ' + formatDateLabel(endDate);
-        } else if (startDate) {
-            datePart = ' beginning ' + formatDateLabel(startDate);
-        } else if (endDate) {
-            datePart = ' through ' + formatDateLabel(endDate);
-        }
-
-        titleEl.textContent = 'Items ' + sectionPart + datePart;
-    }
-
-    function formatDateLabel(dateStr) {
-        const parts = dateStr.split('-');
-        const d = new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]));
-        const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-        return months[d.getMonth()] + ' ' + d.getDate() + ', ' + d.getFullYear();
-    }
-
-    // =========================================================================
-    // Section checkboxes (chart filter)
-    // =========================================================================
-    function renderSectionCheckboxes() {
-        const container = document.getElementById('sectionCheckboxes');
-        container.innerHTML = '';
-
-        allSectionNames.forEach((name, idx) => {
-            const color = CHART_COLORS[idx % CHART_COLORS.length];
-            const label = document.createElement('label');
-            label.className = 'section-checkbox-label';
-            label.innerHTML = `
-                <input type="checkbox" class="section-filter-cb" value="${name}" checked>
-                <span class="section-color-dot" style="background-color: ${color};"></span>
-                ${name}
-            `;
-            container.appendChild(label);
-        });
-
-        container.querySelectorAll('.section-filter-cb').forEach(cb => {
-            cb.addEventListener('change', refreshAll);
-        });
-
-        document.getElementById('toggleAllSections').addEventListener('click', function() {
-            const cbs = container.querySelectorAll('.section-filter-cb');
-            const allChecked = Array.from(cbs).every(cb => cb.checked);
-            cbs.forEach(cb => cb.checked = !allChecked);
-            refreshAll();
-        });
-    }
-
-    // =========================================================================
     // Credits display update
     // =========================================================================
     function updateCreditsDisplay(creditsUsed, creditsQuota) {
@@ -916,484 +333,26 @@
     }
 
     // =========================================================================
-    // Items / Sections toggle
-    // =========================================================================
-    // Toggle: checked = Items (right), unchecked = Sections (left)
-    document.getElementById('viewModeToggle')?.addEventListener('change', function() {
-        if (this.checked) {
-            // Items mode
-            viewMode = 'items';
-            document.getElementById('itemsLabel').className = 'small toggle-label-active';
-            document.getElementById('sectionsLabel').className = 'small toggle-label-inactive';
-            document.getElementById('sectionsViewContainer').classList.add('d-none');
-            document.getElementById('itemsViewContainer').classList.remove('d-none');
-            document.getElementById('downloadFilteredCsvBtn').classList.remove('d-none');
-            refreshAll();
-        } else {
-            // Sections mode
-            viewMode = 'sections';
-            document.getElementById('itemsLabel').className = 'small toggle-label-inactive';
-            document.getElementById('sectionsLabel').className = 'small toggle-label-active';
-            document.getElementById('itemsViewContainer').classList.add('d-none');
-            document.getElementById('phraseAnalysisSection').classList.add('d-none');
-            document.getElementById('downloadFilteredCsvBtn').classList.add('d-none');
-            document.getElementById('sectionsViewContainer').classList.remove('d-none');
-            renderSectionsTable();
-            updateDataTableTitle();
-        }
-    });
-
-    // =========================================================================
-    // Sections table
-    // =========================================================================
-    function renderSectionsTable() {
-        // Destroy existing DataTable if it exists
-        if ($.fn.DataTable.isDataTable('#sectionsTable')) {
-            $('#sectionsTable').DataTable().destroy();
-        }
-
-        const tbody = document.getElementById('sectionsTableBody');
-        tbody.innerHTML = '';
-
-        // Group allItems (unfiltered) by section_name
-        const sectionGroups = {};
-        allItems.forEach(item => {
-            const sn = item.section_name;
-            if (!sectionGroups[sn]) sectionGroups[sn] = [];
-            sectionGroups[sn].push(item);
-        });
-
-        allSectionNames.forEach(sectionName => {
-            const items = sectionGroups[sectionName] || [];
-            const totalItems = items.length;
-            const avgMaxClicks = totalItems > 0
-                ? (items.reduce((sum, i) => sum + (i.max_clicks || 0), 0) / totalItems)
-                : 0;
-            const avgMaxCtr = totalItems > 0
-                ? (items.reduce((sum, i) => sum + (i.max_click_rate_raw || 0), 0) / totalItems)
-                : 0;
-
-            const hasReport = sectionsWithReports.includes(sectionName);
-            const color = getColorForSection(sectionName);
-
-            const row = document.createElement('tr');
-            row.innerHTML = `
-                <td><input type="checkbox" class="section-select-cb" value="${sectionName}" checked></td>
-                <td><span class="badge" style="background-color: ${color};">${sectionName}</span></td>
-                <td class="text-end">${totalItems}</td>
-                <td class="text-end">${avgMaxClicks.toFixed(1)}</td>
-                <td class="text-end" data-order="${avgMaxCtr}">${(avgMaxCtr * 100).toFixed(2)}%</td>
-                <td class="text-center" data-order="${hasReport ? 1 : 0}">
-                    ${hasReport
-                        ? `<i class="bi bi-eye-fill insight-eye" data-section="${sectionName}" title="View saved insights"></i><i class="bi bi-trash-fill insight-trash" data-section="${sectionName}" title="Delete insights"></i>`
-                        : ''}
-                </td>
-            `;
-            tbody.appendChild(row);
-        });
-
-        // Initialize DataTable for sorting
-        const table = $('#sectionsTable').DataTable({
-            paging: false,
-            searching: false,
-            info: false,
-            order: [[1, 'asc']],
-            columnDefs: [
-                { orderable: false, targets: 0 }  // Checkbox column not sortable
-            ]
-        });
-
-        // Attach event listeners (must be after DataTable init since it may re-render)
-        $('#sectionsTable').on('change', '.section-select-cb', updateSectionCreditCost);
-        $('#sectionsTable').on('click', '.insight-eye', function() {
-            openReadOnlyReport(this.dataset.section);
-        });
-        $('#sectionsTable').on('click', '.insight-trash', function() {
-            deleteSectionInsight(this.dataset.section);
-        });
-
-        // Select-all checkbox
-        document.getElementById('selectAllSections').checked = true;
-        updateSectionCreditCost();
-    }
-
-    document.getElementById('selectAllSections')?.addEventListener('change', function() {
-        // Use jQuery to find checkboxes across all DataTable pages
-        $('#sectionsTable').find('.section-select-cb').prop('checked', this.checked);
-        updateSectionCreditCost();
-    });
-
-    function getSelectedSectionNames() {
-        // Use jQuery to find across all DataTable pages (DataTable may detach DOM nodes)
-        return $('#sectionsTable').find('.section-select-cb:checked').map(function() { return this.value; }).get();
-    }
-
-    function updateSectionCreditCost() {
-        const selected = getSelectedSectionNames();
-        const costEl = document.getElementById('sectionCreditCost');
-        if (costEl) {
-            costEl.textContent = selected.length > 0
-                ? `\u{1F9E0} ${selected.length} AI credit${selected.length !== 1 ? 's' : ''}`
-                : '';
-        }
-    }
-
-    // =========================================================================
-    // Load section report status
-    // =========================================================================
-    async function loadSectionReportStatus() {
-        try {
-            const response = await fetch('/insights/section-report-status/');
-            const data = await response.json();
-            if (data.success) {
-                sectionsWithReports = data.sections_with_reports || [];
-            }
-        } catch (error) {
-            console.error('Error loading section report status:', error);
-        }
-    }
-
-    // =========================================================================
-    // Get Section Insights flow
-    // =========================================================================
-    document.getElementById('getSectionInsightsBtn')?.addEventListener('click', async function() {
-        const selected = getSelectedSectionNames();
-        if (selected.length === 0) {
-            showToast('Please select at least one section.', 'warning');
-            return;
-        }
-
-        // Check for overwrite
-        const sectionsToOverwrite = selected.filter(s => sectionsWithReports.includes(s));
-        if (sectionsToOverwrite.length > 0) {
-            const msg = `${sectionsToOverwrite.length} of the sections you selected already have saved insights. Re-generating will overwrite them if accepted. Proceed?`;
-            if (!await showConfirm(msg, 'Overwrite Existing Insights?')) return;
-        }
-
-        executeGenerateSectionInsights(selected);
-    });
-
-    async function executeGenerateSectionInsights(sections) {
-        const button = document.getElementById('getSectionInsightsBtn');
-        button.disabled = true;
-
-        ProgressBar.start({
-            containerId: 'sectionInsightsProgress',
-            expectedDuration: {{ progress_durations.generate_report }},
-            subtext: 'Generating insights for ' + sections.length + ' section' + (sections.length !== 1 ? 's' : '') + '...',
-        });
-
-        try {
-            // Prepare items for the report (all items, not filtered)
-            const itemsForReport = allItems.map(item => ({
-                text: item.text || '',
-                click_rate: item.click_rate_raw || [0],
-                section_name: item.section_name || 'Unknown',
-            }));
-
-            const formData = new FormData();
-            formData.append('sections_json', JSON.stringify(sections));
-            formData.append('all_items_json', JSON.stringify(itemsForReport));
-            formData.append('csrfmiddlewaretoken', '{{ csrf_token }}');
-
-            const response = await fetch('/insights/generate-section-insights/', {
-                method: 'POST',
-                body: formData
-            });
-
-            const data = await response.json();
-
-            if (data.success && data.tasks && data.tasks.length > 0) {
-                updateCreditsDisplay(data.credits_used, data.credits_quota);
-                // Start polling all tasks
-                pollSectionTasks(data.tasks);
-            } else if (data.success) {
-                // Server returned success but no tasks were created
-                ProgressBar.forceClose({ containerId: 'sectionInsightsProgress' });
-                showToast('No items found for the selected sections. Try re-processing your posts.', 'warning');
-                button.disabled = false;
-            } else {
-                ProgressBar.forceClose({ containerId: 'sectionInsightsProgress' });
-                showToast(GENERIC_ERROR_TOAST, 'danger');
-                button.disabled = false;
-            }
-        } catch (error) {
-            ProgressBar.forceClose({ containerId: 'sectionInsightsProgress' });
-            showToast(GENERIC_ERROR_TOAST, 'danger');
-            button.disabled = false;
-        }
-    }
-
-    // =========================================================================
-    // Poll section tasks
-    // =========================================================================
-    function pollSectionTasks(tasks) {
-        // tasks: [{section_name, task_id}, ...]
-        const completedResults = []; // {section_name, result_text}
-        const taskStatuses = {};
-        tasks.forEach(t => { taskStatuses[t.task_id] = 'pending'; });
-
-        const POLL_TIMEOUT_MS = 150000; // 2.5 min client-side safety net
-        const pollStartTime = Date.now();
-
-        const pollInterval = setInterval(async () => {
-            // Client-side timeout: treat all remaining pending tasks as errors
-            if (Date.now() - pollStartTime > POLL_TIMEOUT_MS) {
-                for (const task of tasks) {
-                    if (taskStatuses[task.task_id] === 'pending') {
-                        taskStatuses[task.task_id] = 'error';
-                        completedResults.push({
-                            section_name: task.section_name,
-                            result_text: null,
-                            error: 'Generation timed out',
-                        });
-                    }
-                }
-            }
-
-            let allDone = true;
-
-            for (const task of tasks) {
-                if (taskStatuses[task.task_id] !== 'pending') continue;
-                allDone = false;
-
-                try {
-                    const response = await fetch(`/insights/report-status/${task.task_id}/`);
-                    const data = await response.json();
-
-                    if (data.status === 'complete') {
-                        taskStatuses[task.task_id] = 'complete';
-                        completedResults.push({
-                            section_name: task.section_name,
-                            result_text: data.result_text,
-                        });
-                        if (data.credits_used !== undefined) {
-                            updateCreditsDisplay(data.credits_used, data.credits_quota);
-                        }
-                    } else if (data.status === 'error') {
-                        taskStatuses[task.task_id] = 'error';
-                        completedResults.push({
-                            section_name: task.section_name,
-                            result_text: null,
-                            error: data.error_message || 'Error generating insights',
-                        });
-                    }
-                    // else still pending
-                } catch (err) {
-                    taskStatuses[task.task_id] = 'error';
-                    completedResults.push({
-                        section_name: task.section_name,
-                        result_text: null,
-                        error: err.message,
-                    });
-                }
-            }
-
-            // Check if all done
-            const remaining = Object.values(taskStatuses).filter(s => s === 'pending').length;
-            if (remaining === 0) {
-                clearInterval(pollInterval);
-                document.getElementById('getSectionInsightsBtn').disabled = false;
-
-                // Filter to successful results
-                const successfulResults = completedResults.filter(r => r.result_text);
-                const errorResults = completedResults.filter(r => !r.result_text);
-
-                if (errorResults.length > 0 && successfulResults.length === 0) {
-                    // All sections failed
-                    ProgressBar.complete({ containerId: 'sectionInsightsProgress', success: false, message: 'All sections failed' });
-                    showToast(GENERIC_ERROR_TOAST, 'danger');
-                } else if (errorResults.length > 0) {
-                    // Partial failure
-                    ProgressBar.complete({ containerId: 'sectionInsightsProgress', success: true, message: 'Insights generated (with errors)' });
-                    const failedNames = errorResults.map(r => r.section_name).join(', ');
-                    showToast(`Some sections failed (${failedNames}). Please note this in the <a href="https://docs.google.com/forms/d/e/1FAIpQLSfbCptLUP5Hdg9An8sCbAV2H0twWNjyuhK9hXAfB6GBthOCtw/viewform?usp=header" target="_blank">feedback form</a>.`, 'warning');
-                } else {
-                    ProgressBar.complete({ containerId: 'sectionInsightsProgress', success: true, message: 'Insights generated!' });
-                }
-
-                if (successfulResults.length > 0) {
-                    openReviewOverlay(successfulResults);
-                }
-            }
-        }, 2000);
-    }
-
-    // =========================================================================
-    // Review overlay
-    // =========================================================================
-    let reviewQueue = [];
-    let reviewIndex = 0;
-
-    function openReviewOverlay(results) {
-        reviewQueue = results;
-        reviewIndex = 0;
-        showReviewItem();
-        document.getElementById('insightsReviewOverlay').style.display = 'flex';
-    }
-
-    function showReviewItem() {
-        if (reviewIndex >= reviewQueue.length) {
-            closeReviewOverlay();
-            return;
-        }
-
-        const item = reviewQueue[reviewIndex];
-        document.getElementById('reviewSectionTitle').textContent = 'Insights: ' + item.section_name;
-        document.getElementById('reviewCounter').textContent = (reviewIndex + 1) + ' of ' + reviewQueue.length;
-        document.getElementById('reviewReportBody').innerHTML = renderMarkdown(item.result_text);
-    }
-
-    document.getElementById('reviewAcceptBtn')?.addEventListener('click', async function() {
-        const item = reviewQueue[reviewIndex];
-        // Save the report
-        try {
-            const formData = new FormData();
-            formData.append('section_name', item.section_name);
-            formData.append('report_text', item.result_text);
-            formData.append('csrfmiddlewaretoken', '{{ csrf_token }}');
-
-            const response = await fetch('/insights/save-section-report/', {
-                method: 'POST',
-                body: formData
-            });
-
-            const data = await response.json();
-            if (data.success) {
-                if (!sectionsWithReports.includes(item.section_name)) {
-                    sectionsWithReports.push(item.section_name);
-                }
-            } else {
-                showToast('Error saving report for ' + item.section_name + ': ' + data.error, 'danger');
-            }
-        } catch (error) {
-            showToast('Error saving report: ' + error.message, 'danger');
-        }
-
-        reviewIndex++;
-        showReviewItem();
-    });
-
-    document.getElementById('reviewSkipBtn')?.addEventListener('click', function() {
-        reviewIndex++;
-        showReviewItem();
-    });
-
-    function closeReviewOverlay() {
-        document.getElementById('insightsReviewOverlay').style.display = 'none';
-        reviewQueue = [];
-        reviewIndex = 0;
-        // Re-render sections table to update eyeballs
-        if (viewMode === 'sections') {
-            renderSectionsTable();
-        }
-    }
-
-    // =========================================================================
-    // Read-only report popup (eyeball click)
-    // =========================================================================
-    async function openReadOnlyReport(sectionName) {
-        try {
-            const response = await fetch(`/insights/load-section-report/?section_name=${encodeURIComponent(sectionName)}`);
-            const data = await response.json();
-
-            if (data.success) {
-                document.getElementById('readOnlyReportTitle').textContent = 'Insights: ' + sectionName;
-                document.getElementById('readOnlyReportBody').innerHTML = renderMarkdown(data.report_text);
-                document.getElementById('readOnlyReportOverlay').style.display = 'flex';
-            } else {
-                showToast(GENERIC_ERROR_TOAST, 'danger');
-            }
-        } catch (error) {
-            showToast(GENERIC_ERROR_TOAST, 'danger');
-        }
-    }
-
-    document.getElementById('readOnlyExitBtn')?.addEventListener('click', function() {
-        document.getElementById('readOnlyReportOverlay').style.display = 'none';
-    });
-
-    // =========================================================================
-    // Delete single section insight (trash icon)
-    // =========================================================================
-    async function deleteSectionInsight(sectionName) {
-        if (!await showConfirm(`Delete insights for "${sectionName}"?\n\nThis action cannot be undone.`)) return;
-
-        try {
-            const formData = new FormData();
-            formData.append('sections_json', JSON.stringify([sectionName]));
-            formData.append('csrfmiddlewaretoken', '{{ csrf_token }}');
-
-            const response = await fetch('/insights/delete-section-reports/', {
-                method: 'POST',
-                body: formData
-            });
-
-            const data = await response.json();
-            if (data.success) {
-                sectionsWithReports = sectionsWithReports.filter(s => s !== sectionName);
-                renderSectionsTable();
-                showToast(`Deleted insights for "${sectionName}".`);
-            } else {
-                showToast(GENERIC_ERROR_TOAST, 'danger');
-            }
-        } catch (error) {
-            showToast(GENERIC_ERROR_TOAST, 'danger');
-        }
-    }
-
-    // =========================================================================
-    // Initialize processed data view
+    // Initialize
     // =========================================================================
     {% if has_processed_data %}
-    (async function loadProcessedData() {
+    (async function loadData() {
         try {
-            // Load data and report status in parallel
-            const [dataResponse, statusResponse] = await Promise.all([
-                fetch('/insights/load-processed-data/'),
-                fetch('/insights/section-report-status/')
-            ]);
-
-            const data = await dataResponse.json();
-            const statusData = await statusResponse.json();
-
-            if (statusData.success) {
-                sectionsWithReports = statusData.sections_with_reports || [];
-            }
+            const response = await fetch('/insights/load-processed-data/');
+            const data = await response.json();
 
             if (data.success) {
                 allItems = data.items;
-                allSectionNames = data.section_names;
-                filteredItems = allItems.slice();
-
-                renderSectionCheckboxes();
-                refreshAll();
-                renderSectionsTable();
-                resumePendingTasks();
+                renderTable(allItems);
+                updatePhraseAnalysis(allItems);
             } else {
-                console.error('Error loading processed data:', data.error);
+                console.error('Error loading link data:', data.error);
             }
         } catch (error) {
-            console.error('Error loading processed data:', error);
+            console.error('Error loading link data:', error);
         }
     })();
     {% endif %}
-
-    // =========================================================================
-    // Filter event listeners
-    // =========================================================================
-    document.getElementById('metricSelect')?.addEventListener('change', refreshAll);
-    document.getElementById('startDate')?.addEventListener('change', refreshAll);
-    document.getElementById('endDate')?.addEventListener('change', refreshAll);
-
-    document.getElementById('clearStartDate')?.addEventListener('click', function() {
-        document.getElementById('startDate').value = '';
-        refreshAll();
-    });
-    document.getElementById('clearEndDate')?.addEventListener('click', function() {
-        document.getElementById('endDate').value = '';
-        refreshAll();
-    });
 
     // Phrase analysis event listeners
     function updatePhraseHeader() {
@@ -1413,23 +372,23 @@
     document.getElementById('minAppearances')?.addEventListener('input', updatePhraseTable);
 
     // =========================================================================
-    // Download filtered items as CSV
+    // Download CSV
     // =========================================================================
-    document.getElementById('downloadFilteredCsvBtn')?.addEventListener('click', function() {
-        if (!filteredItems || filteredItems.length === 0) {
-            showToast('No items to download.', 'warning');
+    document.getElementById('downloadCsvBtn')?.addEventListener('click', function() {
+        if (!allItems || allItems.length === 0) {
+            showToast('No data to download.', 'warning');
             return;
         }
 
-        const headers = ['Post Title', 'Post Date', 'Section', 'Item Text', 'Links', 'Max Clicks', 'Max CTR'];
-        const rows = filteredItems.map(item => [
+        const headers = ['Post Title', 'Post Date', 'Description', 'URL', 'Rank', 'Mean Clicks', 'Mean CTR'];
+        const rows = allItems.map(item => [
             item.post_title || '',
             item.post_date_display || '',
-            item.section_name || '',
-            item.text || '',
-            (item.links || []).join('; '),
-            item.max_clicks || 0,
-            item.max_click_rate || '0.00%'
+            item.description || '',
+            item.raw_url || '',
+            item.rank_in_post || 0,
+            item.mean_clicks || 0,
+            (item.mean_ctr || 0).toFixed(2) + '%'
         ]);
 
         let csv = headers.map(h => '"' + h.replace(/"/g, '""') + '"').join(',') + '\n';
@@ -1441,51 +400,11 @@
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = 'processed_items.csv';
+        a.download = 'link_data.csv';
         document.body.appendChild(a);
         a.click();
         URL.revokeObjectURL(url);
         document.body.removeChild(a);
     });
-
-    // =========================================================================
-    // Resume polling on page load if there are pending tasks
-    // =========================================================================
-    function resumePendingTasks() {
-        if (pendingTasks.length === 0) return;
-
-        document.getElementById('getSectionInsightsBtn').disabled = true;
-
-        // Calculate elapsed time to resume progress bar where it would be
-        const fullDuration = {{ progress_durations.generate_report }};
-        let startProgress = 0;
-        let remainingDuration = fullDuration;
-        if (pendingTasks[0].created_at) {
-            const createdAt = new Date(pendingTasks[0].created_at);
-            const elapsedSeconds = (Date.now() - createdAt.getTime()) / 1000;
-            // Progress bar reaches 90% over fullDuration, in 10% increments
-            const elapsedSteps = Math.min(9, Math.floor((elapsedSeconds / fullDuration) * 9));
-            startProgress = elapsedSteps * 10;
-            const remainingSteps = 9 - elapsedSteps;
-            // Scale expectedDuration so remaining steps take proportional time
-            remainingDuration = remainingSteps > 0 ? (fullDuration / 9) * remainingSteps : fullDuration;
-        }
-
-        ProgressBar.start({
-            containerId: 'sectionInsightsProgress',
-            expectedDuration: remainingDuration,
-            startProgress: startProgress,
-            subtext: 'Generating insights for ' + pendingTasks.length + ' section' + (pendingTasks.length !== 1 ? 's' : '') + '...',
-        });
-
-        // Switch to sections view if not already (unchecked = Sections)
-        const toggle = document.getElementById('viewModeToggle');
-        if (toggle && toggle.checked) {
-            toggle.checked = false;
-            toggle.dispatchEvent(new Event('change'));
-        }
-
-        pollSectionTasks(pendingTasks);
-    }
 </script>
 {% endblock %}
