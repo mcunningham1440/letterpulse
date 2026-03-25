@@ -364,6 +364,8 @@ StartLine = 964, EndLine = 994
 StartLine = 995, EndLine = 1025
 StartLine = 1026, EndLine = 1067
 
+Note that you would NOT include the title span ("This Week’s Chicago Tech Events").
+
 Use your judgement and each section's description to determine whether to extract multiple items or a single item per section.
 It is possible for a section to have zero items if no matching content is found.
 """
