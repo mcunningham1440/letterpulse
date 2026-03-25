@@ -56,7 +56,7 @@ app/
 │   ├── wsgi.py / asgi.py       # WSGI/ASGI entry points
 │   └── __init__.py
 ├── analytics/                  # Main Django app
-│   ├── models.py               # Post, ContentSet, Report, UsageAccount, ExecutionLog, SurveyResponse, ProcessedPost, ClickVizEmailLog, CronRunLog models
+│   ├── models.py               # Post, ContentSet, Report, UsageAccount, ExecutionLog, SurveyResponse, ProcessedPost, LinkData, ClickVizEmailLog, CronRunLog models
 │   ├── views.py                # All view logic (login-protected)
 │   ├── urls.py                 # App URL patterns (analytics namespace)
 │   ├── utils.py                # Core utility functions (API calls, AI extraction, credit charging)
@@ -165,51 +165,27 @@ Stores user responses to the signup survey (displayed on first login):
 The survey modal appears automatically on first login and is dismissed once submitted. Survey completion is tracked via `UsageAccount.survey_completed`.
 
 ### ProcessedPost
-Stores section-aware extracted content for a single post after user review/approval:
+Lightweight marker indicating a post has been processed for link data:
 - `post`: ForeignKey to Post (the source post)
 - `user`: ForeignKey to User (owner)
 - `publication`: ForeignKey to Publication (nullable)
-- `sections_data`: JSON array of sections, each containing a `section_name` and `items` list
-- Unique constraint: `(post, user)` - one processed result per post per user
+- Unique constraint: `(post, user)` - one marker per post per user
 
-`sections_data` structure:
-```json
-[
-  {
-    "section_name": "Quick Bites",
-    "items": [
-      {
-        "post_title": "Newsletter #42",
-        "post_date": "2025-12-01",
-        "text": "Extracted item text",
-        "links": ["https://example.com"],
-        "clicks": [45],
-        "click_rate": [0.03]
-      }
-    ]
-  }
-]
-```
+Created automatically when "Process Selected Posts" runs. The actual link data is stored in the `LinkData` model.
 
-Created via the "Process Selected Posts" workflow on the Posts page. Each item within a section has the same fields as ContentSet items (`text`, `links`, `clicks`, `click_rate`, `post_title`, `post_date`).
-
-### ProcessingTemplate
-Saved section layout templates for the Process Selected Posts workflow:
-- `name`: Template name (unique per publication and user)
+### LinkData
+Stores described link data extracted from a processed post:
+- `post`: ForeignKey to Post (the source post)
 - `user`: ForeignKey to User (owner)
 - `publication`: ForeignKey to Publication (nullable)
-- `sections_data`: JSON array of `{name, description}` dicts defining section layouts
-- Unique constraint: `(name, publication, user)`
+- `raw_url`: URL of the link (max 2048 chars)
+- `description`: GPT-generated description of what the link points to
+- `rank_in_post`: Rank by CTR within the post (1 = highest)
+- `mean_ctr`: Mean CTR as percentage (e.g. 3.5 = 3.5%)
+- `mean_clicks`: Mean unique clicks across duplicate link occurrences
+- Unique constraint: `(post, user, raw_url)`
 
-`sections_data` structure:
-```json
-[
-  {"name": "Quick Bites", "description": "Items in the Quick Bites section"},
-  {"name": "Deep Dives", "description": ""}
-]
-```
-
-Users can save/load templates from the processing modal to avoid re-entering section definitions for newsletters with a consistent layout.
+Created via the "Process Selected Posts" workflow. Each row represents one unique link from a post that had clicks.
 
 ### PendingReport
 Tracks background report generation tasks:
@@ -245,30 +221,18 @@ Uses django-allauth for email-based authentication:
 ### 1. Posts Page (`/posts/`)
 - **Refresh Posts**: Fetches all posts from Beehiiv API with pagination
 - **Select Posts**: DataTable with sorting by date, opens, clicks
-- **Process Selected Posts**: Opens a modal to define named sections (up to 15), each with a name and optional description
-  - **Save/Load Templates**: Users can save the current section layout as a named template and load saved templates to pre-populate section fields (stored in `ProcessingTemplate` model, scoped to user + publication)
-  - Uses GPT-5.1 to identify HTML line ranges for each section
-  - Extracts text and links from each item, grouped by section
-  - Matches links with click data using Levenshtein fuzzy matching
-  - Shows progress bar during extraction
-  - If any selected posts already have saved ProcessedPost data, shows an overwrite warning before proceeding
-  - Opens a review overlay popup (post-by-post) where users can:
-    - **Save and Proceed**: Save the post's sections to the `ProcessedPost` table
-    - **Delete Selected Items**: Remove specific items from section tables
-    - **Re-process post**: Re-run extraction with custom instructions (costs 1 additional credit, shows progress bar)
-    - **Proceed Without Saving**: Skip the post without saving
-  - On review completion, page reloads to update the Processed column
-- **Processed Column**: Shows a green checkmark for posts that have been processed and saved
+- **Process Selected Posts**: Runs immediately when clicked (no modal). Extracts all links from post HTML, matches with click data using Levenshtein fuzzy matching, deduplicates links, and uses GPT-5.4-mini to describe what each link points to. Results are stored in the `LinkData` table. A `ProcessedPost` marker is created for each processed post. Shows progress bar during extraction. If any selected posts already have processed data, shows an overwrite warning.
+- **Processed Column**: Shows a green checkmark for posts that have been processed. Trash icon to clear processed data (deletes both `ProcessedPost` and `LinkData` records).
 - **Download Click Visualization**: ZIP of HTML files with click counts overlaid on links
 - **Download Improvement Tips**: ZIP of HTML files with AI-generated improvement tips
 
 ### 2. Insights Page (`/insights/`)
-- **Trend Chart**: Chart.js time-series line chart showing section performance over time, driven by ProcessedPost data
+- **Trend Chart**: Chart.js time-series line chart showing link performance over time, driven by LinkData
   - Metric selector: "Average max CTR" (default), "CTR of most clicked link", "Average max clicks", "Clicks of most clicked link"
   - Date range filters (start/end) with "All" clear buttons
   - Section checkboxes below chart (color-coded, all checked by default)
 - **Data Table Card** with Items/Sections toggle:
-  - **Items view** (default): Filtered ProcessedPost items showing Post Title, Post Date, Section, Item Text, Links, Max Clicks, Max CTR. Download CSV button.
+  - **Items view** (default): Filtered LinkData items showing Post Title, Post Date, Section, Item Text, Links, Max Clicks, Max CTR. Download CSV button.
   - **Sections view**: Aggregated per-section table (Total Items, Avg Max Clicks, Avg Max CTR, Insights status). Uses all items (unaffected by chart filters).
     - **Get Insights**: Select sections, click "Get Insights from Selected Sections" to generate per-section AI reports in parallel background threads. Credits charged upfront (1 per section). Shows overwrite warning if sections already have saved reports.
     - **Review overlay**: After generation completes, a review popup shows each section's report sequentially with Accept/Skip buttons. Accepted reports are saved via `update_or_create`.
@@ -325,23 +289,17 @@ All routes use the `analytics:` namespace.
 ### Posts Routes
 - `GET /posts/` - Main posts page
 - `POST /posts/run/` - Run AI content extraction (legacy single-description flow)
-- `POST /posts/process/` - Run multi-section extraction (returns JSON for review flow)
-- `POST /posts/review/approve/` - Save reviewed post sections to ProcessedPost (AJAX)
-- `POST /posts/review/reprocess/` - Re-run extraction for a single post with custom instructions (AJAX)
+- `POST /posts/process/` - Run link-level extraction on selected posts, stores results in LinkData (AJAX)
 - `POST /posts/save/` - Save extracted items as ContentSet
 - `POST /posts/delete-items/` - Remove items from session
 - `POST /posts/refresh-posts/` - Fetch latest posts from Beehiiv
 - `POST /posts/download-click-viz/` - Generate click visualization ZIP
 - `POST /posts/download-annotated/` - Generate annotated HTML ZIP
-- `POST /posts/save-template/` - Save section layout as a named processing template (AJAX)
-- `GET /posts/load-templates/` - List saved processing templates for current publication (AJAX)
-- `POST /posts/delete-template/<id>/` - Delete a processing template (AJAX)
-- `POST /posts/clear-processed/` - Delete ProcessedPost records for selected posts (AJAX)
-- `GET /posts/load-processed/<post_id>/` - Load ProcessedPost sections data for a single post (AJAX)
+- `POST /posts/clear-processed/` - Delete ProcessedPost and LinkData records for selected posts (AJAX)
 
 ### Insights Routes
 - `GET /insights/` - Insights dashboard (trend chart + section-level insights)
-- `GET /insights/load-processed-data/` - Load all ProcessedPost items as JSON (flattened with section_name)
+- `GET /insights/load-processed-data/` - Load all LinkData items as JSON (with section_name="All Links")
 - `GET /insights/load-content-set/<name>/` - Load ContentSet as JSON
 - `POST /insights/generate-section-insights/` - Start parallel background AI report generation for selected sections (accepts sections_json + all_items_json, returns list of task_ids)
 - `GET /insights/report-status/<uuid:task_id>/` - Poll background report generation status (includes section_name in response)
@@ -481,8 +439,8 @@ Views use `get_user_api_credentials(user)` helper to retrieve credentials and re
 - `charge_credits(user, credits)`: Atomically charge credits against user quota
 - `NotEnoughCredits`: Exception raised when quota exceeded
 - `extract_items()`: AI-powered content extraction from HTML (single-description, legacy)
-- `extract_sections()`: AI-powered multi-section content extraction from HTML (used by Process Selected Posts)
-- `extract_sections_parallel()`: Parallel multi-section extraction across multiple posts
+- `process_post_links()`: Extract links from a post, match with clicks, deduplicate, and use GPT-5.4-mini to describe each link. Returns list of link row dicts.
+- `process_posts_links_parallel()`: Process multiple posts in parallel (semaphore=10), calling `process_post_links()` for each.
 - `generate_content_insights()`: Generate performance analysis report for a single section. When item count exceeds `MAX_REPORT_ITEMS`, top and bottom performers by CTR are kept and middle items are omitted (with a note to the LLM).
 - `annotate_post_html(post_id, content_perf_evals, beehiiv_token, beehiiv_pub_id, user=None)`: Insert improvement tips into HTML
 - `annotate_posts_parallel(post_ids, content_perf_evals, beehiiv_token, beehiiv_pub_id, user=None)`: Parallel annotation of multiple posts
@@ -518,6 +476,11 @@ DEFAULT_MONTHLY_CREDITS = 150
 CREDITS_PER_EXTRACTION = 1      # Per post extracted from
 CREDITS_PER_REPORT = 1          # Flat cost for generating insights
 CREDITS_PER_ANNOTATION = 1      # Per post annotated with improvement tips
+
+# Link processing configuration
+LINK_PROCESS_TOP_N = None       # Tag top N links by CTR (None = include all with clicks)
+LINK_PROCESS_TOP_P = None       # Tag top P percentile links by CTR
+LINK_PROCESS_MAX_RETRIES = 2    # Max retries if GPT description count mismatches
 
 # Maximum items sent to the LLM for report generation
 MAX_REPORT_ITEMS = 150

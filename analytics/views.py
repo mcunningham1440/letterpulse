@@ -16,7 +16,7 @@ import pandas as pd
 import json
 from asgiref.sync import async_to_sync
 
-from .models import Post, ContentSet, Report, UsageAccount, SurveyResponse, ProcessedPost, ProcessingTemplate, PendingReport
+from .models import Post, ContentSet, Report, UsageAccount, SurveyResponse, ProcessedPost, LinkData, PendingReport
 
 logger = logging.getLogger(__name__)
 
@@ -62,26 +62,6 @@ def sanitize_filename(filename: str) -> str:
 # Allows alphanumeric, spaces, hyphens, underscores, and common punctuation
 VALID_SET_NAME_PATTERN = re.compile(r'^[\w\s\-.,()\']+$', re.UNICODE)
 
-def validate_section_name(name: str) -> tuple[bool, str]:
-    """
-    Validate a section name. More permissive than content set names —
-    allows most printable characters except control characters.
-
-    Returns:
-        (is_valid, error_message) tuple
-    """
-    if not name:
-        return False, "Name cannot be empty."
-
-    if len(name) > 200:
-        return False, "Name must be 200 characters or less."
-
-    # Check for newlines and other control characters
-    if any(c in name for c in '\n\r\t\x00'):
-        return False, "Name cannot contain control characters."
-
-    return True, ""
-
 def validate_set_name(name: str) -> tuple[bool, str]:
     """
     Validate a content set name for security and usability.
@@ -112,8 +92,7 @@ def validate_set_name(name: str) -> tuple[bool, str]:
 from .utils import (
     load_posts_from_db,
     fetch_posts_html_and_clicks_parallel,
-    extract_sections,
-    extract_sections_parallel,
+    process_posts_links_parallel,
     generate_content_insights,
     refresh_posts_data,
     annotate_posts_parallel,
@@ -610,43 +589,23 @@ def run_extraction(request):
 @require_POST
 def run_processing(request):
     """
-    Run multi-section content extraction on selected posts.
-    Returns JSON with extraction results for client-side review flow.
+    Run link-level extraction on selected posts.
+    Fetches HTML + clicks, extracts links, gets GPT descriptions, and stores LinkData rows.
+    Returns JSON with processed post IDs for frontend checkmark updates.
     """
+    from .models import Publication
+
     try:
         beehiiv_token, beehiiv_pub_id, is_valid = get_user_api_credentials(request.user)
         if not beehiiv_token or not beehiiv_pub_id or not is_valid:
             return JsonResponse({'success': False, 'error': 'Please configure valid API credentials in Account settings.'}, status=400)
 
-        # Parse JSON body
         body = json.loads(request.body)
         selected_indices = body.get('selected_posts', [])
-        sections = body.get('sections', [])
 
         if not selected_indices:
             return JsonResponse({'success': False, 'error': 'Please select at least one post.'}, status=400)
 
-        if not sections or len(sections) == 0:
-            return JsonResponse({'success': False, 'error': 'Please add at least one section.'}, status=400)
-
-        if len(sections) > 15:
-            return JsonResponse({'success': False, 'error': 'Maximum 15 sections allowed.'}, status=400)
-
-        # Validate section names (description is optional)
-        seen_names = set()
-        for s in sections:
-            name = s.get('name', '').strip()
-            s['description'] = s.get('description', '').strip()
-            if not name:
-                return JsonResponse({'success': False, 'error': 'All section names must be filled in.'}, status=400)
-            is_valid, error_msg = validate_section_name(name)
-            if not is_valid:
-                return JsonResponse({'success': False, 'error': f'Invalid section name "{name}": {error_msg}'}, status=400)
-            if name.lower() in seen_names:
-                return JsonResponse({'success': False, 'error': f'Duplicate section name: "{name}".'}, status=400)
-            seen_names.add(name.lower())
-
-        # Convert indices to integers
         selected_indices = [int(idx) for idx in selected_indices]
 
         # Load posts from database
@@ -656,57 +615,58 @@ def run_processing(request):
         posts_of_interest = posts_df.iloc[selected_indices]
         post_ids = posts_of_interest['id'].tolist()
 
-        # Fetch HTMLs and clicks
-        htmls, clicks_by_id = async_to_sync(fetch_posts_html_and_clicks_parallel)(
-            post_ids, beehiiv_token, beehiiv_pub_id
-        )
-
-        if not htmls:
-            return JsonResponse({'success': False, 'error': 'Failed to fetch content from Beehiiv.'}, status=500)
-
-        # Prepare posts data
-        posts_data = [
-            (row.id, row.title, f"{row.id}.html", row.publish_date, row.unique_email_opens)
-            for _, row in posts_of_interest.iterrows()
-        ]
-
-        # Charge credits
-        num_posts = len([p for p in posts_data if p[2] in htmls and p[0] in clicks_by_id])
-        credits_needed = num_posts * settings.CREDITS_PER_EXTRACTION
+        # Charge credits (1 per post)
+        credits_needed = len(post_ids) * settings.CREDITS_PER_EXTRACTION
         charge_credits(request.user, credits_needed)
 
-        # Run parallel section extraction
-        results_by_post = async_to_sync(extract_sections_parallel)(
-            posts_data, sections, htmls, clicks_by_id, user=request.user
+        # Run parallel link extraction
+        results_by_post = async_to_sync(process_posts_links_parallel)(
+            post_ids, request.user, beehiiv_token, beehiiv_pub_id
         )
 
-        # Build review data
-        review_posts = []
-        for post_id, title, html_filename, post_date, unique_email_opens in posts_data:
-            if post_id in results_by_post:
-                review_posts.append({
-                    'post_id': post_id,
-                    'post_title': title,
-                    'post_date': str(post_date) if post_date else None,
-                    'sections': results_by_post[post_id]
-                })
+        # Get publication for FK
+        try:
+            publication = Publication.objects.get(pub_id=beehiiv_pub_id)
+        except Publication.DoesNotExist:
+            publication = None
 
-        review_data = {
-            'posts': review_posts,
-            'current_index': 0,
-            'sections_config': sections,
-            'total_posts': len(review_posts)
-        }
+        # Save results to database
+        processed_post_ids = []
+        for post_id, rows in results_by_post.items():
+            post = Post.objects.get(post_id=post_id, user=request.user)
 
-        # Store in session for re-process access
-        request.session['review_sections_config'] = sections
+            # Delete old LinkData for this post+user
+            LinkData.objects.filter(post=post, user=request.user).delete()
 
-        # Get updated credit info
+            # Bulk create new LinkData rows
+            if rows:
+                LinkData.objects.bulk_create([
+                    LinkData(
+                        post=post,
+                        user=request.user,
+                        publication=publication,
+                        raw_url=row['raw_url'],
+                        description=row['description'],
+                        rank_in_post=row['rank_in_post'],
+                        mean_ctr=row['mean_ctr'],
+                        mean_clicks=row['mean_clicks'],
+                    )
+                    for row in rows
+                ])
+
+            # Create/update ProcessedPost marker
+            ProcessedPost.objects.update_or_create(
+                post=post,
+                user=request.user,
+                defaults={'publication': publication}
+            )
+            processed_post_ids.append(post_id)
+
         usage = UsageAccount.objects.get(user=request.user)
 
         return JsonResponse({
             'success': True,
-            'review_data': review_data,
+            'processed_post_ids': processed_post_ids,
             'credits_used': usage.used_this_period,
             'credits_quota': usage.monthly_quota
         })
@@ -716,120 +676,6 @@ def run_processing(request):
     except Exception as e:
         logger.error(f"Error in run_processing: {str(e)}", exc_info=True)
         return JsonResponse({'success': False, 'error': f'Error during processing: {str(e)}'}, status=500)
-
-
-@login_required
-@require_POST
-def approve_post(request):
-    """
-    Save reviewed post sections to the ProcessedPost table.
-    Called via AJAX from the review flow.
-    """
-    from .models import Publication
-    try:
-        body = json.loads(request.body)
-        post_id = body.get('post_id')
-        sections_data = body.get('sections_data')
-
-        if not post_id or sections_data is None:
-            return JsonResponse({'success': False, 'error': 'Missing post_id or sections_data.'}, status=400)
-
-        # Get the Post object
-        post = Post.objects.get(post_id=post_id, user=request.user)
-
-        # Get current publication
-        _, beehiiv_pub_id, _ = get_user_api_credentials(request.user)
-        try:
-            publication = Publication.objects.get(pub_id=beehiiv_pub_id)
-        except Publication.DoesNotExist:
-            publication = None
-
-        # Create or update ProcessedPost
-        ProcessedPost.objects.update_or_create(
-            post=post,
-            user=request.user,
-            defaults={
-                'publication': publication,
-                'sections_data': sections_data
-            }
-        )
-
-        return JsonResponse({'success': True})
-
-    except Post.DoesNotExist:
-        return JsonResponse({'success': False, 'error': 'Post not found.'}, status=404)
-    except Exception as e:
-        logger.error(f"Error in approve_post: {str(e)}", exc_info=True)
-        return JsonResponse({'success': False, 'error': str(e)}, status=500)
-
-
-@login_required
-@require_POST
-def reprocess_post(request):
-    """
-    Re-run section extraction for a single post with optional custom instructions.
-    Called via AJAX from the review flow. Charges 1 additional credit.
-    """
-    try:
-        beehiiv_token, beehiiv_pub_id, is_valid = get_user_api_credentials(request.user)
-        if not beehiiv_token or not beehiiv_pub_id or not is_valid:
-            return JsonResponse({'success': False, 'error': 'Please configure valid API credentials in Account settings.'}, status=400)
-
-        body = json.loads(request.body)
-        post_id = body.get('post_id')
-        sections_config = body.get('sections_config', [])
-        custom_instructions = body.get('custom_instructions', '')
-
-        if not post_id:
-            return JsonResponse({'success': False, 'error': 'Missing post_id.'}, status=400)
-
-        if not sections_config:
-            return JsonResponse({'success': False, 'error': 'Missing sections configuration.'}, status=400)
-
-        # Charge 1 credit for re-processing
-        charge_credits(request.user, settings.CREDITS_PER_EXTRACTION)
-
-        # Fetch HTML and clicks for this single post
-        htmls, clicks_by_id = async_to_sync(fetch_posts_html_and_clicks_parallel)(
-            [post_id], beehiiv_token, beehiiv_pub_id
-        )
-
-        html_filename = f"{post_id}.html"
-        if html_filename not in htmls or post_id not in clicks_by_id:
-            return JsonResponse({'success': False, 'error': 'Failed to fetch post data.'}, status=500)
-
-        # Get post info from database
-        post = Post.objects.get(post_id=post_id, user=request.user)
-
-        # Run extraction with custom instructions
-        sections_result = async_to_sync(extract_sections)(
-            htmls[html_filename],
-            sections_config,
-            clicks_by_id[post_id],
-            post.title,
-            post.publish_date,
-            post.unique_email_opens,
-            custom_instructions=custom_instructions,
-            user=request.user
-        )
-
-        # Get updated credit info
-        usage = UsageAccount.objects.get(user=request.user)
-
-        return JsonResponse({
-            'success': True,
-            'sections': sections_result,
-            'credits_used': usage.used_this_period,
-            'credits_quota': usage.monthly_quota
-        })
-
-    except NotEnoughCredits as e:
-        return JsonResponse({'success': False, 'error': str(e)}, status=400)
-    except Post.DoesNotExist:
-        return JsonResponse({'success': False, 'error': 'Post not found.'}, status=404)
-    except Exception as e:
-        logger.error(f"Error in reprocess_post: {str(e)}", exc_info=True)
-        return JsonResponse({'success': False, 'error': str(e)}, status=500)
 
 
 @login_required
@@ -1114,11 +960,11 @@ def insights_view(request):
 @login_required
 def load_processed_data(request):
     """
-    Load all ProcessedPost data for the current user and publication.
-    Flattens sections_data into a single items list with section_name annotated.
+    Load all LinkData for the current user and publication.
+    Returns items in a format compatible with the Insights frontend.
     """
     from .models import Publication
-    from datetime import datetime as dt
+    from .utils import convert_to_user_timezone
 
     try:
         _, beehiiv_pub_id, _ = get_user_api_credentials(request.user)
@@ -1128,59 +974,43 @@ def load_processed_data(request):
         except Publication.DoesNotExist:
             return JsonResponse({'success': True, 'items': [], 'section_names': []})
 
-        processed_posts = ProcessedPost.objects.filter(
+        link_data = LinkData.objects.filter(
             user=request.user, publication=publication
         ).select_related('post')
 
         items = []
-        section_names_set = set()
+        for ld in link_data:
+            post = ld.post
+            post_date = post.publish_date
+            post_date_display = '-'
+            post_date_sortable = ''
+            if post_date:
+                try:
+                    post_date_display = post_date.strftime('%b %d, %Y')
+                    post_date_sortable = post_date.strftime('%Y-%m-%d')
+                except Exception:
+                    post_date_display = str(post_date)
+                    post_date_sortable = str(post_date)
 
-        for pp in processed_posts:
-            sections_data = pp.sections_data or []
-            for section in sections_data:
-                section_name = section.get('section_name', 'Unknown')
-                section_names_set.add(section_name)
-                for item in section.get('items', []):
-                    # Parse post_date for display
-                    raw_date = item.get('post_date')
-                    post_date_display = '-'
-                    post_date_sortable = ''
-                    if raw_date:
-                        try:
-                            if hasattr(raw_date, 'strftime'):
-                                post_date_display = raw_date.strftime('%b %d, %Y')
-                                post_date_sortable = raw_date.strftime('%Y-%m-%d')
-                            else:
-                                parsed = dt.strptime(str(raw_date)[:10], '%Y-%m-%d')
-                                post_date_display = parsed.strftime('%b %d, %Y')
-                                post_date_sortable = parsed.strftime('%Y-%m-%d')
-                        except Exception:
-                            post_date_display = str(raw_date)
-                            post_date_sortable = str(raw_date)
+            # Convert mean_ctr from percentage to decimal for compatibility
+            ctr_decimal = ld.mean_ctr / 100 if ld.mean_ctr else 0
 
-                    clicks = item.get('clicks', [])
-                    click_rate = item.get('click_rate', [])
+            items.append({
+                'section_name': 'All Links',
+                'post_title': post.title or '',
+                'post_date_display': post_date_display,
+                'post_date_sortable': post_date_sortable,
+                'text': ld.description,
+                'links': [ld.raw_url],
+                'clicks': [ld.mean_clicks],
+                'click_rate': [f"{ld.mean_ctr:.2f}%"],
+                'click_rate_raw': [ctr_decimal],
+                'max_clicks': ld.mean_clicks,
+                'max_click_rate': f"{ld.mean_ctr:.2f}%",
+                'max_click_rate_raw': ctr_decimal,
+            })
 
-                    max_clicks = max(clicks) if clicks else 0
-                    max_click_rate_raw = max(click_rate) if click_rate else 0
-                    max_click_rate = f"{max_click_rate_raw * 100:.2f}%" if max_click_rate_raw > 0 else "0.00%"
-
-                    items.append({
-                        'section_name': section_name,
-                        'post_title': item.get('post_title', ''),
-                        'post_date_display': post_date_display,
-                        'post_date_sortable': post_date_sortable,
-                        'text': item.get('text', ''),
-                        'links': item.get('links', []),
-                        'clicks': clicks,
-                        'click_rate': [f"{r * 100:.2f}%" for r in click_rate] if click_rate else [],
-                        'click_rate_raw': click_rate,
-                        'max_clicks': max_clicks,
-                        'max_click_rate': max_click_rate,
-                        'max_click_rate_raw': max_click_rate_raw,
-                    })
-
-        section_names = sorted(section_names_set)
+        section_names = ['All Links'] if items else []
 
         return JsonResponse({
             'success': True,
@@ -2267,114 +2097,11 @@ def submit_survey(request):
 
 @login_required
 @require_POST
-def save_processing_template(request):
-    """
-    Save the current section layout as a named processing template.
-    If a template with the same name exists for this user+publication, it is overwritten.
-    """
-    from .models import Publication
-
-    try:
-        body = json.loads(request.body)
-        name = body.get('name', '').strip()
-        sections = body.get('sections', [])
-
-        if not name:
-            return JsonResponse({'success': False, 'error': 'Template name is required.'}, status=400)
-
-        is_valid, error_msg = validate_set_name(name)
-        if not is_valid:
-            return JsonResponse({'success': False, 'error': error_msg}, status=400)
-
-        if not sections or len(sections) == 0:
-            return JsonResponse({'success': False, 'error': 'At least one section is required.'}, status=400)
-
-        if len(sections) > 15:
-            return JsonResponse({'success': False, 'error': 'Maximum 15 sections allowed.'}, status=400)
-
-        for s in sections:
-            if not s.get('name', '').strip():
-                return JsonResponse({'success': False, 'error': 'All sections must have a name.'}, status=400)
-
-        # Get current publication
-        _, beehiiv_pub_id, _ = get_user_api_credentials(request.user)
-        try:
-            publication = Publication.objects.get(pub_id=beehiiv_pub_id)
-        except Publication.DoesNotExist:
-            publication = None
-
-        template, created = ProcessingTemplate.objects.update_or_create(
-            name=name,
-            user=request.user,
-            publication=publication,
-            defaults={'sections_data': sections}
-        )
-
-        msg = f'Template "{name}" saved.' if created else f'Template "{name}" updated.'
-        return JsonResponse({'success': True, 'template_id': template.id, 'message': msg})
-
-    except Exception as e:
-        return JsonResponse({'success': False, 'error': str(e)}, status=500)
-
-
-@login_required
-def load_processing_templates(request):
-    """
-    Return all processing templates for the current user and publication.
-    """
-    from .models import Publication
-
-    try:
-        _, beehiiv_pub_id, _ = get_user_api_credentials(request.user)
-        try:
-            publication = Publication.objects.get(pub_id=beehiiv_pub_id)
-        except Publication.DoesNotExist:
-            publication = None
-
-        templates = ProcessingTemplate.objects.filter(
-            user=request.user,
-            publication=publication
-        )
-
-        templates_data = [
-            {
-                'id': t.id,
-                'name': t.name,
-                'sections_data': t.sections_data,
-            }
-            for t in templates
-        ]
-
-        return JsonResponse({'success': True, 'templates': templates_data})
-
-    except Exception as e:
-        return JsonResponse({'success': False, 'error': str(e)}, status=500)
-
-
-@login_required
-@require_POST
-def delete_processing_template(request, template_id):
-    """
-    Delete a processing template by ID (must be owned by the requesting user).
-    """
-    try:
-        template = ProcessingTemplate.objects.get(id=template_id, user=request.user)
-        template_name = template.name
-        template.delete()
-
-        return JsonResponse({'success': True, 'message': f'Template "{template_name}" deleted.'})
-
-    except ProcessingTemplate.DoesNotExist:
-        return JsonResponse({'success': False, 'error': 'Template not found.'}, status=404)
-    except Exception as e:
-        return JsonResponse({'success': False, 'error': str(e)}, status=500)
-
-
 @login_required
 @require_POST
 def clear_processed_posts(request):
     """
-    Delete ProcessedPost records for the given post_ids (owned by the requesting user).
+    Delete ProcessedPost and LinkData records for the given post_ids (owned by the requesting user).
     """
     try:
         body = json.loads(request.body)
@@ -2382,6 +2109,12 @@ def clear_processed_posts(request):
 
         if not post_ids:
             return JsonResponse({'success': False, 'error': 'No post IDs provided.'}, status=400)
+
+        # Delete LinkData rows first
+        LinkData.objects.filter(
+            user=request.user,
+            post__post_id__in=post_ids
+        ).delete()
 
         deleted_count, _ = ProcessedPost.objects.filter(
             user=request.user,
@@ -2395,29 +2128,6 @@ def clear_processed_posts(request):
 
     except Exception as e:
         logger.error(f"Error in clear_processed_posts: {str(e)}", exc_info=True)
-        return JsonResponse({'success': False, 'error': str(e)}, status=500)
-
-
-@login_required
-@require_GET
-def load_processed_post(request, post_id):
-    """
-    Load ProcessedPost sections data for a single post (by beehiiv post_id).
-    """
-    try:
-        processed = ProcessedPost.objects.get(
-            user=request.user,
-            post__post_id=post_id
-        )
-        return JsonResponse({
-            'success': True,
-            'post_title': processed.post.title,
-            'sections': processed.sections_data or [],
-        })
-    except ProcessedPost.DoesNotExist:
-        return JsonResponse({'success': False, 'error': 'No processed data found for this post.'}, status=404)
-    except Exception as e:
-        logger.error(f"Error in load_processed_post: {str(e)}", exc_info=True)
         return JsonResponse({'success': False, 'error': str(e)}, status=500)
 
 

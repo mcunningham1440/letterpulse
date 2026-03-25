@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Post, ContentSet, Report, UsageAccount, Publication, ExecutionLog, SurveyResponse, ProcessedPost, ProcessingTemplate, ClickVizEmailLog, CronRunLog
+from .models import Post, ContentSet, Report, UsageAccount, Publication, ExecutionLog, SurveyResponse, ProcessedPost, LinkData, ClickVizEmailLog, CronRunLog
 
 
 @admin.register(UsageAccount)
@@ -86,28 +86,19 @@ class ExecutionLogAdmin(admin.ModelAdmin):
 
 @admin.register(ProcessedPost)
 class ProcessedPostAdmin(admin.ModelAdmin):
-    list_display = ('post', 'user', 'publication', 'section_count', 'total_items', 'created_at', 'updated_at')
+    list_display = ('post', 'user', 'publication', 'created_at', 'updated_at')
     list_filter = ('publication', 'user', 'created_at')
     search_fields = ('post__title', 'user__email')
     ordering = ('-created_at',)
     readonly_fields = ('created_at', 'updated_at')
 
-    def section_count(self, obj):
-        return obj.get_section_count()
-    section_count.short_description = 'Sections'
 
-    def total_items(self, obj):
-        return obj.get_total_items_count()
-    total_items.short_description = 'Total Items'
-
-
-@admin.register(ProcessingTemplate)
-class ProcessingTemplateAdmin(admin.ModelAdmin):
-    list_display = ('name', 'user', 'publication', 'created_at')
-    list_filter = ('publication', 'user', 'created_at')
-    search_fields = ('name', 'user__email')
-    ordering = ('-created_at',)
-    readonly_fields = ('created_at', 'updated_at')
+@admin.register(LinkData)
+class LinkDataAdmin(admin.ModelAdmin):
+    list_display = ('post', 'user', 'raw_url', 'description', 'rank_in_post', 'mean_ctr', 'mean_clicks')
+    list_filter = ('publication', 'user')
+    search_fields = ('post__title', 'user__email', 'raw_url', 'description')
+    ordering = ('post', 'rank_in_post')
 
 
 @admin.register(SurveyResponse)

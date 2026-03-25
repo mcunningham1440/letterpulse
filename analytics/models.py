@@ -456,7 +456,7 @@ class ExecutionLog(models.Model):
 
 
 class ProcessedPost(models.Model):
-    """Stores section-aware extracted content for a single post after review approval"""
+    """Lightweight marker indicating a post has been processed for link data."""
 
     post = models.ForeignKey(
         'Post',
@@ -478,9 +478,6 @@ class ProcessedPost(models.Model):
         related_name='processed_posts',
         help_text="The publication this processed post belongs to"
     )
-    sections_data = models.JSONField(
-        help_text="JSON array of sections, each with section_name and items list"
-    )
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -494,46 +491,46 @@ class ProcessedPost(models.Model):
     def __str__(self):
         return f"{self.post.title} - {self.user.email}"
 
-    def get_section_count(self):
-        """Return the number of sections"""
-        if isinstance(self.sections_data, list):
-            return len(self.sections_data)
-        return 0
 
-    def get_total_items_count(self):
-        """Return total number of items across all sections"""
-        if not isinstance(self.sections_data, list):
-            return 0
-        return sum(len(s.get('items', [])) for s in self.sections_data)
+class LinkData(models.Model):
+    """Stores described link data extracted from a processed post."""
 
-
-class ProcessingTemplate(models.Model):
-    """Saved section layout template for the Process Selected Posts workflow."""
-    name = models.CharField(max_length=255)
+    post = models.ForeignKey(
+        'Post',
+        on_delete=models.CASCADE,
+        related_name='link_data',
+        help_text="The post this link was extracted from"
+    )
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
-        related_name='processing_templates'
+        related_name='link_data',
+        help_text="The user who owns this link data"
     )
     publication = models.ForeignKey(
         Publication,
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
-        related_name='processing_templates'
+        related_name='link_data',
+        help_text="The publication this link data belongs to"
     )
-    sections_data = models.JSONField(help_text="JSON array of {name, description} dicts")
+    raw_url = models.URLField(max_length=2048)
+    description = models.TextField(blank=True)
+    rank_in_post = models.PositiveIntegerField()
+    mean_ctr = models.FloatField(help_text="Mean CTR as percentage (e.g. 3.5 = 3.5%)")
+    mean_clicks = models.FloatField()
+
     created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        ordering = ['-created_at']
-        unique_together = [['name', 'publication', 'user']]
-        verbose_name = "Processing Template"
-        verbose_name_plural = "Processing Templates"
+        ordering = ['post', 'rank_in_post']
+        unique_together = [['post', 'user', 'raw_url']]
+        verbose_name = "Link Data"
+        verbose_name_plural = "Link Data"
 
     def __str__(self):
-        return f"{self.name} ({self.user})"
+        return f"{self.post.title} - rank {self.rank_in_post} - {self.raw_url[:60]}"
 
 
 class PendingReport(models.Model):

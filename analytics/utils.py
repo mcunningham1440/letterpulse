@@ -22,7 +22,7 @@ from django.db import transaction
 from django.db.models import F
 from Levenshtein import distance as levenshtein_distance
 from dotenv import load_dotenv
-from analytics.prompts import SECTION_PARSING_PROMPT, INSIGHTS_PROMPT, TIP_PROMPT
+from analytics.prompts import INSIGHTS_PROMPT, TIP_PROMPT
 
 logger = logging.getLogger(__name__)
 
@@ -480,144 +480,223 @@ def match_links_with_clicks(html_links_raw, clicks_dict):
     return link_to_clicks, duplicate_raw_urls
 
 
-async def extract_sections(post_html, sections, clicks_dict, title, post_date,
-                           unique_email_opens, custom_instructions="", user=None):
+class LinkDescription(BaseModel):
+    tag_id: int
+    description: str
+
+class AllLinkDescriptions(BaseModel):
+    links: List[LinkDescription]
+
+
+async def process_post_links(session, post_id, user, beehiiv_token, beehiiv_pub_id):
     """
-    Extract items from a single post HTML grouped by named sections.
+    Extract, describe, and score all clicked links from a single post.
+
+    Fetches HTML and click data from the Beehiiv API, extracts links,
+    matches them with click data, deduplicates by stripping tracking params,
+    tags top links in the HTML, and uses GPT to describe each tagged link.
 
     Args:
-        post_html: HTML content of the post
-        sections: List of dicts with 'name' and 'description' keys
-        clicks_dict: Dictionary mapping URLs to click counts for this post
-        title: Post title
-        post_date: Date the post was published
-        unique_email_opens: Number of unique email opens
-        custom_instructions: Optional additional instructions for re-processing
-        user: Django user object for credit charging (optional)
+        session: aiohttp.ClientSession
+        post_id: Beehiiv post ID
+        user: Django user object
+        beehiiv_token: Beehiiv API bearer token
+        beehiiv_pub_id: Beehiiv publication ID
 
     Returns:
-        List of section dicts: [{"section_name": "...", "items": [...]}, ...]
+        List of dicts: [{post_id, raw_url, description, rank_in_post, mean_ctr, mean_clicks}, ...]
     """
-    # Step 1: Get line numbers for sections matching descriptions
-    # Sanitize section names: double quotes break OpenAI structured output schemas
-    for s in sections:
-        s['name'] = s['name'].replace('"', '')
-    section_names = [s['name'] for s in sections]
+    from analytics.models import Post
 
-    # Build user message with sections (description is optional)
-    sections_xml = "<Sections>\n"
-    for s in sections:
-        desc = s.get("description", "").strip()
-        if desc:
-            sections_xml += f'<Section name="{s["name"]}">{desc}</Section>\n'
-        else:
-            sections_xml += f'<Section name="{s["name"]}">Items in the {s["name"]} section</Section>\n'
-    sections_xml += "</Sections>"
+    post = await asyncio.to_thread(
+        lambda: Post.objects.get(post_id=post_id, user=user)
+    )
+    unique_opens = post.unique_email_opens or 0
 
-    if custom_instructions:
-        sections_xml += f"\n\n<CustomInstructions>\n{custom_instructions}\n</CustomInstructions>"
+    api_headers = {"Authorization": beehiiv_token}
 
+    async def get_html():
+        async with session.get(
+            f"https://api.beehiiv.com/v2/publications/{beehiiv_pub_id}/posts/{post_id}?expand=free_email_content",
+            headers=api_headers,
+        ) as resp:
+            return await resp.json()
+
+    async def get_clicks():
+        async with session.get(
+            f"https://api.beehiiv.com/v2/publications/{beehiiv_pub_id}/posts/{post_id}?expand=stats",
+            headers=api_headers,
+        ) as resp:
+            return await resp.json()
+
+    html_data, clicks_data_json = await asyncio.gather(get_html(), get_clicks())
+
+    post_html = html_data.get('data', {}).get('content', {}).get('free', {}).get('email', '')
+    clicks_data = clicks_data_json.get('data', {}).get('stats', {}).get('clicks', [])
+
+    # Build clicks dict (URL -> max unique clicks)
+    clicks_dict = {}
+    for link_entry in clicks_data:
+        url = link_entry['url']
+        uc = link_entry['email']['unique_clicks']
+        if uc > 0 and url != "https://www.beehiiv.com/":
+            clicks_dict[url] = max(uc, clicks_dict.get(url, 0))
+
+    if not post_html:
+        logger.warning(f"No HTML fetched for {post_id}")
+        return []
+
+    # Extract links and match clicks
     soup = BeautifulSoup(post_html, 'html.parser')
-    all_lines = soup.prettify().split('\n')
-    numbered_lines = [f"{i+1}\t{line}" for i, line in enumerate(all_lines)]
-
-    # Build dynamic Pydantic models with Literal enum for section names
-    SectionNameLiteral = Literal[tuple(section_names)] if len(section_names) > 1 else Literal[section_names[0]]
-
-    class Item(BaseModel):
-        StartLine: int
-        EndLine: int
-
-    class Section(BaseModel):
-        Name: SectionNameLiteral
-        Items: List[Item]
-
-    class AllSections(BaseModel):
-        Sections: List[Section]
-
-    messages = [
-        {"role": "system", "content": SECTION_PARSING_PROMPT},
-        {"role": "user", "content": '\n'.join(numbered_lines)},
-        {"role": "user", "content": sections_xml}
-    ]
-
-    response = await llm_call("extract_sections", messages, "gpt-5.1", "low",
-                              response_format=AllSections, user=user)
-    output = response.output[-1].content[0].parsed
-
-    # Step 2: Extract text and links from each section's items
-    html_links_raw = [link['href'] for link in soup.find_all('a') if link.has_attr('href')]
+    html_links_raw = [link['href'] for link in soup.find_all('a', href=True)]
     link_to_clicks, _ = match_links_with_clicks(html_links_raw, clicks_dict)
 
-    result_sections = []
-    for section in output.Sections:
-        section_items = []
-        for item in section.Items:
-            reconstructed_html = "\n".join(all_lines[item.StartLine - 1:item.EndLine])
-            item_soup = BeautifulSoup(reconstructed_html, 'html.parser')
+    # Deduplicate by processed URL (stripped of &_bhlid= tracking params), compute mean CTR
+    processed_groups = {}
+    for raw_url in html_links_raw:
+        processed = raw_url.split("&_bhlid=")[0]
+        clicks = link_to_clicks.get(raw_url, 0)
+        ctr = (clicks / unique_opens * 100) if unique_opens > 0 else 0
+        if processed not in processed_groups:
+            processed_groups[processed] = {'ctrs': [], 'clicks': []}
+        processed_groups[processed]['ctrs'].append(ctr)
+        processed_groups[processed]['clicks'].append(clicks)
 
-            text = item_soup.get_text(" ", strip=True)
-            selected_links = [link['href'] for link in item_soup.find_all('a') if link.has_attr('href')]
-            clicks = [link_to_clicks.get(link, 0) for link in selected_links]
-
-            section_items.append({
-                "post_title": title,
-                "post_date": str(post_date) if post_date else None,
-                "text": text,
-                "links": selected_links,
-                "clicks": clicks,
-                "click_rate": [c / unique_email_opens if unique_email_opens > 0 else 0 for c in clicks]
-            })
-
-        result_sections.append({
-            "section_name": section.Name,
-            "items": section_items
+    link_stats = []
+    for url, data in processed_groups.items():
+        mean_ctr = sum(data['ctrs']) / len(data['ctrs'])
+        mean_clicks = sum(data['clicks']) / len(data['clicks'])
+        link_stats.append({
+            'url': url,
+            'mean_ctr': mean_ctr,
+            'mean_clicks': mean_clicks,
         })
 
-    # Ensure all section names are present in result (even if empty)
-    result_names = {s["section_name"] for s in result_sections}
-    for name in section_names:
-        if name not in result_names:
-            result_sections.append({"section_name": name, "items": []})
+    # Filter to links with clicks > 0
+    link_stats = [ls for ls in link_stats if ls['mean_ctr'] > 0]
 
-    return result_sections
+    # Sort by CTR descending
+    link_stats.sort(key=lambda x: x['mean_ctr'], reverse=True)
+
+    # Apply TOP_P or TOP_N filtering
+    top_p = settings.LINK_PROCESS_TOP_P
+    top_n = settings.LINK_PROCESS_TOP_N
+    if top_p is not None:
+        all_ctrs = [ls['mean_ctr'] for ls in link_stats]
+        if all_ctrs:
+            sorted_ctrs = sorted(all_ctrs)
+            idx = int(top_p * len(sorted_ctrs))
+            threshold = sorted_ctrs[min(idx, len(sorted_ctrs) - 1)]
+            top_links = [ls for ls in link_stats if ls['mean_ctr'] >= threshold]
+        else:
+            top_links = []
+    elif top_n is not None:
+        top_links = link_stats[:top_n]
+    else:
+        top_links = link_stats
+
+    if not top_links:
+        return []
+
+    # Build URL-to-tag mapping
+    url_to_tag = {ls['url']: i for i, ls in enumerate(top_links, start=1)}
+
+    # Tag top links in HTML with data-tag attributes
+    soup_tagged = BeautifulSoup(post_html, 'html.parser')
+    for link in soup_tagged.find_all('a', href=True):
+        processed = link['href'].split("&_bhlid=")[0]
+        if processed in url_to_tag:
+            link['data-tag'] = f"LINK_TAG_{url_to_tag[processed]}"
+
+    tagged_html = str(soup_tagged)
+    n_links = len(top_links)
+
+    tag_summary = "\n".join(
+        f"  LINK_TAG_{i}: URL={ls['url'][:120]}"
+        for i, ls in enumerate(top_links, start=1)
+    )
+
+    messages = [
+        {"role": "user", "content": f"""Below is the HTML of a newsletter post. Certain links have been tagged with a data-tag attribute, e.g. <a data-tag="LINK_TAG_1" href="...">.
+
+For each tagged link, give a brief, specific description of what likely appears at that URL based on the surrounding context in the newsletter. Be specific — for example, "The GitHub repo for LangChain, an open-source framework for building AI agents" rather than "A GitHub link".
+
+Some URLs may appear multiple times; these will be given the same tag. In this case, you may use all of their contexts to infer what the URL is.
+
+There are exactly {n_links} tagged links. Return exactly {n_links} descriptions, one per tag ID.
+
+Tagged links:
+{tag_summary}
+
+Newsletter HTML:
+{tagged_html}"""}
+    ]
+
+    max_retries = settings.LINK_PROCESS_MAX_RETRIES
+    for attempt in range(1, max_retries + 2):
+        response = await llm_call("process_post_links", messages, "gpt-5.4-mini", "low",
+                                   response_format=AllLinkDescriptions, user=user)
+        parsed = response.output[-1].content[0].parsed
+        if len(parsed.links) == n_links:
+            break
+        if attempt <= max_retries:
+            logger.warning(
+                f"[{post.title}] Expected {n_links} descriptions, got {len(parsed.links)} — "
+                f"retrying (attempt {attempt}/{max_retries})"
+            )
+        else:
+            raise ValueError(
+                f"[{post.title}] Expected {n_links} descriptions, got {len(parsed.links)} "
+                f"after {max_retries} retries"
+            )
+
+    desc_by_tag = {ld.tag_id: ld.description for ld in parsed.links}
+
+    rows = []
+    for i, ls in enumerate(top_links, start=1):
+        rows.append({
+            'post_id': post_id,
+            'raw_url': ls['url'],
+            'description': desc_by_tag.get(i, ''),
+            'rank_in_post': i,
+            'mean_ctr': round(ls['mean_ctr'], 2),
+            'mean_clicks': round(ls['mean_clicks'], 1),
+        })
+    return rows
 
 
-async def extract_sections_parallel(posts_data, sections, htmls, clicks_by_id,
-                                    custom_instructions="", user=None):
+async def process_posts_links_parallel(post_ids, user, beehiiv_token, beehiiv_pub_id):
     """
-    Extract sections from multiple posts in parallel.
+    Process multiple posts in parallel, extracting and describing links.
 
     Args:
-        posts_data: List of tuples (post_id, title, html_filename, post_date, unique_email_opens)
-        sections: List of dicts with 'name' and 'description' keys
-        htmls: Dictionary of HTML content keyed by filename
-        clicks_by_id: Dictionary mapping post IDs to their clicks dictionaries
-        custom_instructions: Optional additional instructions
-        user: Django user object (optional)
+        post_ids: List of Beehiiv post IDs
+        user: Django user object
+        beehiiv_token: Beehiiv API bearer token
+        beehiiv_pub_id: Beehiiv publication ID
 
     Returns:
-        Dict mapping post_id to list of section dicts
+        Dict mapping post_id to list of link row dicts
     """
-    tasks = []
-    post_ids_order = []
-    for post_id, title, html_filename, post_date, unique_email_opens in posts_data:
-        if html_filename in htmls and post_id in clicks_by_id:
-            current_html = htmls[html_filename]
-            clicks_dict = clicks_by_id[post_id]
-            task = extract_sections(current_html, sections, clicks_dict, title,
-                                    post_date, unique_email_opens, custom_instructions, user=user)
-            tasks.append(task)
-            post_ids_order.append(post_id)
+    semaphore = asyncio.Semaphore(10)
 
-    results = await asyncio.gather(*tasks, return_exceptions=True)
+    async def bounded(post_id):
+        async with semaphore:
+            return post_id, await process_post_links(session, post_id, user, beehiiv_token, beehiiv_pub_id)
+
+    async with aiohttp.ClientSession() as session:
+        results = await asyncio.gather(
+            *[bounded(pid) for pid in post_ids],
+            return_exceptions=True
+        )
 
     results_by_post = {}
-    for i, result in enumerate(results):
+    for result in results:
         if isinstance(result, Exception):
-            logger.error(f"Error extracting sections from post {post_ids_order[i]}: {str(result)}")
+            logger.error(f"Error processing post links: {result}")
         else:
-            results_by_post[post_ids_order[i]] = result
+            post_id, rows = result
+            results_by_post[post_id] = rows
 
     return results_by_post
 
