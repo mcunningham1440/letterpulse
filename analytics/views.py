@@ -16,7 +16,7 @@ import pandas as pd
 import json
 from asgiref.sync import async_to_sync
 
-from .models import Post, ContentSet, Report, UsageAccount, SurveyResponse, ProcessedPost, LinkData
+from .models import Post, ContentSet, Report, UsageAccount, SurveyResponse, ProcessedPost, LinkData, Section
 
 logger = logging.getLogger(__name__)
 
@@ -93,6 +93,7 @@ from .utils import (
     load_posts_from_db,
     fetch_posts_html_and_clicks_parallel,
     process_posts_links_parallel,
+    process_posts_sections_sequential,
     refresh_posts_data,
     annotate_posts_parallel,
     NotEnoughCredits,
@@ -467,10 +468,11 @@ def posts_view(request):
         all_content_sets = ContentSet.objects.none()
         all_reports = Report.objects.none()
 
-    # Get set of post_ids that have been processed by this user
+    # Get set of post_ids that have sections (i.e. actually processed)
     processed_post_ids = set(
-        ProcessedPost.objects.filter(user=request.user)
+        Section.objects.filter(user=request.user)
         .values_list('post__post_id', flat=True)
+        .distinct()
     )
 
     context = {
@@ -588,8 +590,9 @@ def run_extraction(request):
 @require_POST
 def run_processing(request):
     """
-    Run link-level extraction on selected posts.
-    Fetches HTML + clicks, extracts links, gets GPT descriptions, and stores LinkData rows.
+    Run section-level extraction on selected posts.
+    Fetches HTML, runs agentic GPT loop to identify sections, and stores Section rows.
+    Posts are processed sequentially so each post's sections enrich context for the next.
     Returns JSON with processed post IDs for frontend checkmark updates.
     """
     from .models import Publication
@@ -618,48 +621,18 @@ def run_processing(request):
         credits_needed = len(post_ids) * settings.CREDITS_PER_EXTRACTION
         charge_credits(request.user, credits_needed)
 
-        # Run parallel link extraction
-        results_by_post = async_to_sync(process_posts_links_parallel)(
-            post_ids, request.user, beehiiv_token, beehiiv_pub_id
-        )
-
         # Get publication for FK
         try:
             publication = Publication.objects.get(pub_id=beehiiv_pub_id)
         except Publication.DoesNotExist:
             publication = None
 
-        # Save results to database
-        processed_post_ids = []
-        for post_id, rows in results_by_post.items():
-            post = Post.objects.get(post_id=post_id, user=request.user)
+        # Run sequential section extraction (each post saves to DB before the next)
+        results_by_post = async_to_sync(process_posts_sections_sequential)(
+            post_ids, request.user, beehiiv_token, beehiiv_pub_id, publication
+        )
 
-            # Delete old LinkData for this post+user
-            LinkData.objects.filter(post=post, user=request.user).delete()
-
-            # Bulk create new LinkData rows
-            if rows:
-                LinkData.objects.bulk_create([
-                    LinkData(
-                        post=post,
-                        user=request.user,
-                        publication=publication,
-                        raw_url=row['raw_url'],
-                        description=row['description'],
-                        rank_in_post=row['rank_in_post'],
-                        mean_ctr=row['mean_ctr'],
-                        mean_clicks=row['mean_clicks'],
-                    )
-                    for row in rows
-                ])
-
-            # Create/update ProcessedPost marker
-            ProcessedPost.objects.update_or_create(
-                post=post,
-                user=request.user,
-                defaults={'publication': publication}
-            )
-            processed_post_ids.append(post_id)
+        processed_post_ids = list(results_by_post.keys())
 
         usage = UsageAccount.objects.get(user=request.user)
 
@@ -907,10 +880,9 @@ def get_stopwords():
 @require_valid_api_credentials
 def insights_view(request):
     """
-    Display the insights page with link data table.
+    Display the insights page with section data table.
     """
     from .models import Publication
-    import json
 
     # Get current publication for filtering
     _, beehiiv_pub_id, _ = get_user_api_credentials(request.user)
@@ -921,7 +893,7 @@ def insights_view(request):
     # Check for processed data
     try:
         publication = Publication.objects.get(pub_id=beehiiv_pub_id)
-        has_processed_data = ProcessedPost.objects.filter(
+        has_processed_data = Section.objects.filter(
             user=request.user, publication=publication
         ).exists()
     except Publication.DoesNotExist:
@@ -930,7 +902,6 @@ def insights_view(request):
     context = {
         'has_posts': has_posts,
         'has_processed_data': has_processed_data,
-        'stopwords_json': json.dumps(get_stopwords()),
     }
 
     return render(request, 'analytics/insights.html', context)
@@ -939,8 +910,8 @@ def insights_view(request):
 @login_required
 def load_processed_data(request):
     """
-    Load all LinkData for the current user and publication.
-    Returns raw link data fields for display in the Insights table.
+    Load all Section data for the current user and publication.
+    Returns section fields for display in the Insights table.
     """
     from .models import Publication
 
@@ -952,13 +923,13 @@ def load_processed_data(request):
         except Publication.DoesNotExist:
             return JsonResponse({'success': True, 'items': []})
 
-        link_data = LinkData.objects.filter(
+        sections = Section.objects.filter(
             user=request.user, publication=publication
         ).select_related('post')
 
         items = []
-        for ld in link_data:
-            post = ld.post
+        for sec in sections:
+            post = sec.post
             post_date = post.publish_date
             post_date_display = '-'
             post_date_sortable = ''
@@ -974,11 +945,10 @@ def load_processed_data(request):
                 'post_title': post.title or '',
                 'post_date_display': post_date_display,
                 'post_date_sortable': post_date_sortable,
-                'description': ld.description,
-                'raw_url': ld.raw_url,
-                'rank_in_post': ld.rank_in_post,
-                'mean_clicks': ld.mean_clicks,
-                'mean_ctr': ld.mean_ctr,
+                'section_name': sec.section_name,
+                'description': sec.section_description,
+                'start_line': sec.start_line,
+                'end_line': sec.end_line,
             })
 
         return JsonResponse({
@@ -1358,7 +1328,7 @@ def submit_survey(request):
 @require_POST
 def clear_processed_posts(request):
     """
-    Delete ProcessedPost and LinkData records for the given post_ids (owned by the requesting user).
+    Delete ProcessedPost and Section records for the given post_ids (owned by the requesting user).
     """
     try:
         body = json.loads(request.body)
@@ -1367,8 +1337,8 @@ def clear_processed_posts(request):
         if not post_ids:
             return JsonResponse({'success': False, 'error': 'No post IDs provided.'}, status=400)
 
-        # Delete LinkData rows first
-        LinkData.objects.filter(
+        # Delete Section rows first
+        Section.objects.filter(
             user=request.user,
             post__post_id__in=post_ids
         ).delete()

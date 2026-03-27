@@ -224,10 +224,9 @@ CREDITS_PER_EXTRACTION = 1      # Per post extracted from
 CREDITS_PER_REPORT = 1          # Flat cost for generating insights
 CREDITS_PER_ANNOTATION = 1      # Per post annotated with improvement tips
 
-# Link processing configuration
-LINK_PROCESS_TOP_N = None       # Tag top N links by CTR (None = include all with clicks)
-LINK_PROCESS_TOP_P = None       # Tag top P percentile links by CTR (e.g., 0.9 for 90th pctl)
-LINK_PROCESS_MAX_RETRIES = 2    # Max retries if GPT description count mismatches link count
+# Section processing configuration
+SECTION_MAX_AGENT_ITERATIONS = 20   # Max agentic loop iterations per post
+SECTION_N_EXAMPLES = 5              # Number of nearby-post examples per section for context
 
 # Maximum items sent to the LLM for report generation. When exceeded, the
 # top and bottom performers from each section are sampled (middle omitted).

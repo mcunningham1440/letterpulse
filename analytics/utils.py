@@ -701,6 +701,334 @@ async def process_posts_links_parallel(post_ids, user, beehiiv_token, beehiiv_pu
     return results_by_post
 
 
+# =============================================================================
+# Section-based post processing
+# =============================================================================
+
+def build_sections_desc(user, publication, post, n_examples=5):
+    """Build a human-readable sections description string for the LLM prompt.
+
+    Uses the N posts whose publish_date is closest to the target post as
+    "typical" examples for each known section name.
+
+    Args:
+        user: Django User object.
+        publication: Publication model instance.
+        post: Target Post model instance.
+        n_examples: Number of closest posts to use as examples.
+
+    Returns:
+        A formatted string describing each section with typical descriptions,
+        line positions, and first/last HTML lines from nearby posts.
+    """
+    from analytics.models import Section as SectionModel
+
+    target_date = post.publish_date
+    if not target_date:
+        return ""
+
+    # All sections for this user/publication, excluding the target post
+    sections_qs = SectionModel.objects.filter(
+        user=user, publication=publication
+    ).exclude(post=post).select_related('post')
+
+    # Group by section_name
+    by_name = {}
+    for sec in sections_qs:
+        if not sec.post.publish_date:
+            continue
+        by_name.setdefault(sec.section_name, []).append(sec)
+
+    if not by_name:
+        return ""
+
+    output_parts = []
+
+    for section_name, rows in sorted(by_name.items()):
+        # Sort by temporal proximity to target post
+        rows_sorted = sorted(
+            rows,
+            key=lambda r: abs((r.post.publish_date - target_date).total_seconds()),
+        )
+        examples = rows_sorted[:n_examples]
+
+        desc_lines = [f"        - {ex.section_description}" for ex in examples]
+
+        pos_lines = []
+        for ex in examples:
+            total = ex.post_html_length
+            start_pct = round(ex.start_line / total * 100) if total else 0
+            end_pct = round(ex.end_line / total * 100) if total else 0
+            pos_lines.append(
+                f"        - Lines {ex.start_line}-{ex.end_line} "
+                f"({start_pct}%-{end_pct}%)"
+            )
+
+        first_lines = []
+        last_lines = []
+        for ex in examples:
+            lines = ex.section_html.splitlines() if ex.section_html else []
+            first_lines.append(f"        - {lines[0].strip() if lines else ''}")
+            last_lines.append(f"        - {lines[-1].strip() if lines else ''}")
+
+        part = (
+            f"Section name: {section_name}\n"
+            f"    Typical section descriptions:\n"
+            + "\n".join(desc_lines) + "\n"
+            f"    Typical start and end positions:\n"
+            + "\n".join(pos_lines) + "\n"
+            f"    Typical first HTML lines:\n"
+            + "\n".join(first_lines) + "\n"
+            f"    Typical last HTML lines:\n"
+            + "\n".join(last_lines)
+        )
+        output_parts.append(part)
+
+    return "\n".join(output_parts)
+
+
+async def auto_section(html, user, publication, post, n_examples=5):
+    """Run an agentic loop to identify sections in newsletter HTML.
+
+    Args:
+        html: The newsletter HTML string (raw, not line-numbered).
+        user: Django User object.
+        publication: Publication model instance.
+        post: Target Post model instance.
+        n_examples: Number of nearby-post examples per section.
+
+    Returns:
+        List of section dicts with keys: name, title, description,
+        start_line, end_line, section_html, post_html_length.
+    """
+    from asgiref.sync import sync_to_async
+
+    html_lines = html.splitlines()
+    post_html_length = len(html_lines)
+    numbered_html = "\n".join(f"{i+1}: {line}" for i, line in enumerate(html_lines))
+
+    sections_prompt = await sync_to_async(build_sections_desc)(
+        user, publication, post, n_examples
+    )
+
+    known_sections_block = ""
+    if sections_prompt:
+        known_sections_block = f"\nKnown sections from nearby posts:\n{sections_prompt}\n\n"
+
+    input_messages = [
+        {
+            "role": "user",
+            "content": (
+                f"Here is the newsletter HTML (line-numbered):\n\n{numbered_html}\n\n"
+                f"{known_sections_block}"
+                "Identify all distinct sections in this HTML. "
+                "Use locate_section for each section you find. "
+                "When finished, call end_workflow."
+            ),
+        }
+    ]
+
+    tools = [
+        {
+            "type": "function",
+            "name": "locate_section",
+            "description": "Identify a section's name, description, and boundaries in the HTML.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "Short identifier for the section.",
+                    },
+                    "title": {
+                        "type": "string",
+                        "description": "Display title of the section.",
+                    },
+                    "description": {
+                        "type": "string",
+                        "description": "Brief description of what this section contains.",
+                    },
+                    "start_line": {
+                        "type": "integer",
+                        "description": "1-based starting line number in the HTML.",
+                    },
+                    "end_line": {
+                        "type": "integer",
+                        "description": "1-based ending line number in the HTML.",
+                    },
+                },
+                "required": ["name", "title", "description", "start_line", "end_line"],
+                "additionalProperties": False,
+            },
+            "strict": True,
+        },
+        {
+            "type": "function",
+            "name": "end_workflow",
+            "description": "Call this when all sectioning work is complete.",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": [],
+                "additionalProperties": False,
+            },
+            "strict": True,
+        },
+    ]
+
+    max_iterations = getattr(settings, 'SECTION_MAX_AGENT_ITERATIONS', 10)
+    located_sections = []
+
+    for _ in range(max_iterations):
+        response = await llm_call(
+            "auto_section", input_messages, "gpt-5.4", "low",
+            tools=tools, user=user
+        )
+
+        # Append all output for context continuity
+        input_messages += response.output
+
+        tool_calls = [item for item in response.output if item.type == "function_call"]
+
+        if not tool_calls:
+            break
+
+        should_stop = False
+
+        for tool_call in tool_calls:
+            args = json.loads(tool_call.arguments)
+
+            if tool_call.name == "locate_section":
+                located_sections.append(args)
+
+            input_messages.append({
+                "type": "function_call_output",
+                "call_id": tool_call.call_id,
+                "output": json.dumps(None),
+            })
+
+            if tool_call.name == "end_workflow":
+                should_stop = True
+
+        if should_stop:
+            break
+
+    # Enrich each section with section_html and post_html_length
+    results = []
+    for sec in located_sections:
+        start = max(1, sec["start_line"])
+        end = min(post_html_length, sec["end_line"])
+        section_html = "\n".join(html_lines[start - 1:end])
+        results.append({
+            "name": sec["name"],
+            "title": sec["title"],
+            "description": sec["description"],
+            "start_line": start,
+            "end_line": end,
+            "section_html": section_html,
+            "post_html_length": post_html_length,
+        })
+
+    return results
+
+
+async def process_post_sections(session, post_id, user, beehiiv_token, beehiiv_pub_id, publication):
+    """Fetch post HTML and run auto_section to identify sections.
+
+    Args:
+        session: aiohttp ClientSession.
+        post_id: Beehiiv post ID.
+        user: Django User object.
+        beehiiv_token: Beehiiv API bearer token.
+        beehiiv_pub_id: Beehiiv publication ID.
+        publication: Publication model instance.
+
+    Returns:
+        List of section dicts.
+    """
+    from asgiref.sync import sync_to_async
+    from analytics.models import Post
+
+    semaphore = asyncio.Semaphore(5)
+    _, html = await fetch_post_html(session, post_id, semaphore, beehiiv_token, beehiiv_pub_id)
+
+    if not html:
+        logger.error(f"No HTML fetched for post {post_id}")
+        return []
+
+    post = await sync_to_async(Post.objects.get)(post_id=post_id, user=user)
+
+    sections = await auto_section(html, user, publication, post)
+    return sections
+
+
+async def process_posts_sections_sequential(post_ids, user, beehiiv_token, beehiiv_pub_id, publication):
+    """Process multiple posts sequentially for section extraction.
+
+    Posts are processed one at a time so each post's sections are saved to the
+    database before the next post is processed, allowing build_sections_desc
+    to use prior results as context.
+
+    Args:
+        post_ids: List of Beehiiv post IDs.
+        user: Django User object.
+        beehiiv_token: Beehiiv API bearer token.
+        beehiiv_pub_id: Beehiiv publication ID.
+        publication: Publication model instance.
+
+    Returns:
+        Dict mapping post_id to list of section dicts.
+    """
+    from asgiref.sync import sync_to_async
+    from analytics.models import Post, Section as SectionModel, ProcessedPost
+
+    results_by_post = {}
+
+    async with aiohttp.ClientSession() as session:
+        for post_id in post_ids:
+            try:
+                sections = await process_post_sections(
+                    session, post_id, user, beehiiv_token, beehiiv_pub_id, publication
+                )
+
+                # Save sections to DB immediately so the next post can use them as context
+                post = await sync_to_async(Post.objects.get)(post_id=post_id, user=user)
+
+                await sync_to_async(
+                    SectionModel.objects.filter(post=post, user=user).delete
+                )()
+
+                if sections:
+                    section_objects = [
+                        SectionModel(
+                            post=post,
+                            user=user,
+                            publication=publication,
+                            section_name=s['name'],
+                            section_description=s['description'],
+                            start_line=s['start_line'],
+                            end_line=s['end_line'],
+                            post_html_length=s['post_html_length'],
+                            section_html=s['section_html'],
+                        )
+                        for s in sections
+                    ]
+                    await sync_to_async(SectionModel.objects.bulk_create)(section_objects)
+
+                await sync_to_async(ProcessedPost.objects.update_or_create)(
+                    post=post,
+                    user=user,
+                    defaults={'publication': publication}
+                )
+
+                results_by_post[post_id] = sections
+
+            except Exception as e:
+                logger.error(f"Error processing sections for post {post_id}: {e}", exc_info=True)
+
+    return results_by_post
+
+
 async def generate_content_insights(items_display, user=None):
     """
     Generate AI insights from content items using OpenAI API.

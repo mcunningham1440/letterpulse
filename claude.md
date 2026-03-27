@@ -56,7 +56,7 @@ app/
 │   ├── wsgi.py / asgi.py       # WSGI/ASGI entry points
 │   └── __init__.py
 ├── analytics/                  # Main Django app
-│   ├── models.py               # Post, ContentSet, Report, UsageAccount, ExecutionLog, SurveyResponse, ProcessedPost, LinkData, ClickVizEmailLog, CronRunLog models
+│   ├── models.py               # Post, ContentSet, Report, UsageAccount, ExecutionLog, SurveyResponse, ProcessedPost, LinkData, Section, ClickVizEmailLog, CronRunLog models
 │   ├── views.py                # All view logic (login-protected)
 │   ├── urls.py                 # App URL patterns (analytics namespace)
 │   ├── utils.py                # Core utility functions (API calls, AI extraction, credit charging)
@@ -165,27 +165,36 @@ Stores user responses to the signup survey (displayed on first login):
 The survey modal appears automatically on first login and is dismissed once submitted. Survey completion is tracked via `UsageAccount.survey_completed`.
 
 ### ProcessedPost
-Lightweight marker indicating a post has been processed for link data:
+Lightweight marker indicating a post has been processed for section data:
 - `post`: ForeignKey to Post (the source post)
 - `user`: ForeignKey to User (owner)
 - `publication`: ForeignKey to Publication (nullable)
 - Unique constraint: `(post, user)` - one marker per post per user
 
-Created automatically when "Process Selected Posts" runs. The actual link data is stored in the `LinkData` model.
+Created automatically when "Process Selected Posts" runs. The actual section data is stored in the `Section` model.
 
-### LinkData
-Stores described link data extracted from a processed post:
+### Section
+Stores section data extracted from a processed post via an agentic GPT loop:
 - `post`: ForeignKey to Post (the source post)
 - `user`: ForeignKey to User (owner)
 - `publication`: ForeignKey to Publication (nullable)
-- `raw_url`: URL of the link (max 2048 chars)
-- `description`: GPT-generated description of what the link points to
-- `rank_in_post`: Rank by CTR within the post (1 = highest)
-- `mean_ctr`: Mean CTR as percentage (e.g. 3.5 = 3.5%)
-- `mean_clicks`: Mean unique clicks across duplicate link occurrences
-- Unique constraint: `(post, user, raw_url)`
+- `section_name`: Short identifier for the section (e.g., "News", "Quick Links")
+- `section_description`: Brief description of what the section contains
+- `start_line`: 1-based starting line number in the post HTML
+- `end_line`: 1-based ending line number in the post HTML
+- `post_html_length`: Total line count of the post HTML
+- `section_html`: The raw HTML content of the section
+- Unique constraint: `(post, user, section_name)`
 
-Created via the "Process Selected Posts" workflow. Each row represents one unique link from a post that had clicks.
+Created via the "Process Selected Posts" workflow. Each row represents one structural section identified in the post HTML. Posts are processed sequentially so each post's sections enrich the context for subsequent posts.
+
+### LinkData (legacy)
+Stores described link data extracted from a processed post. No longer created by the processing workflow — replaced by Section. Model retained for backward compatibility.
+- `post`: ForeignKey to Post
+- `user`: ForeignKey to User
+- `publication`: ForeignKey to Publication (nullable)
+- `raw_url`, `description`, `rank_in_post`, `mean_ctr`, `mean_clicks`
+- Unique constraint: `(post, user, raw_url)`
 
 ### PendingReport
 Tracks background report generation tasks:
@@ -221,14 +230,13 @@ Uses django-allauth for email-based authentication:
 ### 1. Posts Page (`/posts/`)
 - **Refresh Posts**: Fetches all posts from Beehiiv API with pagination
 - **Select Posts**: DataTable with sorting by date, opens, clicks
-- **Process Selected Posts**: Runs immediately when clicked (no modal). Extracts all links from post HTML, matches with click data using Levenshtein fuzzy matching, deduplicates links, and uses GPT-5.4-mini to describe what each link points to. Results are stored in the `LinkData` table. A `ProcessedPost` marker is created for each processed post. Shows progress bar during extraction. If any selected posts already have processed data, shows an overwrite warning.
-- **Processed Column**: Shows a green checkmark for posts that have been processed. Trash icon to clear processed data (deletes both `ProcessedPost` and `LinkData` records).
+- **Process Selected Posts**: Runs immediately when clicked (no modal). For each post (sequentially), fetches HTML from Beehiiv, runs an agentic GPT loop (`auto_section`) to identify structural sections using known sections from nearby posts as context. Results are stored in the `Section` table. A `ProcessedPost` marker is created for each processed post. Shows progress bar during extraction. If any selected posts already have processed data, shows an overwrite warning. Sequential processing ensures each post's sections enrich context for the next.
+- **Processed Column**: Shows a green checkmark for posts that have been processed. Trash icon to clear processed data (deletes both `ProcessedPost` and `Section` records).
 - **Download Click Visualization**: ZIP of HTML files with click counts overlaid on links
 - **Download Improvement Tips**: ZIP of HTML files with AI-generated improvement tips
 
 ### 2. Insights Page (`/insights/`)
-- **Link Data Table**: DataTable showing all LinkData for the current publication — Post Title, Post Date, Description, URL, Rank, Mean Clicks, Mean CTR. Sortable and scrollable. Download CSV button (client-side).
-- **Phrase Analysis**: N-gram analysis of link descriptions. Shows best/worst performing phrases by CTR with configurable minimum appearances. Requires at least 10 items.
+- **Section Data Table**: DataTable showing all Sections for the current publication — Post Title, Post Date, Section Name, Description, Start Line, End Line. Sortable and scrollable. Download CSV button (client-side).
 
 ### 3. Account Page (`/account/`)
 - **Usage Stats**: View AI credits used and remaining
@@ -279,17 +287,17 @@ All routes use the `analytics:` namespace.
 ### Posts Routes
 - `GET /posts/` - Main posts page
 - `POST /posts/run/` - Run AI content extraction (legacy single-description flow)
-- `POST /posts/process/` - Run link-level extraction on selected posts, stores results in LinkData (AJAX)
+- `POST /posts/process/` - Run section-level extraction on selected posts, stores results in Section (AJAX)
 - `POST /posts/save/` - Save extracted items as ContentSet
 - `POST /posts/delete-items/` - Remove items from session
 - `POST /posts/refresh-posts/` - Fetch latest posts from Beehiiv
 - `POST /posts/download-click-viz/` - Generate click visualization ZIP
 - `POST /posts/download-annotated/` - Generate annotated HTML ZIP
-- `POST /posts/clear-processed/` - Delete ProcessedPost and LinkData records for selected posts (AJAX)
+- `POST /posts/clear-processed/` - Delete ProcessedPost and Section records for selected posts (AJAX)
 
 ### Insights Routes
-- `GET /insights/` - Insights dashboard (link data table + phrase analysis)
-- `GET /insights/load-processed-data/` - Load all LinkData items as JSON for the current user/publication
+- `GET /insights/` - Insights dashboard (section data table)
+- `GET /insights/load-processed-data/` - Load all Section items as JSON for the current user/publication
 
 ### Account Routes
 - `GET /account/` - Account settings page
@@ -420,8 +428,12 @@ Views use `get_user_api_credentials(user)` helper to retrieve credentials and re
 - `charge_credits(user, credits)`: Atomically charge credits against user quota
 - `NotEnoughCredits`: Exception raised when quota exceeded
 - `extract_items()`: AI-powered content extraction from HTML (single-description, legacy)
-- `process_post_links()`: Extract links from a post, match with clicks, deduplicate, and use GPT-5.4-mini to describe each link. Returns list of link row dicts.
-- `process_posts_links_parallel()`: Process multiple posts in parallel (semaphore=10), calling `process_post_links()` for each.
+- `process_post_links()`: Extract links from a post, match with clicks, deduplicate, and use GPT-5.4-mini to describe each link. Returns list of link row dicts. (Legacy — replaced by section processing)
+- `process_posts_links_parallel()`: Process multiple posts in parallel (semaphore=10), calling `process_post_links()` for each. (Legacy — replaced by section processing)
+- `build_sections_desc(user, publication, post, n_examples=5)`: Build context prompt from existing sections of nearby posts for the agentic loop
+- `auto_section(html, user, publication, post, n_examples=5)`: Agentic GPT loop using `locate_section` and `end_workflow` tools to identify structural sections in newsletter HTML
+- `process_post_sections(session, post_id, user, beehiiv_token, beehiiv_pub_id, publication)`: Fetch post HTML and run `auto_section` to identify sections
+- `process_posts_sections_sequential(post_ids, user, beehiiv_token, beehiiv_pub_id, publication)`: Process multiple posts sequentially, saving each post's sections to DB before the next (so context accumulates)
 - `generate_content_insights()`: Generate performance analysis report for a single section. When item count exceeds `MAX_REPORT_ITEMS`, top and bottom performers by CTR are kept and middle items are omitted (with a note to the LLM).
 - `annotate_post_html(post_id, content_perf_evals, beehiiv_token, beehiiv_pub_id, user=None)`: Insert improvement tips into HTML
 - `annotate_posts_parallel(post_ids, content_perf_evals, beehiiv_token, beehiiv_pub_id, user=None)`: Parallel annotation of multiple posts
@@ -458,10 +470,9 @@ CREDITS_PER_EXTRACTION = 1      # Per post extracted from
 CREDITS_PER_REPORT = 1          # Flat cost for generating insights
 CREDITS_PER_ANNOTATION = 1      # Per post annotated with improvement tips
 
-# Link processing configuration
-LINK_PROCESS_TOP_N = None       # Tag top N links by CTR (None = include all with clicks)
-LINK_PROCESS_TOP_P = None       # Tag top P percentile links by CTR
-LINK_PROCESS_MAX_RETRIES = 2    # Max retries if GPT description count mismatches
+# Section processing configuration
+SECTION_MAX_AGENT_ITERATIONS = 20   # Max agentic loop iterations per post
+SECTION_N_EXAMPLES = 5              # Number of nearby-post examples per section for context
 
 # Maximum items sent to the LLM for report generation
 MAX_REPORT_ITEMS = 150

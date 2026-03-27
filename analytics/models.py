@@ -533,6 +533,51 @@ class LinkData(models.Model):
         return f"{self.post.title} - rank {self.rank_in_post} - {self.raw_url[:60]}"
 
 
+class Section(models.Model):
+    """Stores section data extracted from a processed post via agentic GPT loop."""
+
+    post = models.ForeignKey(
+        'Post',
+        on_delete=models.CASCADE,
+        related_name='sections',
+        help_text="The post this section was extracted from"
+    )
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='sections',
+        help_text="The user who owns this section data"
+    )
+    publication = models.ForeignKey(
+        Publication,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='sections',
+        help_text="The publication this section belongs to"
+    )
+    section_name = models.CharField(max_length=255)
+    section_description = models.TextField(blank=True)
+    start_line = models.PositiveIntegerField()
+    end_line = models.PositiveIntegerField()
+    post_html_length = models.PositiveIntegerField(
+        help_text="Total line count of the post HTML"
+    )
+    section_html = models.TextField(blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['post', 'start_line']
+        unique_together = [['post', 'user', 'section_name']]
+        verbose_name = "Section"
+        verbose_name_plural = "Sections"
+
+    def __str__(self):
+        return f"{self.post.title} - {self.section_name}"
+
+
 class PendingReport(models.Model):
     """Tracks background report generation tasks"""
 

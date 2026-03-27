@@ -28,7 +28,7 @@
 <div class="confirm-overlay" id="noProcessedOverlay" style="display: flex;">
     <div class="confirm-modal">
         <h5 class="mb-3">No Processed Posts Yet</h5>
-        <p class="mb-4">Process some posts on the Posts page first to see link data here.</p>
+        <p class="mb-4">Process some posts on the Posts page first to see section data here.</p>
         <div class="d-flex justify-content-end">
             <a href="{% url 'analytics:posts' %}" class="btn btn-primary">Go to Posts</a>
         </div>
@@ -40,11 +40,11 @@
     <div class="col-12">
         {% if has_processed_data %}
 
-        <!-- Link Data Table Card -->
+        <!-- Section Data Table Card -->
         <div class="card" id="dataTableCard">
             <div class="card-header">
                 <div class="d-flex justify-content-between align-items-center">
-                    <h5 class="mb-0">Link Data</h5>
+                    <h5 class="mb-0">Section Data</h5>
                     <button type="button" class="btn btn-info btn-sm" id="downloadCsvBtn">
                         <i class="bi bi-download"></i> Download CSV
                     </button>
@@ -52,62 +52,20 @@
             </div>
 
             <div class="card-body" id="tableContainer">
-                <div class="alert alert-info py-2 px-3 small d-none no-auto-dismiss" id="averagedClicksNotice">
-                    If multiple links in a post go to the same URL, click counts and CTRs are averaged among those links.
-                </div>
                 <div class="table-responsive">
-                    <table class="table table-hover table-sm" id="linkDataTable">
+                    <table class="table table-hover table-sm" id="sectionDataTable">
                         <thead>
                             <tr>
                                 <th data-bs-toggle="tooltip" title="Title of the source post">Post Title</th>
                                 <th data-bs-toggle="tooltip" title="When the source post was published">Post Date</th>
-                                <th data-bs-toggle="tooltip" title="AI-generated description of what the link points to">Description</th>
-                                <th data-bs-toggle="tooltip" title="The link URL">URL</th>
-                                <th class="text-end" data-bs-toggle="tooltip" title="Rank by CTR within the post (1 = highest)">Rank</th>
-                                <th class="text-end" data-bs-toggle="tooltip" title="Mean unique clicks (averaged if duplicated in the post)">Mean Clicks</th>
-                                <th class="text-end" data-bs-toggle="tooltip" title="Mean click-through rate (averaged if duplicated in the post)">Mean CTR</th>
+                                <th data-bs-toggle="tooltip" title="Name identifier for this section">Section Name</th>
+                                <th data-bs-toggle="tooltip" title="Description of what this section contains">Description</th>
+                                <th class="text-end" data-bs-toggle="tooltip" title="Starting line number in the post HTML">Start Line</th>
+                                <th class="text-end" data-bs-toggle="tooltip" title="Ending line number in the post HTML">End Line</th>
                             </tr>
                         </thead>
-                        <tbody id="linkDataTableBody">
+                        <tbody id="sectionDataTableBody">
                         </tbody>
-                    </table>
-                </div>
-            </div>
-
-            <!-- Phrase Analysis -->
-            <div class="card-body border-top d-none" id="phraseAnalysisSection">
-                <div class="d-flex justify-content-between align-items-center mb-3">
-                    <h5 class="mb-0" id="phraseAnalysisHeader">Best Performing Phrases</h5>
-                    <div class="d-flex gap-3 align-items-center" id="phraseAnalysisControls">
-                        <div class="btn-group btn-group-sm" role="group">
-                            <input type="radio" class="btn-check" name="phraseMode" id="phraseBest" value="best" checked>
-                            <label class="btn btn-outline-success" for="phraseBest">Best</label>
-                            <input type="radio" class="btn-check" name="phraseMode" id="phraseWorst" value="worst">
-                            <label class="btn btn-outline-danger" for="phraseWorst">Worst</label>
-                        </div>
-                        <div class="d-flex align-items-center gap-2">
-                            <label for="minAppearances" class="form-label mb-0 small text-muted">Min appearances:</label>
-                            <input type="number" class="form-control form-control-sm" id="minAppearances"
-                                   value="3" min="1" max="50" style="width: 70px;">
-                        </div>
-                    </div>
-                </div>
-                <!-- Message shown when fewer than 10 items -->
-                <div class="alert alert-info mb-0 d-none no-auto-dismiss" id="phraseAnalysisMinItemsMessage">
-                    At least 10 items required to perform phrase analysis.
-                </div>
-                <!-- Table shown when 10+ items -->
-                <div class="table-responsive" id="phraseAnalysisTableContainer">
-                    <table class="table table-hover table-sm" id="phraseTable">
-                        <thead>
-                            <tr>
-                                <th data-bs-toggle="tooltip" title="Word or two-word phrase found in the link descriptions, excluding very common words">Phrase</th>
-                                <th class="text-end" data-bs-toggle="tooltip" title="Average CTR across all links containing this phrase">Avg CTR</th>
-                                <th class="text-end" data-bs-toggle="tooltip" title="Difference from the overall average CTR across all links">vs All Links</th>
-                                <th class="text-end" data-bs-toggle="tooltip" title="Number of links containing this phrase">Appearances</th>
-                            </tr>
-                        </thead>
-                        <tbody id="phraseTableBody"></tbody>
                     </table>
                 </div>
             </div>
@@ -125,98 +83,6 @@
     // Global state
     // =========================================================================
     let allItems = [];
-    let currentPhraseData = [];
-    let overallAvgCtr = 0;
-
-    // =========================================================================
-    // Phrase analysis
-    // =========================================================================
-    const EXCLUDED_WORDS = new Set({{ stopwords_json|safe }});
-
-    function getNgrams(text, n) {
-        const words = text.toLowerCase().match(/\b\w+\b/g) || [];
-        if (words.length < n) return [];
-        const ngrams = [];
-        for (let i = 0; i <= words.length - n; i++) {
-            ngrams.push(words.slice(i, i + n).join(' '));
-        }
-        return ngrams;
-    }
-
-    function isAllDigits(str) { return /^\d+$/.test(str); }
-
-    function containsExcludedWord(ngram) {
-        const words = ngram.split(' ');
-        if (words.some(word => EXCLUDED_WORDS.has(word))) return true;
-        if (words.every(word => isAllDigits(word))) return true;
-        if (words.some(word => word.length === 1)) return true;
-        return false;
-    }
-
-    function calculatePhraseStats(items) {
-        const ngramStats = {};
-        const allCtrs = [];
-
-        items.forEach(item => {
-            const text = item.description || '';
-            const ctr = item.mean_ctr || 0;
-            allCtrs.push(ctr);
-
-            [1, 2].forEach(n => {
-                getNgrams(text, n).forEach(ngram => {
-                    if (!containsExcludedWord(ngram)) {
-                        if (!ngramStats[ngram]) ngramStats[ngram] = [];
-                        ngramStats[ngram].push(ctr);
-                    }
-                });
-            });
-        });
-
-        overallAvgCtr = allCtrs.length > 0 ? allCtrs.reduce((a, b) => a + b, 0) / allCtrs.length : 0;
-
-        return Object.entries(ngramStats).map(([ngram, ctrs]) => ({
-            ngram,
-            avgCtr: ctrs.reduce((a, b) => a + b, 0) / ctrs.length,
-            count: ctrs.length
-        }));
-    }
-
-    function updatePhraseTable() {
-        const mode = document.querySelector('input[name="phraseMode"]:checked').value;
-        const minAppearances = parseInt(document.getElementById('minAppearances').value) || 3;
-
-        let filtered = currentPhraseData.filter(p => {
-            if (p.count < minAppearances) return false;
-            if (mode === 'best') return p.avgCtr >= overallAvgCtr;
-            return p.avgCtr <= overallAvgCtr;
-        });
-
-        filtered.sort((a, b) => mode === 'best' ? b.avgCtr - a.avgCtr : a.avgCtr - b.avgCtr);
-        const top15 = filtered.slice(0, 15);
-
-        const tbody = document.getElementById('phraseTableBody');
-        tbody.innerHTML = '';
-
-        if (top15.length === 0) {
-            tbody.innerHTML = `<tr><td colspan="4" class="text-center text-muted">
-                No phrases found with at least ${minAppearances} appearances</td></tr>`;
-            return;
-        }
-
-        const colorClass = mode === 'best' ? 'text-success' : 'text-danger';
-        top15.forEach(item => {
-            const diff = item.avgCtr - overallAvgCtr;
-            const diffStr = (diff >= 0 ? '+' : '') + diff.toFixed(2) + '%';
-            const row = document.createElement('tr');
-            row.innerHTML = `
-                <td><code>${item.ngram}</code></td>
-                <td class="text-end">${item.avgCtr.toFixed(2)}%</td>
-                <td class="text-end ${colorClass}">${diffStr}</td>
-                <td class="text-end">${item.count}</td>
-            `;
-            tbody.appendChild(row);
-        });
-    }
 
     // =========================================================================
     // Truncate text helper
@@ -254,38 +120,27 @@
     // Data Table
     // =========================================================================
     function renderTable(items) {
-        if ($.fn.DataTable.isDataTable('#linkDataTable')) {
-            $('#linkDataTable').DataTable().destroy();
+        if ($.fn.DataTable.isDataTable('#sectionDataTable')) {
+            $('#sectionDataTable').DataTable().destroy();
         }
 
-        const tbody = document.getElementById('linkDataTableBody');
+        const tbody = document.getElementById('sectionDataTableBody');
         tbody.innerHTML = '';
 
-        const hasAveragedClicks = items.some(item => !Number.isInteger(item.mean_clicks));
-        const notice = document.getElementById('averagedClicksNotice');
-        if (hasAveragedClicks) {
-            notice.classList.remove('d-none');
-        } else {
-            notice.classList.add('d-none');
-        }
-
         items.forEach(item => {
-            const clicks = Number(item.mean_clicks);
-            const clicksDisplay = Number.isInteger(clicks) ? clicks.toLocaleString() : clicks.toFixed(1);
             const row = document.createElement('tr');
             row.innerHTML = `
                 <td>${item.post_title}</td>
                 <td data-order="${item.post_date_sortable}">${item.post_date_display}</td>
-                <td>${truncateText(item.description, 60)}</td>
-                <td>${truncateText(item.raw_url, 40)}</td>
-                <td class="text-end">${item.rank_in_post}</td>
-                <td class="text-end">${clicksDisplay}</td>
-                <td class="text-end">${item.mean_ctr.toFixed(2)}%</td>
+                <td>${item.section_name}</td>
+                <td>${truncateText(item.description, 80)}</td>
+                <td class="text-end">${item.start_line}</td>
+                <td class="text-end">${item.end_line}</td>
             `;
             tbody.appendChild(row);
         });
 
-        const table = $('#linkDataTable').DataTable({
+        const table = $('#sectionDataTable').DataTable({
             order: [[1, 'desc']],
             paging: false,
             scrollY: '500px',
@@ -293,28 +148,6 @@
         });
 
         setTimeout(() => { table.columns.adjust().draw(); }, 0);
-    }
-
-    // =========================================================================
-    // Phrase analysis update
-    // =========================================================================
-    function updatePhraseAnalysis(items) {
-        const section = document.getElementById('phraseAnalysisSection');
-        section.classList.remove('d-none');
-
-        if (items.length < 10) {
-            document.getElementById('phraseAnalysisMinItemsMessage').classList.remove('d-none');
-            document.getElementById('phraseAnalysisTableContainer').classList.add('d-none');
-            document.getElementById('phraseAnalysisControls').classList.add('d-none');
-            document.getElementById('phraseAnalysisHeader').textContent = 'Phrase Analysis';
-            currentPhraseData = [];
-        } else {
-            document.getElementById('phraseAnalysisMinItemsMessage').classList.add('d-none');
-            document.getElementById('phraseAnalysisTableContainer').classList.remove('d-none');
-            document.getElementById('phraseAnalysisControls').classList.remove('d-none');
-            currentPhraseData = calculatePhraseStats(items);
-            updatePhraseTable();
-        }
     }
 
     // =========================================================================
@@ -344,32 +177,14 @@
             if (data.success) {
                 allItems = data.items;
                 renderTable(allItems);
-                updatePhraseAnalysis(allItems);
             } else {
-                console.error('Error loading link data:', data.error);
+                console.error('Error loading section data:', data.error);
             }
         } catch (error) {
-            console.error('Error loading link data:', error);
+            console.error('Error loading section data:', error);
         }
     })();
     {% endif %}
-
-    // Phrase analysis event listeners
-    function updatePhraseHeader() {
-        const mode = document.querySelector('input[name="phraseMode"]:checked')?.value;
-        const header = document.getElementById('phraseAnalysisHeader');
-        if (header && mode) {
-            header.textContent = mode === 'best' ? 'Best Performing Phrases' : 'Worst Performing Phrases';
-        }
-    }
-
-    document.querySelectorAll('input[name="phraseMode"]').forEach(radio => {
-        radio.addEventListener('change', () => {
-            updatePhraseHeader();
-            updatePhraseTable();
-        });
-    });
-    document.getElementById('minAppearances')?.addEventListener('input', updatePhraseTable);
 
     // =========================================================================
     // Download CSV
@@ -380,15 +195,14 @@
             return;
         }
 
-        const headers = ['Post Title', 'Post Date', 'Description', 'URL', 'Rank', 'Mean Clicks', 'Mean CTR'];
+        const headers = ['Post Title', 'Post Date', 'Section Name', 'Description', 'Start Line', 'End Line'];
         const rows = allItems.map(item => [
             item.post_title || '',
             item.post_date_display || '',
+            item.section_name || '',
             item.description || '',
-            item.raw_url || '',
-            item.rank_in_post || 0,
-            item.mean_clicks || 0,
-            (item.mean_ctr || 0).toFixed(2) + '%'
+            item.start_line || 0,
+            item.end_line || 0
         ]);
 
         let csv = headers.map(h => '"' + h.replace(/"/g, '""') + '"').join(',') + '\n';
@@ -400,7 +214,7 @@
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = 'link_data.csv';
+        a.download = 'section_data.csv';
         document.body.appendChild(a);
         a.click();
         URL.revokeObjectURL(url);
