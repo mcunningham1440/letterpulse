@@ -557,6 +557,8 @@ class Section(models.Model):
         help_text="The publication this section belongs to"
     )
     section_name = models.CharField(max_length=255)
+    section_title = models.CharField(max_length=500, blank=True, null=True,
+        help_text="Display title as it appears in the newsletter, or None if untitled")
     section_description = models.TextField(blank=True)
     start_line = models.PositiveIntegerField()
     end_line = models.PositiveIntegerField()

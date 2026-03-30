@@ -7,7 +7,7 @@ import json
 from collections import Counter
 from openai import AsyncOpenAI, OpenAI, BadRequestError
 from pydantic import BaseModel
-from typing import List, Literal
+from typing import List, Literal, Optional
 import pandas as pd
 import asyncio
 import aiohttp
@@ -787,8 +787,20 @@ def build_sections_desc(user, publication, post, n_examples=5):
     return "\n".join(output_parts)
 
 
+class SectionItem(BaseModel):
+    name: str
+    title: Optional[str]
+    description: str
+    start_line: int
+    end_line: int
+
+
+class AllSections(BaseModel):
+    sections: List[SectionItem]
+
+
 async def auto_section(html, user, publication, post, n_examples=5):
-    """Run an agentic loop to identify sections in newsletter HTML.
+    """Identify sections in newsletter HTML via a single structured-output LLM call.
 
     Args:
         html: The newsletter HTML string (raw, not line-numbered).
@@ -802,8 +814,10 @@ async def auto_section(html, user, publication, post, n_examples=5):
         start_line, end_line, section_html, post_html_length.
     """
     from asgiref.sync import sync_to_async
+    from analytics.prompts import AUTO_SECTION_PROMPT
 
-    html_lines = html.splitlines()
+    pretty_html = BeautifulSoup(html, 'html.parser').prettify()
+    html_lines = pretty_html.split('\n')
     post_html_length = len(html_lines)
     numbered_html = "\n".join(f"{i+1}: {line}" for i, line in enumerate(html_lines))
 
@@ -811,118 +825,47 @@ async def auto_section(html, user, publication, post, n_examples=5):
         user, publication, post, n_examples
     )
 
-    known_sections_block = ""
+    system_content = AUTO_SECTION_PROMPT
     if sections_prompt:
-        known_sections_block = f"\nKnown sections from nearby posts:\n{sections_prompt}\n\n"
+        system_content += f"\n\nSections from nearby posts:\n{sections_prompt}"
+    else:
+        system_content += "\n\nNo other issues processed yet"
 
     input_messages = [
         {
+            "role": "system",
+            "content": system_content,
+        },
+        {
             "role": "user",
-            "content": (
-                f"Here is the newsletter HTML (line-numbered):\n\n{numbered_html}\n\n"
-                f"{known_sections_block}"
-                "Identify all distinct sections in this HTML. "
-                "Use locate_section for each section you find. "
-                "When finished, call end_workflow."
-            ),
+            "content": numbered_html,
         }
     ]
 
-    tools = [
-        {
-            "type": "function",
-            "name": "locate_section",
-            "description": "Identify a section's name, description, and boundaries in the HTML.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "name": {
-                        "type": "string",
-                        "description": "Short identifier for the section.",
-                    },
-                    "title": {
-                        "type": "string",
-                        "description": "Display title of the section.",
-                    },
-                    "description": {
-                        "type": "string",
-                        "description": "Brief description of what this section contains.",
-                    },
-                    "start_line": {
-                        "type": "integer",
-                        "description": "1-based starting line number in the HTML.",
-                    },
-                    "end_line": {
-                        "type": "integer",
-                        "description": "1-based ending line number in the HTML.",
-                    },
-                },
-                "required": ["name", "title", "description", "start_line", "end_line"],
-                "additionalProperties": False,
-            },
-            "strict": True,
-        },
-        {
-            "type": "function",
-            "name": "end_workflow",
-            "description": "Call this when all sectioning work is complete.",
-            "parameters": {
-                "type": "object",
-                "properties": {},
-                "required": [],
-                "additionalProperties": False,
-            },
-            "strict": True,
-        },
-    ]
+    #<TEMPORARY>
+    import json as _json
+    from django.conf import settings as _settings
+    _dump_path = _settings.DATA_DIR / f"auto_section_input_{post.post_id}.json"
+    _dump_path.write_text(_json.dumps(input_messages, indent=2))
+    #</TEMPORARY>
 
-    max_iterations = getattr(settings, 'SECTION_MAX_AGENT_ITERATIONS', 10)
-    located_sections = []
+    response = await llm_call(
+        "auto_section", input_messages, "gpt-5.4", "medium",
+        response_format=AllSections, user=user
+    )
 
-    for _ in range(max_iterations):
-        response = await llm_call(
-            "auto_section", input_messages, "gpt-5.4", "low",
-            tools=tools, user=user
-        )
-
-        # Append all output for context continuity
-        input_messages += response.output
-
-        tool_calls = [item for item in response.output if item.type == "function_call"]
-
-        if not tool_calls:
-            break
-
-        should_stop = False
-
-        for tool_call in tool_calls:
-            args = json.loads(tool_call.arguments)
-
-            if tool_call.name == "locate_section":
-                located_sections.append(args)
-
-            input_messages.append({
-                "type": "function_call_output",
-                "call_id": tool_call.call_id,
-                "output": json.dumps(None),
-            })
-
-            if tool_call.name == "end_workflow":
-                should_stop = True
-
-        if should_stop:
-            break
+    parsed = response.output_parsed
 
     # Enrich each section with section_html and post_html_length
     results = []
-    for sec in located_sections:
-        start = max(1, sec["start_line"])
-        end = min(post_html_length, sec["end_line"])
+    for sec in parsed.sections:
+        start = max(1, sec.start_line)
+        end = min(post_html_length, sec.end_line)
         section_html = "\n".join(html_lines[start - 1:end])
         results.append({
-            "name": sec["name"],
-            "title": sec["title"],
-            "description": sec["description"],
+            "name": sec.name,
+            "title": sec.title,
+            "description": sec.description,
             "start_line": start,
             "end_line": end,
             "section_html": section_html,
@@ -1005,6 +948,7 @@ async def process_posts_sections_sequential(post_ids, user, beehiiv_token, beehi
                             user=user,
                             publication=publication,
                             section_name=s['name'],
+                            section_title=s.get('title'),
                             section_description=s['description'],
                             start_line=s['start_line'],
                             end_line=s['end_line'],

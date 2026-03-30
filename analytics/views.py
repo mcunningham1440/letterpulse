@@ -946,6 +946,7 @@ def load_processed_data(request):
                 'post_date_display': post_date_display,
                 'post_date_sortable': post_date_sortable,
                 'section_name': sec.section_name,
+                'section_title': sec.section_title or '',
                 'description': sec.section_description,
                 'start_line': sec.start_line,
                 'end_line': sec.end_line,

@@ -225,7 +225,6 @@ CREDITS_PER_REPORT = 1          # Flat cost for generating insights
 CREDITS_PER_ANNOTATION = 1      # Per post annotated with improvement tips
 
 # Section processing configuration
-SECTION_MAX_AGENT_ITERATIONS = 20   # Max agentic loop iterations per post
 SECTION_N_EXAMPLES = 5              # Number of nearby-post examples per section for context
 
 # Maximum items sent to the LLM for report generation. When exceeded, the

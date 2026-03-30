@@ -178,8 +178,9 @@ Stores section data extracted from a processed post via an agentic GPT loop:
 - `post`: ForeignKey to Post (the source post)
 - `user`: ForeignKey to User (owner)
 - `publication`: ForeignKey to Publication (nullable)
-- `section_name`: Short identifier for the section (e.g., "News", "Quick Links")
-- `section_description`: Brief description of what the section contains
+- `section_name`: Snake-case identifier for the section (e.g., "tech_news", "quick_links")
+- `section_title`: Display title as it appears in the newsletter (nullable, None for untitled sections)
+- `section_description`: Brief description of the section's format
 - `start_line`: 1-based starting line number in the post HTML
 - `end_line`: 1-based ending line number in the post HTML
 - `post_html_length`: Total line count of the post HTML
@@ -431,7 +432,7 @@ Views use `get_user_api_credentials(user)` helper to retrieve credentials and re
 - `process_post_links()`: Extract links from a post, match with clicks, deduplicate, and use GPT-5.4-mini to describe each link. Returns list of link row dicts. (Legacy — replaced by section processing)
 - `process_posts_links_parallel()`: Process multiple posts in parallel (semaphore=10), calling `process_post_links()` for each. (Legacy — replaced by section processing)
 - `build_sections_desc(user, publication, post, n_examples=5)`: Build context prompt from existing sections of nearby posts for the agentic loop
-- `auto_section(html, user, publication, post, n_examples=5)`: Agentic GPT loop using `locate_section` and `end_workflow` tools to identify structural sections in newsletter HTML
+- `auto_section(html, user, publication, post, n_examples=5)`: Single structured-output LLM call (returns `AllSections` Pydantic model) to identify structural sections in newsletter HTML
 - `process_post_sections(session, post_id, user, beehiiv_token, beehiiv_pub_id, publication)`: Fetch post HTML and run `auto_section` to identify sections
 - `process_posts_sections_sequential(post_ids, user, beehiiv_token, beehiiv_pub_id, publication)`: Process multiple posts sequentially, saving each post's sections to DB before the next (so context accumulates)
 - `generate_content_insights()`: Generate performance analysis report for a single section. When item count exceeds `MAX_REPORT_ITEMS`, top and bottom performers by CTR are kept and middle items are omitted (with a note to the LLM).
@@ -471,7 +472,6 @@ CREDITS_PER_REPORT = 1          # Flat cost for generating insights
 CREDITS_PER_ANNOTATION = 1      # Per post annotated with improvement tips
 
 # Section processing configuration
-SECTION_MAX_AGENT_ITERATIONS = 20   # Max agentic loop iterations per post
 SECTION_N_EXAMPLES = 5              # Number of nearby-post examples per section for context
 
 # Maximum items sent to the LLM for report generation

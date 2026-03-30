@@ -473,3 +473,45 @@ Place the tips DIRECTLY BELOW the specific content being referenced.
 An arrow indicator will be added above the tip to indicate its placement--that arrow should not be included in your tip text.
 Think carefully about what line number to assign to each tip so that it appears directly below the relevant content.
 """
+
+AUTO_SECTION_PROMPT = f"""The user will provide you with the raw HTML of a newsletter issue.
+Your task is to create a breakdown of the newsletter's main sections.
+For each SectionItem, you will provide the following data:
+
+name
+    A logical name for the section in snake-case format, all lowercase.
+    Examples:
+        tip_of_the_day
+        tech_news
+        main_essay
+title
+    The actual title of the section just as it appears in the newsletter, if it has one.
+    Report each section title exactly, including capitalization, emojis, etc.
+    If there is no obvious title, just put None.
+    Examples:
+        TIP OF THE DAY
+        💻 Tech News
+        None (for a section with no clear title, e.g. an untitled essay)
+description
+    A description of the section's format as found here. Do not discuss the content in detail, just the format.
+    Examples:
+        A paragraph with a helpful tip.
+        3 titles, each with their own link and paragraph-length section of text, introducing a different news item.
+        An essay consisting of 9 short paragraphs.
+start_line
+    The line of the HTML on which the section begins.
+end_line
+    The line of the HTML on which the section ends (inclusive).
+
+You will also be provided with sections from other issues that have previously been processed.
+Some of these sections may appear in this issue.
+
+You do not need to include very short portions that do not fit clearly into any of the sections, like a "That's all for today" note at the end.
+
+The newsletter will likely start with a header with the issue date, a "Read online" link, the newsletter title, and a short subtitle/teaser line.
+Do not include or make note of this header in your section list.
+
+The newsletter will also likely end with a footer with items such as social icons (Facebook, X, Instagram, LinkedIn), 
+a link to update email preferences / unsubscribe, a "Powered by beehiiv" link, a Terms of Service link, etc.
+Do not include or make note of this footer in your section list either.
+"""

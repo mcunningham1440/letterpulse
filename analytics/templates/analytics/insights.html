@@ -59,6 +59,7 @@
                                 <th data-bs-toggle="tooltip" title="Title of the source post">Post Title</th>
                                 <th data-bs-toggle="tooltip" title="When the source post was published">Post Date</th>
                                 <th data-bs-toggle="tooltip" title="Name identifier for this section">Section Name</th>
+                                <th data-bs-toggle="tooltip" title="Section title as it appears in the newsletter">Section Title</th>
                                 <th data-bs-toggle="tooltip" title="Description of what this section contains">Description</th>
                                 <th class="text-end" data-bs-toggle="tooltip" title="Starting line number in the post HTML">Start Line</th>
                                 <th class="text-end" data-bs-toggle="tooltip" title="Ending line number in the post HTML">End Line</th>
@@ -133,6 +134,7 @@
                 <td>${item.post_title}</td>
                 <td data-order="${item.post_date_sortable}">${item.post_date_display}</td>
                 <td>${item.section_name}</td>
+                <td>${item.section_title || ''}</td>
                 <td>${truncateText(item.description, 80)}</td>
                 <td class="text-end">${item.start_line}</td>
                 <td class="text-end">${item.end_line}</td>
@@ -195,11 +197,12 @@
             return;
         }
 
-        const headers = ['Post Title', 'Post Date', 'Section Name', 'Description', 'Start Line', 'End Line'];
+        const headers = ['Post Title', 'Post Date', 'Section Name', 'Section Title', 'Description', 'Start Line', 'End Line'];
         const rows = allItems.map(item => [
             item.post_title || '',
             item.post_date_display || '',
             item.section_name || '',
+            item.section_title || '',
             item.description || '',
             item.start_line || 0,
             item.end_line || 0
