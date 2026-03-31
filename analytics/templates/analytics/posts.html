@@ -306,11 +306,18 @@
         btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Processing...';
 
         const numPosts = selectedIndices.length;
-        const baseDuration = {{ progress_durations.process_posts }};
+
+        // Estimate wall-clock time: sequential posts run one-at-a-time,
+        // then remaining posts run in parallel batches of 3, ~12s per iteration.
+        const alreadyProcessed = document.querySelectorAll('.post-checkbox[data-processed="true"]').length;
+        const seqNeeded = Math.max(0, Math.min(numPosts, 2 - alreadyProcessed));
+        const parallelPosts = numPosts - seqNeeded;
+        const iterations = seqNeeded + Math.ceil(parallelPosts / 3);
+        const estimatedSeconds = iterations * 12;
 
         ProgressBar.start({
             containerId: 'processPostsProgress',
-            expectedDuration: Math.max(baseDuration, numPosts * 4),
+            expectedDuration: estimatedSeconds,
             subtext: 'Processing ' + numPosts + ' post' + (numPosts !== 1 ? 's' : '') + '...'
         });
 

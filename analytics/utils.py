@@ -755,13 +755,13 @@ def build_sections_desc(user, publication, post, n_examples=5):
         desc_lines = [f"        - {ex.section_description}" for ex in examples]
 
         pos_lines = []
-        for ex in examples:
+        for i, ex in enumerate(examples):
             total = ex.post_html_length
             start_pct = round(ex.start_line / total * 100) if total else 0
             end_pct = round(ex.end_line / total * 100) if total else 0
             pos_lines.append(
                 f"        - Lines {ex.start_line}-{ex.end_line} "
-                f"({start_pct}%-{end_pct}%)"
+                f"({start_pct}%-{end_pct}% of way through HTML)" if i == 0 else f"({start_pct}%-{end_pct}%)"
             )
 
         first_lines = []
@@ -772,7 +772,7 @@ def build_sections_desc(user, publication, post, n_examples=5):
             last_lines.append(f"        - {lines[-1].strip() if lines else ''}")
 
         part = (
-            f"Section name: {section_name}\n"
+            f"Name: {section_name}\n"
             f"    Typical section descriptions:\n"
             + "\n".join(desc_lines) + "\n"
             f"    Typical start and end positions:\n"
@@ -827,9 +827,9 @@ async def auto_section(html, user, publication, post, n_examples=5):
 
     system_content = AUTO_SECTION_PROMPT
     if sections_prompt:
-        system_content += f"\n\nSections from nearby posts:\n{sections_prompt}"
+        system_content += f"\nSECTIONS FROM NEARBY POSTS\n{sections_prompt}"
     else:
-        system_content += "\n\nNo other issues processed yet"
+        system_content += "\nNo other issues processed yet."
 
     input_messages = [
         {
@@ -845,14 +845,33 @@ async def auto_section(html, user, publication, post, n_examples=5):
     #<TEMPORARY>
     import json as _json
     from django.conf import settings as _settings
-    _dump_path = _settings.DATA_DIR / f"auto_section_input_{post.post_id}.json"
-    _dump_path.write_text(_json.dumps(input_messages, indent=2))
+    _dump_dir = _settings.DATA_DIR
+    _dump_dir.mkdir(parents=True, exist_ok=True)
+    _dump_path = _dump_dir / f"auto_section_input_{post.post_id}.json"
+    _dump_path.write_text(_json.dumps(input_messages, indent=2, ensure_ascii=True))
+    #</TEMPORARY>
+
+    #<TEMPORARY>
+    import time as _time
+    _t0 = _time.time()
     #</TEMPORARY>
 
     response = await llm_call(
-        "auto_section", input_messages, "gpt-5.4", "medium",
+        "auto_section", input_messages, "gpt-5.4", "low",
         response_format=AllSections, user=user
     )
+
+    #<TEMPORARY>
+    _elapsed = _time.time() - _t0
+    _usage = response.usage
+    _log_path = _dump_dir / f"auto_section_stats_{post.post_id}.json"
+    _log_path.write_text(_json.dumps({
+        "post_id": post.post_id,
+        "elapsed_seconds": round(_elapsed, 2),
+        "input_tokens": _usage.input_tokens,
+        "output_tokens": _usage.output_tokens,
+    }, indent=2))
+    #</TEMPORARY>
 
     parsed = response.output_parsed
 
@@ -905,12 +924,59 @@ async def process_post_sections(session, post_id, user, beehiiv_token, beehiiv_p
     return sections
 
 
-async def process_posts_sections_sequential(post_ids, user, beehiiv_token, beehiiv_pub_id, publication):
-    """Process multiple posts sequentially for section extraction.
+async def _save_post_sections(post_id, sections, user, publication):
+    """Save section results to DB and mark post as processed."""
+    from asgiref.sync import sync_to_async
+    from django.db import transaction
+    from analytics.models import Post, Section as SectionModel, ProcessedPost
 
-    Posts are processed one at a time so each post's sections are saved to the
-    database before the next post is processed, allowing build_sections_desc
-    to use prior results as context.
+    post = await sync_to_async(Post.objects.get)(post_id=post_id, user=user)
+
+    def _save_in_transaction():
+        with transaction.atomic():
+            SectionModel.objects.filter(post=post, user=user).delete()
+
+            if sections:
+                # Deduplicate by section_name — keep the first occurrence
+                seen_names = set()
+                deduped = []
+                for s in sections:
+                    if s['name'] not in seen_names:
+                        seen_names.add(s['name'])
+                        deduped.append(s)
+
+                section_objects = [
+                    SectionModel(
+                        post=post,
+                        user=user,
+                        publication=publication,
+                        section_name=s['name'],
+                        section_title=s.get('title'),
+                        section_description=s['description'],
+                        start_line=s['start_line'],
+                        end_line=s['end_line'],
+                        post_html_length=s['post_html_length'],
+                        section_html=s['section_html'],
+                    )
+                    for s in deduped
+                ]
+                SectionModel.objects.bulk_create(section_objects)
+
+            ProcessedPost.objects.update_or_create(
+                post=post,
+                user=user,
+                defaults={'publication': publication}
+            )
+
+    await sync_to_async(_save_in_transaction)()
+
+
+async def process_posts_sections_sequential(post_ids, user, beehiiv_token, beehiiv_pub_id, publication):
+    """Process posts for section extraction with hybrid sequential/parallel strategy.
+
+    To seed build_sections_desc with context, the first posts are processed
+    sequentially until at least 2 total posts have been processed for this
+    user/publication. Remaining posts run in parallel (semaphore=3).
 
     Args:
         post_ids: List of Beehiiv post IDs.
@@ -923,52 +989,65 @@ async def process_posts_sections_sequential(post_ids, user, beehiiv_token, beehi
         Dict mapping post_id to list of section dicts.
     """
     from asgiref.sync import sync_to_async
-    from analytics.models import Post, Section as SectionModel, ProcessedPost
+    from analytics.models import Post, Section as SectionModel
 
     results_by_post = {}
 
+    # Count posts with sections that WON'T be touched by this run.
+    # _save_post_sections deletes existing sections for each post in the batch,
+    # so only sections from OTHER posts provide reliable context.
+    batch_post_pks = await sync_to_async(
+        lambda: list(Post.objects.filter(
+            post_id__in=post_ids, user=user
+        ).values_list('pk', flat=True))
+    )()
+
+    stable_context_count = await sync_to_async(
+        lambda: SectionModel.objects.filter(
+            user=user, publication=publication
+        ).exclude(
+            post_id__in=batch_post_pks
+        ).values('post').distinct().count()
+    )()
+
+    # We need at least 2 posts with stable section context before parallelizing.
+    sequential_needed = max(0, 2 - stable_context_count)
+    # Can't run more sequentially than we have posts
+    sequential_needed = min(sequential_needed, len(post_ids))
+    sequential_ids = post_ids[:sequential_needed]
+    parallel_ids = post_ids[sequential_needed:]
+
     async with aiohttp.ClientSession() as session:
-        for post_id in post_ids:
+        # --- Sequential phase ---
+        for post_id in sequential_ids:
             try:
                 sections = await process_post_sections(
                     session, post_id, user, beehiiv_token, beehiiv_pub_id, publication
                 )
-
-                # Save sections to DB immediately so the next post can use them as context
-                post = await sync_to_async(Post.objects.get)(post_id=post_id, user=user)
-
-                await sync_to_async(
-                    SectionModel.objects.filter(post=post, user=user).delete
-                )()
-
-                if sections:
-                    section_objects = [
-                        SectionModel(
-                            post=post,
-                            user=user,
-                            publication=publication,
-                            section_name=s['name'],
-                            section_title=s.get('title'),
-                            section_description=s['description'],
-                            start_line=s['start_line'],
-                            end_line=s['end_line'],
-                            post_html_length=s['post_html_length'],
-                            section_html=s['section_html'],
-                        )
-                        for s in sections
-                    ]
-                    await sync_to_async(SectionModel.objects.bulk_create)(section_objects)
-
-                await sync_to_async(ProcessedPost.objects.update_or_create)(
-                    post=post,
-                    user=user,
-                    defaults={'publication': publication}
-                )
-
+                await _save_post_sections(post_id, sections, user, publication)
                 results_by_post[post_id] = sections
-
             except Exception as e:
                 logger.error(f"Error processing sections for post {post_id}: {e}", exc_info=True)
+
+        # --- Parallel phase ---
+        if parallel_ids:
+            semaphore = asyncio.Semaphore(3)
+
+            async def _process_one(pid):
+                async with semaphore:
+                    sections = await process_post_sections(
+                        session, pid, user, beehiiv_token, beehiiv_pub_id, publication
+                    )
+                    await _save_post_sections(pid, sections, user, publication)
+                    return pid, sections
+
+            tasks = [asyncio.create_task(_process_one(pid)) for pid in parallel_ids]
+            for coro in asyncio.as_completed(tasks):
+                try:
+                    pid, sections = await coro
+                    results_by_post[pid] = sections
+                except Exception as e:
+                    logger.error(f"Error processing sections in parallel: {e}", exc_info=True)
 
     return results_by_post
 

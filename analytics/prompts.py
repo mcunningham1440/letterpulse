@@ -494,6 +494,7 @@ title
         None (for a section with no clear title, e.g. an untitled essay)
 description
     A description of the section's format as found here. Do not discuss the content in detail, just the format.
+    There is no need to note that a section is recurring--the system is able to infer whether it is. 
     Examples:
         A paragraph with a helpful tip.
         3 titles, each with their own link and paragraph-length section of text, introducing a different news item.
@@ -504,7 +505,14 @@ end_line
     The line of the HTML on which the section ends (inclusive).
 
 You will also be provided with sections from other issues that have previously been processed.
-Some of these sections may appear in this issue.
+If any of these sections clearly appear in this issue as well, even if in a slightly different description (e.g. having 2 news items instead of 3) or title (e.g. "The Weekly Roundup" instead of "Weekly Roundup")
+make sure to include them, using the exact same name as used for prior issues.
+For example, if this issue has a primary essay section that clearly matches a "main_essay" in other issues, include it under the name "main_essay", not "essay", etc.
+
+Never report more than one section with the exact same name WITHIN the issue you are processing.
+If you return more than one section with the same name, the later instance(s) will be ignored.
+For example, if prior issues had a recurring section named "quick_hits" and the issue you are processing has a section titled "Quick Hits" and one called "Quick Hits pt. 2",
+you might name the first instance "quick_hits" and the second "quick_hits_pt_2".
 
 You do not need to include very short portions that do not fit clearly into any of the sections, like a "That's all for today" note at the end.
 
