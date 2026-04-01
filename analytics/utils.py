@@ -4,6 +4,7 @@ Adapted from the original utils.py for Streamlit.
 """
 
 import json
+import math
 from collections import Counter
 from openai import AsyncOpenAI, OpenAI, BadRequestError
 from pydantic import BaseModel
@@ -742,9 +743,33 @@ def build_sections_desc(user, publication, post, n_examples=5):
     if not by_name:
         return ""
 
+    # Find the 10 closest posts (by publish_date proximity) to determine frequency threshold
+    nearby_post_ids = set()
+    all_sections_by_proximity = sorted(
+        [sec for secs in by_name.values() for sec in secs],
+        key=lambda s: abs((s.post.publish_date - target_date).total_seconds()),
+    )
+    for sec in all_sections_by_proximity:
+        nearby_post_ids.add(sec.post_id)
+        if len(nearby_post_ids) >= 10:
+            break
+
+    n_nearby = len(nearby_post_ids)
+    min_appearances = max(1, math.ceil(n_nearby * 0.15))
+
+    # Only include sections that appear in at least 15% of recent posts
+    filtered_by_name = {}
+    for section_name, rows in by_name.items():
+        posts_with_section = {r.post_id for r in rows} & nearby_post_ids
+        if len(posts_with_section) >= min_appearances:
+            filtered_by_name[section_name] = rows
+
+    if not filtered_by_name:
+        return ""
+
     output_parts = []
 
-    for section_name, rows in sorted(by_name.items()):
+    for section_name, rows in sorted(filtered_by_name.items()):
         # Sort by temporal proximity to target post
         rows_sorted = sorted(
             rows,
