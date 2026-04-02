@@ -508,13 +508,19 @@ You will also be provided with sections from other issues that have previously b
 If any of these sections clearly appear in this issue as well, even if in a slightly different description (e.g. having 2 news items instead of 3) or title (e.g. "The Weekly Roundup" instead of "Weekly Roundup")
 make sure to include them, using the exact same name as used for prior issues.
 For example, if this issue has a primary essay section that clearly matches a "main_essay" in other issues, include it under the name "main_essay", not "essay", etc.
+If the title is entirely different, however, e.g. "The Weekly Roundup" is now titled "My Favorite Reads", it probably should be a new section.
 
 Never report more than one section with the exact same name WITHIN the issue you are processing.
 If you return more than one section with the same name, the later instance(s) will be ignored.
 For example, if prior issues had a recurring section named "quick_hits" and the issue you are processing has a section titled "Quick Hits" and one called "Quick Hits pt. 2",
 you might name the first instance "quick_hits" and the second "quick_hits_pt_2".
 
-You do not need to include very short portions that do not fit clearly into any of the sections, like a "That's all for today" note at the end.
+Formatting can help you determine what constitutes a section. For instance, if a series of text elements are formatted with a yellow background, followed by a series with a white background, this may be a cue that they are two different sections.
+
+Remember that newsletters evolve over time, and a new issue may not have the exact same format as others.
+If a clearly distinct new section appears or one that has appeared before is no longer present, this should be reflected in the sections you report.
+
+You do not need to include very short portions that do not fit clearly into any of the sections, like a "That's all for today" note at the end or a boilerplate disclosure.
 
 The newsletter will likely start with a header with the issue date, a "Read online" link, the newsletter title, and a short subtitle/teaser line.
 Do not include or make note of this header in your section list.
@@ -522,4 +528,9 @@ Do not include or make note of this header in your section list.
 The newsletter will also likely end with a footer with items such as social icons (Facebook, X, Instagram, LinkedIn), 
 a link to update email preferences / unsubscribe, a "Powered by beehiiv" link, a Terms of Service link, etc.
 Do not include or make note of this footer in your section list either.
+
+Since sponsors often change week-to-week, give sponsored sections a generic name like "sponsored_content".
+If the product or service being sold is clearly created by the newlsetter writer themself, like a course, conference, consult, etc.,
+treat this as distinct. For example, if a section that normally features an external sponsor has a plug for the writer's course instead,
+you might use the name "course_ad" in place of the usual "sponsored_content".
 """
