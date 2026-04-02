@@ -5,6 +5,7 @@ Adapted from the original utils.py for Streamlit.
 
 import json
 import math
+import re
 from collections import Counter
 from openai import AsyncOpenAI, OpenAI, BadRequestError
 from pydantic import BaseModel
@@ -481,6 +482,76 @@ def match_links_with_clicks(html_links_raw, clicks_dict):
     return link_to_clicks, duplicate_raw_urls
 
 
+def allocate_links_to_sections(section_link_counts, top_n):
+    """Divide top_n link slots fairly across sections.
+
+    Each section receives either an equal share or all its links, whichever is
+    lesser.  Surplus from capped sections is redistributed iteratively.
+
+    Args:
+        section_link_counts: dict mapping section_name -> number of available links.
+        top_n: Total link budget to distribute.
+
+    Returns:
+        dict mapping section_name -> allocated count.
+    """
+    if not section_link_counts or top_n <= 0:
+        return {name: 0 for name in section_link_counts}
+
+    total_available = sum(section_link_counts.values())
+    if top_n >= total_available:
+        return dict(section_link_counts)
+
+    allocation = {name: 0 for name in section_link_counts}
+    remaining_budget = top_n
+    uncapped = {name: count for name, count in section_link_counts.items() if count > 0}
+
+    while remaining_budget > 0 and uncapped:
+        equal_share = remaining_budget // len(uncapped)
+        if equal_share == 0:
+            # Distribute remainder one-by-one to sections with the most links
+            for name, _ in sorted(uncapped.items(), key=lambda x: -x[1]):
+                if remaining_budget <= 0:
+                    break
+                allocation[name] += 1
+                remaining_budget -= 1
+            break
+
+        newly_capped = []
+        for name, count in uncapped.items():
+            give = min(equal_share, count - allocation[name])
+            allocation[name] += give
+            remaining_budget -= give
+            if allocation[name] >= count:
+                newly_capped.append(name)
+
+        for name in newly_capped:
+            del uncapped[name]
+
+    return allocation
+
+
+def select_top_bottom(link_stats, n):
+    """Select the top and bottom links by CTR from a sorted list.
+
+    Args:
+        link_stats: List of link dicts, sorted by CTR descending.
+        n: Number of links to select.
+
+    Returns:
+        List of selected link dicts (top ceil(n/2) + bottom floor(n/2)).
+    """
+    if n >= len(link_stats):
+        return list(link_stats)
+    if n <= 0:
+        return []
+    if n == 1:
+        return [link_stats[0]]
+    top_half = math.ceil(n / 2)
+    bottom_half = n - top_half
+    return link_stats[:top_half] + link_stats[-bottom_half:]
+
+
 class LinkDescription(BaseModel):
     tag_id: int
     description: str
@@ -489,13 +560,15 @@ class AllLinkDescriptions(BaseModel):
     links: List[LinkDescription]
 
 
-async def process_post_links(session, post_id, user, beehiiv_token, beehiiv_pub_id):
+async def process_post_links(session, post_id, user, beehiiv_token, beehiiv_pub_id,
+                             sections, pretty_html):
     """
-    Extract, describe, and score all clicked links from a single post.
+    Extract, describe, and score clicked links from a single post, grouped by section.
 
-    Fetches HTML and click data from the Beehiiv API, extracts links,
-    matches them with click data, deduplicates by stripping tracking params,
-    tags top links in the HTML, and uses GPT to describe each tagged link.
+    Click matching is performed at the post level. Links are then assigned to
+    sections based on their line position in the prettified HTML. Each section
+    receives an allocation from LINK_PROCESS_TOP_N; if a section has more links
+    than its allocation, the top and bottom links by CTR are selected.
 
     Args:
         session: aiohttp.ClientSession
@@ -503,9 +576,12 @@ async def process_post_links(session, post_id, user, beehiiv_token, beehiiv_pub_
         user: Django user object
         beehiiv_token: Beehiiv API bearer token
         beehiiv_pub_id: Beehiiv publication ID
+        sections: List of section dicts from auto_section (name, start_line, end_line, ...)
+        pretty_html: The prettified HTML string used by auto_section
 
     Returns:
-        List of dicts: [{post_id, raw_url, description, rank_in_post, mean_ctr, mean_clicks}, ...]
+        List of dicts with keys: post_id, raw_url, description, section_name,
+        rank_in_post, rank_in_section, mean_ctr, mean_clicks
     """
     from analytics.models import Post
 
@@ -514,107 +590,119 @@ async def process_post_links(session, post_id, user, beehiiv_token, beehiiv_pub_
     )
     unique_opens = post.unique_email_opens or 0
 
-    api_headers = {"Authorization": beehiiv_token}
-
-    async def get_html():
-        async with session.get(
-            f"https://api.beehiiv.com/v2/publications/{beehiiv_pub_id}/posts/{post_id}?expand=free_email_content",
-            headers=api_headers,
-        ) as resp:
-            return await resp.json()
-
-    async def get_clicks():
-        async with session.get(
-            f"https://api.beehiiv.com/v2/publications/{beehiiv_pub_id}/posts/{post_id}?expand=stats",
-            headers=api_headers,
-        ) as resp:
-            return await resp.json()
-
-    html_data, clicks_data_json = await asyncio.gather(get_html(), get_clicks())
-
-    post_html = html_data.get('data', {}).get('content', {}).get('free', {}).get('email', '')
-    clicks_data = clicks_data_json.get('data', {}).get('stats', {}).get('clicks', [])
-
-    # Build clicks dict (URL -> max unique clicks)
-    clicks_dict = {}
-    for link_entry in clicks_data:
-        url = link_entry['url']
-        uc = link_entry['email']['unique_clicks']
-        if uc > 0 and url != "https://www.beehiiv.com/":
-            clicks_dict[url] = max(uc, clicks_dict.get(url, 0))
-
-    if not post_html:
-        logger.warning(f"No HTML fetched for {post_id}")
+    if not sections:
         return []
 
-    # Extract links and match clicks
-    soup = BeautifulSoup(post_html, 'html.parser')
-    html_links_raw = [link['href'] for link in soup.find_all('a', href=True)]
-    link_to_clicks, _ = match_links_with_clicks(html_links_raw, clicks_dict)
+    # --- Fetch clicks from Beehiiv API ---
+    semaphore = asyncio.Semaphore(5)
+    _, clicks_dict = await fetch_post_clicks(session, post_id, semaphore, beehiiv_token, beehiiv_pub_id)
+    if clicks_dict is None:
+        clicks_dict = {}
 
-    # Deduplicate by processed URL (stripped of &_bhlid= tracking params), compute mean CTR
-    processed_groups = {}
-    for raw_url in html_links_raw:
+    # --- Extract links line-by-line from prettified HTML ---
+    html_lines = pretty_html.split('\n')
+    href_pattern = re.compile(r'href="([^"]+)"')
+
+    line_links = []  # list of (1-based line number, raw_url)
+    for i, line in enumerate(html_lines, start=1):
+        for match in href_pattern.finditer(line):
+            line_links.append((i, match.group(1)))
+
+    if not line_links:
+        return []
+
+    # --- Match clicks at post level ---
+    all_raw_urls = [url for _, url in line_links]
+    link_to_clicks, _ = match_links_with_clicks(all_raw_urls, clicks_dict)
+
+    # --- Build section range lookup ---
+    section_ranges = []
+    for sec in sections:
+        section_ranges.append((sec['start_line'], sec['end_line'], sec['name']))
+
+    def find_section(line_num):
+        for start, end, name in section_ranges:
+            if start <= line_num <= end:
+                return name
+        return None
+
+    # --- Assign links to sections and deduplicate per section ---
+    # Key: (section_name, processed_url) -> {ctrs, clicks}
+    section_groups = {}
+    for line_num, raw_url in line_links:
+        sec_name = find_section(line_num)
+        if sec_name is None:
+            continue
         processed = raw_url.split("&_bhlid=")[0]
+        key = (sec_name, processed)
         clicks = link_to_clicks.get(raw_url, 0)
         ctr = (clicks / unique_opens * 100) if unique_opens > 0 else 0
-        if processed not in processed_groups:
-            processed_groups[processed] = {'ctrs': [], 'clicks': []}
-        processed_groups[processed]['ctrs'].append(ctr)
-        processed_groups[processed]['clicks'].append(clicks)
+        if key not in section_groups:
+            section_groups[key] = {'ctrs': [], 'clicks': []}
+        section_groups[key]['ctrs'].append(ctr)
+        section_groups[key]['clicks'].append(clicks)
 
-    link_stats = []
-    for url, data in processed_groups.items():
+    # --- Build per-section link stats ---
+    # section_name -> sorted list of link stat dicts (CTR desc)
+    links_by_section = {}
+    for (sec_name, url), data in section_groups.items():
         mean_ctr = sum(data['ctrs']) / len(data['ctrs'])
         mean_clicks = sum(data['clicks']) / len(data['clicks'])
-        link_stats.append({
+        links_by_section.setdefault(sec_name, []).append({
             'url': url,
             'mean_ctr': mean_ctr,
             'mean_clicks': mean_clicks,
         })
 
+    # Sort each section by CTR descending and assign rank_in_section (all links)
     # Filter to links with clicks > 0
-    link_stats = [ls for ls in link_stats if ls['mean_ctr'] > 0]
+    for sec_name in links_by_section:
+        links_by_section[sec_name].sort(key=lambda x: x['mean_ctr'], reverse=True)
+        for rank, ls in enumerate(links_by_section[sec_name], start=1):
+            ls['rank_in_section'] = rank
+        links_by_section[sec_name] = [
+            ls for ls in links_by_section[sec_name] if ls['mean_ctr'] > 0
+        ]
 
-    # Sort by CTR descending
-    link_stats.sort(key=lambda x: x['mean_ctr'], reverse=True)
-
-    # Apply TOP_P or TOP_N filtering
-    top_p = settings.LINK_PROCESS_TOP_P
+    # --- Allocate and select ---
+    section_link_counts = {
+        sec_name: len(stats) for sec_name, stats in links_by_section.items()
+    }
     top_n = settings.LINK_PROCESS_TOP_N
-    if top_p is not None:
-        all_ctrs = [ls['mean_ctr'] for ls in link_stats]
-        if all_ctrs:
-            sorted_ctrs = sorted(all_ctrs)
-            idx = int(top_p * len(sorted_ctrs))
-            threshold = sorted_ctrs[min(idx, len(sorted_ctrs) - 1)]
-            top_links = [ls for ls in link_stats if ls['mean_ctr'] >= threshold]
-        else:
-            top_links = []
-    elif top_n is not None:
-        top_links = link_stats[:top_n]
-    else:
-        top_links = link_stats
+    allocation = allocate_links_to_sections(section_link_counts, top_n)
 
-    if not top_links:
+    selected_links = []  # list of (section_name, link_stat_dict)
+    for sec_name, stats in links_by_section.items():
+        n = allocation.get(sec_name, 0)
+        chosen = select_top_bottom(stats, n)
+        for ls in chosen:
+            selected_links.append((sec_name, ls))
+
+    if not selected_links:
         return []
 
-    # Build URL-to-tag mapping
-    url_to_tag = {ls['url']: i for i, ls in enumerate(top_links, start=1)}
+    # --- Compute global rank_in_post and tag for LLM ---
+    # Sort all selected links by CTR descending for global ranking
+    selected_links.sort(key=lambda x: x[1]['mean_ctr'], reverse=True)
 
-    # Tag top links in HTML with data-tag attributes
-    soup_tagged = BeautifulSoup(post_html, 'html.parser')
+    url_to_tag = {}
+    for i, (sec_name, ls) in enumerate(selected_links, start=1):
+        ls['rank_in_post'] = i
+        url_to_tag[ls['url']] = i
+
+    # Tag links in prettified HTML
+    soup_tagged = BeautifulSoup(pretty_html, 'html.parser')
     for link in soup_tagged.find_all('a', href=True):
         processed = link['href'].split("&_bhlid=")[0]
         if processed in url_to_tag:
             link['data-tag'] = f"LINK_TAG_{url_to_tag[processed]}"
 
     tagged_html = str(soup_tagged)
-    n_links = len(top_links)
+    n_links = len(selected_links)
 
     tag_summary = "\n".join(
         f"  LINK_TAG_{i}: URL={ls['url'][:120]}"
-        for i, ls in enumerate(top_links, start=1)
+        for i, (_, ls) in enumerate(selected_links, start=1)
     )
 
     messages = [
@@ -654,52 +742,18 @@ Newsletter HTML:
     desc_by_tag = {ld.tag_id: ld.description for ld in parsed.links}
 
     rows = []
-    for i, ls in enumerate(top_links, start=1):
+    for i, (sec_name, ls) in enumerate(selected_links, start=1):
         rows.append({
             'post_id': post_id,
             'raw_url': ls['url'],
             'description': desc_by_tag.get(i, ''),
-            'rank_in_post': i,
+            'section_name': sec_name,
+            'rank_in_post': ls['rank_in_post'],
+            'rank_in_section': ls['rank_in_section'],
             'mean_ctr': round(ls['mean_ctr'], 2),
             'mean_clicks': round(ls['mean_clicks'], 1),
         })
     return rows
-
-
-async def process_posts_links_parallel(post_ids, user, beehiiv_token, beehiiv_pub_id):
-    """
-    Process multiple posts in parallel, extracting and describing links.
-
-    Args:
-        post_ids: List of Beehiiv post IDs
-        user: Django user object
-        beehiiv_token: Beehiiv API bearer token
-        beehiiv_pub_id: Beehiiv publication ID
-
-    Returns:
-        Dict mapping post_id to list of link row dicts
-    """
-    semaphore = asyncio.Semaphore(10)
-
-    async def bounded(post_id):
-        async with semaphore:
-            return post_id, await process_post_links(session, post_id, user, beehiiv_token, beehiiv_pub_id)
-
-    async with aiohttp.ClientSession() as session:
-        results = await asyncio.gather(
-            *[bounded(pid) for pid in post_ids],
-            return_exceptions=True
-        )
-
-    results_by_post = {}
-    for result in results:
-        if isinstance(result, Exception):
-            logger.error(f"Error processing post links: {result}")
-        else:
-            post_id, rows = result
-            results_by_post[post_id] = rows
-
-    return results_by_post
 
 
 # =============================================================================
@@ -824,7 +878,7 @@ class AllSections(BaseModel):
     sections: List[SectionItem]
 
 
-async def auto_section(html, user, publication, post, n_examples=5):
+async def auto_section(html, user, publication, post, n_examples=5, pretty_html=None):
     """Identify sections in newsletter HTML via a single structured-output LLM call.
 
     Args:
@@ -833,6 +887,8 @@ async def auto_section(html, user, publication, post, n_examples=5):
         publication: Publication model instance.
         post: Target Post model instance.
         n_examples: Number of nearby-post examples per section.
+        pretty_html: Optional pre-prettified HTML. If provided, skips internal
+            prettify to avoid double-prettifying when the caller already has it.
 
     Returns:
         List of section dicts with keys: name, title, description,
@@ -841,7 +897,8 @@ async def auto_section(html, user, publication, post, n_examples=5):
     from asgiref.sync import sync_to_async
     from analytics.prompts import AUTO_SECTION_PROMPT
 
-    pretty_html = BeautifulSoup(html, 'html.parser').prettify()
+    if pretty_html is None:
+        pretty_html = BeautifulSoup(html, 'html.parser').prettify()
     html_lines = pretty_html.split('\n')
     post_html_length = len(html_lines)
     numbered_html = "\n".join(f"{i+1}: {line}" for i, line in enumerate(html_lines))
@@ -919,8 +976,11 @@ async def auto_section(html, user, publication, post, n_examples=5):
     return results
 
 
-async def process_post_sections(session, post_id, user, beehiiv_token, beehiiv_pub_id, publication):
-    """Fetch post HTML and run auto_section to identify sections.
+async def process_post_full(session, post_id, user, beehiiv_token, beehiiv_pub_id, publication):
+    """Fetch HTML, extract sections and links for a single post.
+
+    Runs auto_section then process_post_links using the same prettified HTML.
+    If either step fails, the exception propagates and nothing is saved.
 
     Args:
         session: aiohttp ClientSession.
@@ -931,7 +991,7 @@ async def process_post_sections(session, post_id, user, beehiiv_token, beehiiv_p
         publication: Publication model instance.
 
     Returns:
-        List of section dicts.
+        Tuple of (sections, link_rows).
     """
     from asgiref.sync import sync_to_async
     from analytics.models import Post
@@ -940,29 +1000,33 @@ async def process_post_sections(session, post_id, user, beehiiv_token, beehiiv_p
     _, html = await fetch_post_html(session, post_id, semaphore, beehiiv_token, beehiiv_pub_id)
 
     if not html:
-        logger.error(f"No HTML fetched for post {post_id}")
-        return []
+        raise RuntimeError(f"No HTML fetched for post {post_id}")
 
+    pretty_html = BeautifulSoup(html, 'html.parser').prettify()
     post = await sync_to_async(Post.objects.get)(post_id=post_id, user=user)
 
-    sections = await auto_section(html, user, publication, post)
-    return sections
+    sections = await auto_section(html, user, publication, post, pretty_html=pretty_html)
+    link_rows = await process_post_links(
+        session, post_id, user, beehiiv_token, beehiiv_pub_id, sections, pretty_html
+    )
+
+    return sections, link_rows
 
 
-async def _save_post_sections(post_id, sections, user, publication):
-    """Save section results to DB and mark post as processed."""
+async def _save_post_full(post_id, sections, link_rows, user, publication):
+    """Save section and link results to DB atomically and mark post as processed."""
     from asgiref.sync import sync_to_async
     from django.db import transaction
-    from analytics.models import Post, Section as SectionModel, ProcessedPost
+    from analytics.models import Post, Section as SectionModel, LinkData, ProcessedPost
 
     post = await sync_to_async(Post.objects.get)(post_id=post_id, user=user)
 
     def _save_in_transaction():
         with transaction.atomic():
             SectionModel.objects.filter(post=post, user=user).delete()
+            LinkData.objects.filter(post=post, user=user).delete()
 
             if sections:
-                # Deduplicate by section_name — keep the first occurrence
                 seen_names = set()
                 deduped = []
                 for s in sections:
@@ -970,7 +1034,7 @@ async def _save_post_sections(post_id, sections, user, publication):
                         seen_names.add(s['name'])
                         deduped.append(s)
 
-                section_objects = [
+                SectionModel.objects.bulk_create([
                     SectionModel(
                         post=post,
                         user=user,
@@ -984,8 +1048,24 @@ async def _save_post_sections(post_id, sections, user, publication):
                         section_html=s['section_html'],
                     )
                     for s in deduped
-                ]
-                SectionModel.objects.bulk_create(section_objects)
+                ])
+
+            if link_rows:
+                LinkData.objects.bulk_create([
+                    LinkData(
+                        post=post,
+                        user=user,
+                        publication=publication,
+                        raw_url=row['raw_url'],
+                        description=row['description'],
+                        section_name=row['section_name'],
+                        rank_in_post=row['rank_in_post'],
+                        rank_in_section=row['rank_in_section'],
+                        mean_ctr=row['mean_ctr'],
+                        mean_clicks=row['mean_clicks'],
+                    )
+                    for row in link_rows
+                ])
 
             ProcessedPost.objects.update_or_create(
                 post=post,
@@ -997,11 +1077,14 @@ async def _save_post_sections(post_id, sections, user, publication):
 
 
 async def process_posts_sections_sequential(post_ids, user, beehiiv_token, beehiiv_pub_id, publication):
-    """Process posts for section extraction with hybrid sequential/parallel strategy.
+    """Process posts for section and link extraction with hybrid sequential/parallel strategy.
 
     To seed build_sections_desc with context, the first posts are processed
     sequentially until at least 2 total posts have been processed for this
     user/publication. Remaining posts run in parallel (semaphore=3).
+
+    Both auto_section and process_post_links must succeed for a post to be
+    saved; failure in either causes the entire post to be skipped.
 
     Args:
         post_ids: List of Beehiiv post IDs.
@@ -1019,7 +1102,7 @@ async def process_posts_sections_sequential(post_ids, user, beehiiv_token, beehi
     results_by_post = {}
 
     # Count posts with sections that WON'T be touched by this run.
-    # _save_post_sections deletes existing sections for each post in the batch,
+    # _save_post_full deletes existing sections for each post in the batch,
     # so only sections from OTHER posts provide reliable context.
     batch_post_pks = await sync_to_async(
         lambda: list(Post.objects.filter(
@@ -1037,7 +1120,6 @@ async def process_posts_sections_sequential(post_ids, user, beehiiv_token, beehi
 
     # We need at least 2 posts with stable section context before parallelizing.
     sequential_needed = max(0, 2 - stable_context_count)
-    # Can't run more sequentially than we have posts
     sequential_needed = min(sequential_needed, len(post_ids))
     sequential_ids = post_ids[:sequential_needed]
     parallel_ids = post_ids[sequential_needed:]
@@ -1046,13 +1128,13 @@ async def process_posts_sections_sequential(post_ids, user, beehiiv_token, beehi
         # --- Sequential phase ---
         for post_id in sequential_ids:
             try:
-                sections = await process_post_sections(
+                sections, link_rows = await process_post_full(
                     session, post_id, user, beehiiv_token, beehiiv_pub_id, publication
                 )
-                await _save_post_sections(post_id, sections, user, publication)
+                await _save_post_full(post_id, sections, link_rows, user, publication)
                 results_by_post[post_id] = sections
             except Exception as e:
-                logger.error(f"Error processing sections for post {post_id}: {e}", exc_info=True)
+                logger.error(f"Error processing post {post_id}: {e}", exc_info=True)
 
         # --- Parallel phase ---
         if parallel_ids:
@@ -1060,10 +1142,10 @@ async def process_posts_sections_sequential(post_ids, user, beehiiv_token, beehi
 
             async def _process_one(pid):
                 async with semaphore:
-                    sections = await process_post_sections(
+                    sections, link_rows = await process_post_full(
                         session, pid, user, beehiiv_token, beehiiv_pub_id, publication
                     )
-                    await _save_post_sections(pid, sections, user, publication)
+                    await _save_post_full(pid, sections, link_rows, user, publication)
                     return pid, sections
 
             tasks = [asyncio.create_task(_process_one(pid)) for pid in parallel_ids]
@@ -1072,7 +1154,7 @@ async def process_posts_sections_sequential(post_ids, user, beehiiv_token, beehi
                     pid, sections = await coro
                     results_by_post[pid] = sections
                 except Exception as e:
-                    logger.error(f"Error processing sections in parallel: {e}", exc_info=True)
+                    logger.error(f"Error processing post in parallel: {e}", exc_info=True)
 
     return results_by_post
 

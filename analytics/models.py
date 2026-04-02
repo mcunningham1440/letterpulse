@@ -517,20 +517,22 @@ class LinkData(models.Model):
     )
     raw_url = models.URLField(max_length=2048)
     description = models.TextField(blank=True)
+    section_name = models.CharField(max_length=255, blank=True, default='')
     rank_in_post = models.PositiveIntegerField()
+    rank_in_section = models.PositiveIntegerField(null=True)
     mean_ctr = models.FloatField(help_text="Mean CTR as percentage (e.g. 3.5 = 3.5%)")
     mean_clicks = models.FloatField()
 
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
-        ordering = ['post', 'rank_in_post']
-        unique_together = [['post', 'user', 'raw_url']]
+        ordering = ['post', 'section_name', 'rank_in_section']
+        unique_together = [['post', 'user', 'raw_url', 'section_name']]
         verbose_name = "Link Data"
         verbose_name_plural = "Link Data"
 
     def __str__(self):
-        return f"{self.post.title} - rank {self.rank_in_post} - {self.raw_url[:60]}"
+        return f"{self.post.title} - {self.section_name} rank {self.rank_in_section} - {self.raw_url[:60]}"
 
 
 class Section(models.Model):

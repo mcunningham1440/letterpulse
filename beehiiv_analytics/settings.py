@@ -227,6 +227,10 @@ CREDITS_PER_ANNOTATION = 1      # Per post annotated with improvement tips
 # Section processing configuration
 SECTION_N_EXAMPLES = 5              # Number of nearby-post examples per section for context
 
+# Link processing configuration
+LINK_PROCESS_TOP_N = 60             # Total links to select across all sections
+LINK_PROCESS_MAX_RETRIES = 2        # Max LLM retries for link description count mismatch
+
 # Maximum items sent to the LLM for report generation. When exceeded, the
 # top and bottom performers from each section are sampled (middle omitted).
 MAX_REPORT_ITEMS = 150

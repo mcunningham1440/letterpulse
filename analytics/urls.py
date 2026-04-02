@@ -18,6 +18,7 @@ urlpatterns = [
     path('posts/clear-processed/', views.clear_processed_posts, name='clear_processed_posts'),
     path('insights/', views.insights_view, name='insights'),
     path('insights/load-processed-data/', views.load_processed_data, name='load_processed_data'),
+    path('insights/load-link-data/', views.load_link_data, name='load_link_data'),
     path('survey/submit/', views.submit_survey, name='submit_survey'),
     path('cron/click-viz-status/', views.cron_status, name='cron_status'),
 ]

@@ -92,7 +92,6 @@ def validate_set_name(name: str) -> tuple[bool, str]:
 from .utils import (
     load_posts_from_db,
     fetch_posts_html_and_clicks_parallel,
-    process_posts_links_parallel,
     process_posts_sections_sequential,
     refresh_posts_data,
     annotate_posts_parallel,
@@ -961,7 +960,59 @@ def load_processed_data(request):
         return JsonResponse({'success': False, 'error': str(e)}, status=500)
 
 
+@login_required
+def load_link_data(request):
+    """
+    Load all LinkData for the current user and publication.
+    Returns link fields for display in the Insights link table.
+    """
+    from .models import Publication
 
+    try:
+        _, beehiiv_pub_id, _ = get_user_api_credentials(request.user)
+
+        try:
+            publication = Publication.objects.get(pub_id=beehiiv_pub_id)
+        except Publication.DoesNotExist:
+            return JsonResponse({'success': True, 'items': []})
+
+        links = LinkData.objects.filter(
+            user=request.user, publication=publication
+        ).select_related('post')
+
+        items = []
+        for link in links:
+            post = link.post
+            post_date = post.publish_date
+            post_date_display = '-'
+            post_date_sortable = ''
+            if post_date:
+                try:
+                    post_date_display = post_date.strftime('%b %d, %Y')
+                    post_date_sortable = post_date.strftime('%Y-%m-%d')
+                except Exception:
+                    post_date_display = str(post_date)
+                    post_date_sortable = str(post_date)
+
+            items.append({
+                'post_title': post.title or '',
+                'post_date_display': post_date_display,
+                'post_date_sortable': post_date_sortable,
+                'section_name': link.section_name,
+                'raw_url': link.raw_url,
+                'description': link.description,
+                'rank_in_section': link.rank_in_section,
+                'mean_ctr': link.mean_ctr,
+                'mean_clicks': link.mean_clicks,
+            })
+
+        return JsonResponse({
+            'success': True,
+            'items': items,
+        })
+
+    except Exception as e:
+        return JsonResponse({'success': False, 'error': str(e)}, status=500)
 
 
 
@@ -1338,8 +1389,12 @@ def clear_processed_posts(request):
         if not post_ids:
             return JsonResponse({'success': False, 'error': 'No post IDs provided.'}, status=400)
 
-        # Delete Section rows first
+        # Delete Section and LinkData rows first
         Section.objects.filter(
+            user=request.user,
+            post__post_id__in=post_ids
+        ).delete()
+        LinkData.objects.filter(
             user=request.user,
             post__post_id__in=post_ids
         ).delete()
