@@ -72,6 +72,39 @@
             </div>
         </div>
 
+        <!-- Link Data Table Card -->
+        <div class="card mt-3" id="linkDataTableCard">
+            <div class="card-header">
+                <div class="d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0">Link Data</h5>
+                    <button type="button" class="btn btn-info btn-sm" id="downloadLinkCsvBtn">
+                        <i class="bi bi-download"></i> Download CSV
+                    </button>
+                </div>
+            </div>
+
+            <div class="card-body" id="linkTableContainer">
+                <div class="table-responsive">
+                    <table class="table table-hover table-sm" id="linkDataTable">
+                        <thead>
+                            <tr>
+                                <th data-bs-toggle="tooltip" title="Title of the source post">Post Title</th>
+                                <th data-bs-toggle="tooltip" title="When the source post was published">Post Date</th>
+                                <th data-bs-toggle="tooltip" title="Section this link belongs to">Section</th>
+                                <th data-bs-toggle="tooltip" title="Link URL">URL</th>
+                                <th data-bs-toggle="tooltip" title="AI-generated description of the link">Description</th>
+                                <th class="text-end" data-bs-toggle="tooltip" title="Rank among all links in this section by CTR">Rank</th>
+                                <th class="text-end" data-bs-toggle="tooltip" title="Mean click-through rate as percentage">CTR (%)</th>
+                                <th class="text-end" data-bs-toggle="tooltip" title="Mean unique clicks">Clicks</th>
+                            </tr>
+                        </thead>
+                        <tbody id="linkDataTableBody">
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
         {% endif %}
     </div>
 </div>
@@ -84,6 +117,7 @@
     // Global state
     // =========================================================================
     let allItems = [];
+    let allLinkItems = [];
 
     // =========================================================================
     // Truncate text helper
@@ -153,6 +187,42 @@
     }
 
     // =========================================================================
+    // Link Data Table
+    // =========================================================================
+    function renderLinkTable(items) {
+        if ($.fn.DataTable.isDataTable('#linkDataTable')) {
+            $('#linkDataTable').DataTable().destroy();
+        }
+
+        const tbody = document.getElementById('linkDataTableBody');
+        tbody.innerHTML = '';
+
+        items.forEach(item => {
+            const row = document.createElement('tr');
+            row.innerHTML = `
+                <td>${item.post_title}</td>
+                <td data-order="${item.post_date_sortable}">${item.post_date_display}</td>
+                <td>${item.section_name}</td>
+                <td>${truncateText(item.raw_url, 60)}</td>
+                <td>${truncateText(item.description, 80)}</td>
+                <td class="text-end">${item.rank_in_section}</td>
+                <td class="text-end">${item.mean_ctr}</td>
+                <td class="text-end">${item.mean_clicks}</td>
+            `;
+            tbody.appendChild(row);
+        });
+
+        const table = $('#linkDataTable').DataTable({
+            order: [[1, 'desc']],
+            paging: false,
+            scrollY: '500px',
+            scrollCollapse: true
+        });
+
+        setTimeout(() => { table.columns.adjust().draw(); }, 0);
+    }
+
+    // =========================================================================
     // Credits display update
     // =========================================================================
     function updateCreditsDisplay(creditsUsed, creditsQuota) {
@@ -173,17 +243,28 @@
     {% if has_processed_data %}
     (async function loadData() {
         try {
-            const response = await fetch('/insights/load-processed-data/');
-            const data = await response.json();
+            const [sectionResp, linkResp] = await Promise.all([
+                fetch('/insights/load-processed-data/'),
+                fetch('/insights/load-link-data/')
+            ]);
+            const sectionData = await sectionResp.json();
+            const linkData = await linkResp.json();
 
-            if (data.success) {
-                allItems = data.items;
+            if (sectionData.success) {
+                allItems = sectionData.items;
                 renderTable(allItems);
             } else {
-                console.error('Error loading section data:', data.error);
+                console.error('Error loading section data:', sectionData.error);
+            }
+
+            if (linkData.success) {
+                allLinkItems = linkData.items;
+                renderLinkTable(allLinkItems);
+            } else {
+                console.error('Error loading link data:', linkData.error);
             }
         } catch (error) {
-            console.error('Error loading section data:', error);
+            console.error('Error loading data:', error);
         }
     })();
     {% endif %}
@@ -218,6 +299,43 @@
         const a = document.createElement('a');
         a.href = url;
         a.download = 'section_data.csv';
+        document.body.appendChild(a);
+        a.click();
+        URL.revokeObjectURL(url);
+        document.body.removeChild(a);
+    });
+
+    // =========================================================================
+    // Download Link CSV
+    // =========================================================================
+    document.getElementById('downloadLinkCsvBtn')?.addEventListener('click', function() {
+        if (!allLinkItems || allLinkItems.length === 0) {
+            showToast('No link data to download.', 'warning');
+            return;
+        }
+
+        const headers = ['Post Title', 'Post Date', 'Section', 'URL', 'Description', 'Rank in Section', 'Mean CTR (%)', 'Mean Clicks'];
+        const rows = allLinkItems.map(item => [
+            item.post_title || '',
+            item.post_date_display || '',
+            item.section_name || '',
+            item.raw_url || '',
+            item.description || '',
+            item.rank_in_section || 0,
+            item.mean_ctr || 0,
+            item.mean_clicks || 0
+        ]);
+
+        let csv = headers.map(h => '"' + h.replace(/"/g, '""') + '"').join(',') + '\n';
+        rows.forEach(row => {
+            csv += row.map(val => '"' + String(val).replace(/"/g, '""') + '"').join(',') + '\n';
+        });
+
+        const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'link_data.csv';
         document.body.appendChild(a);
         a.click();
         URL.revokeObjectURL(url);

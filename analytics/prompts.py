@@ -533,4 +533,5 @@ Since sponsors often change week-to-week, give sponsored sections a generic name
 If the product or service being sold is clearly created by the newlsetter writer themself, like a course, conference, consult, etc.,
 treat this as distinct. For example, if a section that normally features an external sponsor has a plug for the writer's course instead,
 you might use the name "course_ad" in place of the usual "sponsored_content".
+Sometimes multiple sponsored content sections will appear, in which case you may name them "sponsored_content_2", 3, and so on.
 """
