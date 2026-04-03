@@ -5,7 +5,6 @@ Adapted from the original utils.py for Streamlit.
 
 import json
 import math
-import re
 from collections import Counter
 from openai import AsyncOpenAI, OpenAI, BadRequestError
 from pydantic import BaseModel
@@ -599,14 +598,13 @@ async def process_post_links(session, post_id, user, beehiiv_token, beehiiv_pub_
     if clicks_dict is None:
         clicks_dict = {}
 
-    # --- Extract links line-by-line from prettified HTML ---
-    html_lines = pretty_html.split('\n')
-    href_pattern = re.compile(r'href="([^"]+)"')
+    # --- Extract links from prettified HTML using BeautifulSoup ---
+    soup = BeautifulSoup(pretty_html, 'html.parser')
+    html_links = soup.find_all('a', href=True)
 
     line_links = []  # list of (1-based line number, raw_url)
-    for i, line in enumerate(html_lines, start=1):
-        for match in href_pattern.finditer(line):
-            line_links.append((i, match.group(1)))
+    for link in html_links:
+        line_links.append((link.sourceline, link['href']))
 
     if not line_links:
         return []
@@ -678,6 +676,23 @@ async def process_post_links(session, post_id, user, beehiiv_token, beehiiv_pub_
         for ls in chosen:
             selected_links.append((sec_name, ls))
 
+    #<TEMPORARY>
+    import json as _json
+    from django.conf import settings as _settings
+    _dump_dir = _settings.DATA_DIR
+    _dump_dir.mkdir(parents=True, exist_ok=True)
+    _link_stats = {}
+    for sec_name, stats in links_by_section.items():
+        n_selected = len(select_top_bottom(stats, allocation.get(sec_name, 0)))
+        _link_stats[sec_name] = {
+            "total_with_clicks": len(stats),
+            "selected": n_selected,
+            "allocation": allocation.get(sec_name, 0),
+        }
+    _dump_path = _dump_dir / f"link_selection_stats_{post_id}.json"
+    _dump_path.write_text(_json.dumps(_link_stats, indent=2))
+    #</TEMPORARY>
+
     if not selected_links:
         return []
 
@@ -721,10 +736,21 @@ Newsletter HTML:
 {tagged_html}"""}
     ]
 
+    #<TEMPORARY>
+    import time as _time
+    _t0 = _time.time()
+    _total_input_tokens = 0
+    _total_output_tokens = 0
+    #</TEMPORARY>
+
     max_retries = settings.LINK_PROCESS_MAX_RETRIES
     for attempt in range(1, max_retries + 2):
         response = await llm_call("process_post_links", messages, "gpt-5.4-mini", "low",
                                    response_format=AllLinkDescriptions, user=user)
+        #<TEMPORARY>
+        _total_input_tokens += response.usage.input_tokens
+        _total_output_tokens += response.usage.output_tokens
+        #</TEMPORARY>
         parsed = response.output[-1].content[0].parsed
         if len(parsed.links) == n_links:
             break
@@ -738,6 +764,19 @@ Newsletter HTML:
                 f"[{post.title}] Expected {n_links} descriptions, got {len(parsed.links)} "
                 f"after {max_retries} retries"
             )
+
+    #<TEMPORARY>
+    _elapsed = _time.time() - _t0
+    _stats_path = _dump_dir / f"link_selection_stats_{post_id}.json"
+    _existing = _json.loads(_stats_path.read_text())
+    _existing["_llm"] = {
+        "elapsed_seconds": round(_elapsed, 2),
+        "input_tokens": _total_input_tokens,
+        "output_tokens": _total_output_tokens,
+        "attempts": attempt,
+    }
+    _stats_path.write_text(_json.dumps(_existing, indent=2))
+    #</TEMPORARY>
 
     desc_by_tag = {ld.tag_id: ld.description for ld in parsed.links}
 
