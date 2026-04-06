@@ -561,7 +561,6 @@ class Section(models.Model):
     section_name = models.CharField(max_length=255)
     section_title = models.CharField(max_length=500, blank=True, null=True,
         help_text="Display title as it appears in the newsletter, or None if untitled")
-    section_description = models.TextField(blank=True)
     start_line = models.PositiveIntegerField()
     end_line = models.PositiveIntegerField()
     post_html_length = models.PositiveIntegerField(
@@ -613,6 +612,40 @@ class PendingReport(models.Model):
 
     def __str__(self):
         return f"PendingReport {self.task_id} ({self.status})"
+
+
+class PendingContentSearch(models.Model):
+    """Tracks background content finder tasks"""
+
+    task_id = models.UUIDField(default=uuid.uuid4, unique=True)
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='pending_content_searches'
+    )
+    publication = models.ForeignKey(
+        Publication,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
+    post = models.ForeignKey(Post, on_delete=models.CASCADE)
+    mode = models.CharField(max_length=10, default='auto')
+    selected_sections = models.JSONField(default=list, blank=True)
+    status = models.CharField(
+        max_length=20,
+        default='pending',
+        help_text="pending, running, complete, or error"
+    )
+    result_data = models.JSONField(default=dict, blank=True)
+    error_message = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"PendingContentSearch {self.task_id} ({self.status})"
 
 
 class SurveyResponse(models.Model):

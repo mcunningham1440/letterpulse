@@ -252,6 +252,7 @@ PROGRESS_DURATIONS = {
     'extract_content': 12,      # empirical
     'generate_report': 35,      # empirical
     'process_posts': 20,        # empirical
+    'content_search': 45,       # empirical
 }
 
 # User-facing time warnings (minutes)
@@ -272,3 +273,14 @@ EXECUTION_LOG_ON_FULL = 'drop'       # 'drop' or 'sync' when queue is full
 # Auto Click Visualization Email Configuration
 # =============================================================================
 SITE_URL = os.environ.get('SITE_URL', 'https://letterpulse.com')
+
+# =============================================================================
+# Content Finder Configuration
+# =============================================================================
+PERPLEXITY_API_KEY = os.environ.get("PERPLEXITY_API_KEY", "")
+CREDITS_PER_CONTENT_SEARCH = 2
+CONTENT_FINDER_MODEL = "gpt-5.4-mini"
+CONTENT_FINDER_REASONING = "medium"
+CONTENT_FINDER_MAX_ROUNDS = 3       # Max search round-trips per section before forcing final answer
+CONTENT_FINDER_MAX_LINKS = 60       # Max historical links per section for context
+CONTENT_FINDER_MAX_URL_LEN = 75     # Truncate displayed URLs to this length

@@ -23,7 +23,12 @@ from django.db import transaction
 from django.db.models import F
 from Levenshtein import distance as levenshtein_distance
 from dotenv import load_dotenv
-from analytics.prompts import INSIGHTS_PROMPT, TIP_PROMPT
+from analytics.prompts import (
+    INSIGHTS_PROMPT, TIP_PROMPT,
+    CONTENT_FINDER_SYSTEM_PROMPT,
+    CONTENT_FINDER_FILTER_SECTIONS_INSTRUCTION,
+    CONTENT_FINDER_SECTION_INCLUSION_CRITERIA,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -808,6 +813,393 @@ Newsletter HTML:
 # Section-based post processing
 # =============================================================================
 
+def html_to_text_with_links(html, max_url_len=50):
+    """Convert HTML to plain text, placing truncated link URLs inline after link text."""
+    soup = BeautifulSoup(html, 'html.parser')
+    for a in soup.find_all('a', href=True):
+        link_text = a.get_text(strip=True)
+        href = a['href']
+        if len(href) > max_url_len:
+            href = href[:max_url_len - 3] + "..."
+        if link_text:
+            a.replace_with(f"{link_text} ({href})")
+        else:
+            a.replace_with(href)
+    return soup.get_text(separator='\n', strip=True)
+
+
+# =============================================================================
+# Content Finder
+# =============================================================================
+
+def truncate_url(url, max_len):
+    """Shorten a URL to max_len characters, adding '...' if truncated."""
+    if len(url) <= max_len:
+        return url
+    return url[:max_len - 3] + "..."
+
+
+def format_link_history(section, max_links=60, max_url_len=50):
+    """
+    Build a formatted string of historical link performance for a section_name.
+    Queries ALL LinkData matching the section_name for this user/publication,
+    ordered by CTR descending. If count exceeds max_links, shows top half and
+    bottom half with a truncation note. CTR is shown relative to the section average.
+
+    Returns (formatted_string, total_link_count).
+    """
+    from analytics.models import LinkData
+
+    links = LinkData.objects.filter(
+        user=section.user,
+        publication=section.publication,
+        section_name=section.section_name,
+    ).order_by('-mean_ctr')
+
+    total = links.count()
+    if total == 0:
+        return "", 0
+
+    all_links = list(links)
+    avg_ctr = sum(l.mean_ctr for l in all_links) / total
+
+    if total > max_links:
+        half = max_links // 2
+        selected = all_links[:half] + all_links[-half:]
+        truncation_note = (
+            f"Note: Only the top {half} and bottom {half} links by CTR are shown "
+            f"({total - max_links} middle links omitted).\n\n"
+        )
+    else:
+        selected = all_links
+        truncation_note = ""
+
+    lines = [truncation_note] if truncation_note else []
+    for i, link in enumerate(selected, 1):
+        if avg_ctr > 0:
+            relative = link.mean_ctr / avg_ctr
+            rel_str = f"{relative:.1f}x avg"
+        else:
+            rel_str = "N/A"
+        lines.append(
+            f"{i}. [{rel_str}] {link.description}\n"
+            f"   URL: {truncate_url(link.raw_url, max_url_len)}"
+        )
+
+    return "\n".join(lines), total
+
+
+def perplexity_search(queries, max_results=10, domains=None, max_days_ago=None):
+    """Call the Perplexity search API with one or more queries and return results as a formatted string."""
+    from perplexity import Perplexity
+    from datetime import date, timedelta
+
+    queries = [q for q in queries if q and q.strip()]
+    if not queries:
+        return "No results found (empty queries)."
+
+    kwargs = {
+        "query": queries,
+        "max_results": max_results,
+        "max_tokens_per_page": 256,
+    }
+    if domains:
+        kwargs["search_domain_filter"] = domains
+    if max_days_ago is not None:
+        after_date = date.today() - timedelta(days=max_days_ago)
+        kwargs["search_after_date_filter"] = after_date.strftime("%m/%d/%Y")
+
+    client = Perplexity(api_key=settings.PERPLEXITY_API_KEY)
+    search = client.search.create(**kwargs)
+
+    if not search.results:
+        return "No results found."
+
+    today = datetime.now().date()
+    lines = []
+    for i, r in enumerate(search.results, 1):
+        lines.append(f"{i}. {r.title or '(no title)'}")
+        lines.append(f"   URL: {r.url or ''}")
+        if getattr(r, "date", None):
+            try:
+                d = datetime.strptime(r.date, "%Y-%m-%d").date()
+                days_ago = (today - d).days
+                lines.append(f"   Date: {r.date} ({days_ago} days ago)")
+            except ValueError:
+                lines.append(f"   Date: {r.date}")
+        if getattr(r, "snippet", None):
+            lines.append(f"   {r.snippet}")
+        lines.append("")
+
+    return "\n".join(lines)
+
+
+CONTENT_FINDER_SEARCH_TOOL = {
+    "type": "function",
+    "name": "web_search",
+    "description": "Search the web for recent articles, news, tools, and other content. Supports up to 5 queries per call for comprehensive coverage of a topic.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "queries": {
+                "type": "array",
+                "items": {"type": "string"},
+                "minItems": 1,
+                "maxItems": 5,
+                "description": "1-5 search queries. Be specific — include topic, context, and recency (e.g. 'open source AI agent frameworks released April 2026'). IMPORTANT: Do NOT use 'site:' prefix in queries. To filter by domain, use the 'domains' parameter instead."
+            },
+            "domains": {
+                "type": "array",
+                "items": {"type": "string"},
+                "maxItems": 20,
+                "description": "Domains to restrict results to (e.g. ['techcrunch.com', 'arxiv.org']). Pass empty array to search the entire web. This is the ONLY way to filter by domain — 'site:' in queries does not work."
+            },
+            "max_days_ago": {
+                "type": "integer",
+                "description": "Only return results published within this many days. For example, 7 = past week, 14 = past two weeks, 30 = past month. Omit (set to 0) for no date restriction."
+            }
+        },
+        "required": ["queries", "domains", "max_days_ago"],
+        "additionalProperties": False,
+    },
+    "strict": True,
+}
+
+CONTENT_FINDER_DISMISS_TOOL = {
+    "type": "function",
+    "name": "dismiss_section",
+    "description": "Call this to skip a section that does not require new external content (e.g. intro sections, sponsored content, reader polls, self-promotion, recurring sections that don't change week-to-week).",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "reason": {
+                "type": "string",
+                "description": "Brief explanation of why this section does not need new content."
+            }
+        },
+        "required": ["reason"],
+        "additionalProperties": False,
+    },
+    "strict": True,
+}
+
+
+class ContentFinderLink(BaseModel):
+    title: str
+    source: str
+    url: str
+    date: str
+    description: str
+    relevance: str
+
+
+class ContentFinderAllLinks(BaseModel):
+    links: List[ContentFinderLink]
+
+
+def build_content_finder_user_prompt(section, link_history_str, link_count, max_url_len=75):
+    """Build the user prompt for a single section's content finder agent."""
+    section_text = html_to_text_with_links(section.section_html, max_url_len=max_url_len)
+
+    return f"""<{section.section_name}.content>
+{section_text}
+</{section.section_name}.content>
+
+<{section.section_name}.historical_link_performance>
+The following links have appeared in this section in past issues. Values above 1.0x indicate above-average performance.
+
+{link_history_str}
+</{section.section_name}.historical_link_performance>
+"""
+
+
+async def run_content_finder_agent(messages, allow_exclusion, model, reasoning, max_rounds=3):
+    """
+    Per-section agentic loop: call llm_call, execute tool calls (web search),
+    feed results back, repeat until max_rounds is hit.
+    Uses store=True + previous_response_id to preserve reasoning traces across rounds.
+    Returns (final_response_or_None, all_responses, all_search_results).
+    If the model dismisses the section, returns (None, ...).
+    """
+    input_messages = list(messages)
+    all_responses, all_results = [], []
+    prev_response_id = None
+
+    for round_num in range(max_rounds):
+        tools = (
+            [CONTENT_FINDER_SEARCH_TOOL, CONTENT_FINDER_DISMISS_TOOL]
+            if round_num == 0 and allow_exclusion
+            else [CONTENT_FINDER_SEARCH_TOOL]
+        )
+
+        response = await llm_call(
+            "content_finder",
+            input_messages,
+            model,
+            reasoning,
+            tools=tools,
+            tool_choice="required",
+            store=True,
+            previous_response_id=prev_response_id,
+        )
+        all_responses.append(response)
+        prev_response_id = response.id
+
+        tool_calls = [item for item in response.output if item.type == "function_call"]
+
+        if not tool_calls:
+            return response, all_responses, all_results
+
+        # Check for dismiss
+        for call in tool_calls:
+            if call.name == "dismiss_section":
+                return None, all_responses, all_results
+
+        # With previous_response_id, only send new tool outputs
+        input_messages = []
+
+        for call in tool_calls:
+            args = json.loads(call.arguments)
+            queries = args["queries"]
+            domains = args.get("domains") or None
+            max_days_ago = args.get("max_days_ago") or None
+
+            result = perplexity_search(queries, domains=domains, max_days_ago=max_days_ago)
+            all_results.append(result)
+
+            input_messages.append({
+                "type": "function_call_output",
+                "call_id": call.call_id,
+                "output": result,
+            })
+
+    # Max rounds reached — force structured output
+    response = await llm_call(
+        "content_finder",
+        input_messages,
+        model,
+        reasoning,
+        response_format=ContentFinderAllLinks,
+        store=True,
+        previous_response_id=prev_response_id,
+    )
+    all_responses.append(response)
+    return response, all_responses, all_results
+
+
+async def process_content_finder_section(section, allow_exclusion, max_links=60, max_url_len=75, model="gpt-5.4-mini", reasoning="medium", max_rounds=3):
+    """
+    Orchestrate content finding for a single section.
+    Returns (section_name, parsed_links_or_None).
+    """
+    from asgiref.sync import sync_to_async
+    link_history, link_count = await sync_to_async(format_link_history)(section, max_links=max_links, max_url_len=max_url_len)
+
+    if link_count == 0:
+        return (section.section_name, None)
+
+    system_prompt = CONTENT_FINDER_SYSTEM_PROMPT.format(
+        CONTENT_FINDER_FILTER_SECTIONS_INSTRUCTION if allow_exclusion else "",
+        CONTENT_FINDER_SECTION_INCLUSION_CRITERIA if allow_exclusion else "",
+    )
+    user_prompt = build_content_finder_user_prompt(section, link_history, link_count, max_url_len=max_url_len)
+
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt},
+    ]
+
+    response, all_responses, all_results = await run_content_finder_agent(
+        messages, allow_exclusion, model, reasoning, max_rounds=max_rounds,
+    )
+
+    if response is None:
+        return (section.section_name, None)
+
+    # Parse structured output from the final response
+    try:
+        parsed = response.output[-1].content[0].parsed
+        links = [link.model_dump() for link in parsed.links]
+    except (AttributeError, IndexError):
+        links = []
+
+    return (section.section_name, links)
+
+
+def run_content_finder_background(task_id):
+    """
+    Background thread entry point for running content finder.
+    Loads the PendingContentSearch, processes sections, saves results.
+    """
+    import threading
+    from asgiref.sync import async_to_sync
+    from django.db import connection
+    from analytics.models import PendingContentSearch, Section
+
+    try:
+        task = PendingContentSearch.objects.get(task_id=task_id)
+        task.status = 'running'
+        task.save(update_fields=['status'])
+
+        # Load sections for the post
+        sections = Section.objects.filter(
+            post=task.post,
+            user=task.user,
+        ).order_by('start_line')
+
+        if task.mode == 'manual' and task.selected_sections:
+            sections = sections.filter(section_name__in=task.selected_sections)
+
+        sections = list(sections)
+
+        if not sections:
+            task.status = 'complete'
+            task.result_data = {}
+            task.save(update_fields=['status', 'result_data'])
+            return
+
+        allow_exclusion = (task.mode == 'auto')
+        model = settings.CONTENT_FINDER_MODEL
+        reasoning = settings.CONTENT_FINDER_REASONING
+        max_rounds = settings.CONTENT_FINDER_MAX_ROUNDS
+        max_links = settings.CONTENT_FINDER_MAX_LINKS
+        max_url_len = settings.CONTENT_FINDER_MAX_URL_LEN
+
+        async def run_all():
+            tasks = [
+                process_content_finder_section(
+                    section, allow_exclusion,
+                    max_links=max_links, max_url_len=max_url_len,
+                    model=model, reasoning=reasoning, max_rounds=max_rounds,
+                )
+                for section in sections
+            ]
+            return await asyncio.gather(*tasks)
+
+        raw_results = async_to_sync(run_all)()
+
+        result_data = {}
+        for section_name, links in raw_results:
+            if links is not None:
+                result_data[section_name] = links
+
+        task.status = 'complete'
+        task.result_data = result_data
+        task.save(update_fields=['status', 'result_data'])
+
+    except Exception as e:
+        logger.exception("Content finder background task failed")
+        try:
+            task = PendingContentSearch.objects.get(task_id=task_id)
+            task.status = 'error'
+            task.error_message = str(e)
+            task.save(update_fields=['status', 'error_message'])
+        except Exception:
+            logger.exception("Failed to save error status for content finder task")
+    finally:
+        connection.close()
+
+
 def build_sections_desc(user, publication, post, n_examples=5):
     """Build a human-readable sections description string for the LLM prompt.
 
@@ -879,35 +1271,35 @@ def build_sections_desc(user, publication, post, n_examples=5):
         )
         examples = rows_sorted[:n_examples]
 
-        desc_lines = [f"        - {ex.section_description}" for ex in examples]
-
-        pos_lines = []
+        MAX_CHARS = 500
+        example_parts = []
         for i, ex in enumerate(examples):
             total = ex.post_html_length
             start_pct = round(ex.start_line / total * 100) if total else 0
             end_pct = round(ex.end_line / total * 100) if total else 0
-            pos_lines.append(
-                f"        - Lines {ex.start_line}-{ex.end_line} "
-                f"({start_pct}%-{end_pct}% of way through HTML)" if i == 0 else f"({start_pct}%-{end_pct}%)"
+
+            html_lines = ex.section_html.splitlines() if ex.section_html else []
+            first_line = html_lines[0].strip() if html_lines else ''
+            last_line = html_lines[-1].strip() if html_lines else ''
+
+            full_text = html_to_text_with_links(ex.section_html)
+            if len(full_text) > MAX_CHARS:
+                half = MAX_CHARS // 2
+                full_text = full_text[:half] + " [...] " + full_text[-half:]
+
+            example_parts.append(
+                f'<example lines="{ex.start_line}-{ex.end_line}" '
+                f'position="{start_pct}%-{end_pct}%">\n'
+                f'<first_html_line>{first_line}</first_html_line>\n'
+                f'<last_html_line>{last_line}</last_html_line>\n'
+                f'<text_content>{full_text}</text_content>\n'
+                f'</example>'
             )
 
-        first_lines = []
-        last_lines = []
-        for ex in examples:
-            lines = ex.section_html.splitlines() if ex.section_html else []
-            first_lines.append(f"        - {lines[0].strip() if lines else ''}")
-            last_lines.append(f"        - {lines[-1].strip() if lines else ''}")
-
         part = (
-            f"Name: {section_name}\n"
-            f"    Typical section descriptions:\n"
-            + "\n".join(desc_lines) + "\n"
-            f"    Typical start and end positions:\n"
-            + "\n".join(pos_lines) + "\n"
-            f"    Typical first HTML lines:\n"
-            + "\n".join(first_lines) + "\n"
-            f"    Typical last HTML lines:\n"
-            + "\n".join(last_lines)
+            f'<section name="{section_name}">\n'
+            + "\n".join(example_parts) + "\n"
+            f'</section>'
         )
         output_parts.append(part)
 
@@ -917,7 +1309,6 @@ def build_sections_desc(user, publication, post, n_examples=5):
 class SectionItem(BaseModel):
     name: str
     title: Optional[str]
-    description: str
     start_line: int
     end_line: int
 
@@ -1014,7 +1405,6 @@ async def auto_section(html, user, publication, post, n_examples=5, pretty_html=
         results.append({
             "name": sec.name,
             "title": sec.title,
-            "description": sec.description,
             "start_line": start,
             "end_line": end,
             "section_html": section_html,
@@ -1089,7 +1479,6 @@ async def _save_post_full(post_id, sections, link_rows, user, publication):
                         publication=publication,
                         section_name=s['name'],
                         section_title=s.get('title'),
-                        section_description=s['description'],
                         start_line=s['start_line'],
                         end_line=s['end_line'],
                         post_html_length=s['post_html_length'],

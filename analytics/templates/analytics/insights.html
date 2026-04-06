@@ -40,8 +40,57 @@
     <div class="col-12">
         {% if has_processed_data %}
 
-        <!-- Section Data Table Card -->
-        <div class="card" id="dataTableCard">
+        {% if content_finder_enabled %}
+        <!-- Content Finder Card -->
+        <div class="card mb-3" id="contentFinderCard">
+            <div class="card-header">
+                <h5 class="mb-0">Content Finder</h5>
+            </div>
+            <div class="card-body">
+                <!-- Template Post dropdown -->
+                <div class="mb-3">
+                    <label for="cfPostSelect" class="form-label">Template Post</label>
+                    <select id="cfPostSelect" class="form-select">
+                        <option value="">Select a processed post...</option>
+                    </select>
+                </div>
+
+                <!-- Mode toggle -->
+                <div class="mb-3 d-flex align-items-center gap-3">
+                    <div class="form-check form-switch">
+                        <input type="checkbox" id="cfModeToggle" class="form-check-input">
+                        <label class="form-check-label" for="cfModeToggle">Manual section selection</label>
+                    </div>
+                </div>
+
+                <!-- Section checkboxes (hidden by default) -->
+                <div class="mb-3" id="cfSectionSelectWrapper" style="display:none;">
+                    <label class="form-label">Sections to search</label>
+                    <div id="cfSectionCheckboxes" class="d-flex flex-wrap gap-2">
+                    </div>
+                </div>
+
+                <!-- Run button -->
+                <div class="d-flex align-items-center gap-2">
+                    <button id="cfRunBtn" class="btn btn-primary" disabled>
+                        Run Content Search
+                    </button>
+                    <small class="text-muted">Uses <strong>{{ credits_per_search }}</strong> credits</small>
+                </div>
+                <div id="cfProgressContainer" class="mt-2"></div>
+            </div>
+
+            <!-- Results area -->
+            <div id="cfResults" class="card-body border-top" style="display:none;">
+                <h6 class="mb-3">Results</h6>
+                <div class="accordion" id="cfResultsAccordion">
+                </div>
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- Section Data Table Card (hidden) -->
+        <div class="card d-none" id="dataTableCard">
             <div class="card-header">
                 <div class="d-flex justify-content-between align-items-center">
                     <h5 class="mb-0">Section Data</h5>
@@ -60,7 +109,6 @@
                                 <th data-bs-toggle="tooltip" title="When the source post was published">Post Date</th>
                                 <th data-bs-toggle="tooltip" title="Name identifier for this section">Section Name</th>
                                 <th data-bs-toggle="tooltip" title="Section title as it appears in the newsletter">Section Title</th>
-                                <th data-bs-toggle="tooltip" title="Description of what this section contains">Description</th>
                                 <th class="text-end" data-bs-toggle="tooltip" title="Starting line number in the post HTML">Start Line</th>
                                 <th class="text-end" data-bs-toggle="tooltip" title="Ending line number in the post HTML">End Line</th>
                             </tr>
@@ -72,8 +120,8 @@
             </div>
         </div>
 
-        <!-- Link Data Table Card -->
-        <div class="card mt-3" id="linkDataTableCard">
+        <!-- Link Data Table Card (hidden) -->
+        <div class="card mt-3 d-none" id="linkDataTableCard">
             <div class="card-header">
                 <div class="d-flex justify-content-between align-items-center">
                     <h5 class="mb-0">Link Data</h5>
@@ -169,7 +217,6 @@
                 <td data-order="${item.post_date_sortable}">${item.post_date_display}</td>
                 <td>${item.section_name}</td>
                 <td>${item.section_title || ''}</td>
-                <td>${truncateText(item.description, 80)}</td>
                 <td class="text-end">${item.start_line}</td>
                 <td class="text-end">${item.end_line}</td>
             `;
@@ -278,13 +325,12 @@
             return;
         }
 
-        const headers = ['Post Title', 'Post Date', 'Section Name', 'Section Title', 'Description', 'Start Line', 'End Line'];
+        const headers = ['Post Title', 'Post Date', 'Section Name', 'Section Title', 'Start Line', 'End Line'];
         const rows = allItems.map(item => [
             item.post_title || '',
             item.post_date_display || '',
             item.section_name || '',
             item.section_title || '',
-            item.description || '',
             item.start_line || 0,
             item.end_line || 0
         ]);
@@ -341,5 +387,245 @@
         URL.revokeObjectURL(url);
         document.body.removeChild(a);
     });
+
+    // =========================================================================
+    // Content Finder
+    // =========================================================================
+    {% if content_finder_enabled %}
+    let cfSections = [];
+    let cfPollTimer = null;
+
+    // Load processed posts into dropdown
+    (async function loadContentFinderPosts() {
+        try {
+            const resp = await fetch('/insights/content-finder/posts/');
+            const data = await resp.json();
+            if (data.success && data.posts.length > 0) {
+                const select = document.getElementById('cfPostSelect');
+                data.posts.forEach(p => {
+                    const opt = document.createElement('option');
+                    opt.value = p.post_id;
+                    opt.textContent = `${p.title} (${p.publish_date})`;
+                    select.appendChild(opt);
+                });
+            }
+        } catch (err) {
+            console.error('Error loading content finder posts:', err);
+        }
+    })();
+
+    // Post selection change
+    document.getElementById('cfPostSelect').addEventListener('change', async function() {
+        const postId = this.value;
+        const runBtn = document.getElementById('cfRunBtn');
+        const checkboxes = document.getElementById('cfSectionCheckboxes');
+
+        cfSections = [];
+        checkboxes.innerHTML = '';
+        runBtn.disabled = !postId;
+
+        // Hide results from previous run
+        document.getElementById('cfResults').style.display = 'none';
+        document.getElementById('cfResultsAccordion').innerHTML = '';
+
+        if (!postId) return;
+
+        try {
+            const resp = await fetch(`/insights/content-finder/sections/?post_id=${encodeURIComponent(postId)}`);
+            const data = await resp.json();
+            if (data.success) {
+                cfSections = data.sections;
+                renderSectionCheckboxes();
+            }
+        } catch (err) {
+            console.error('Error loading sections:', err);
+        }
+    });
+
+    function renderSectionCheckboxes() {
+        const container = document.getElementById('cfSectionCheckboxes');
+        container.innerHTML = '';
+        cfSections.forEach(name => {
+            const div = document.createElement('div');
+            div.className = 'form-check';
+            div.innerHTML = `
+                <input class="form-check-input cf-section-cb" type="checkbox" value="${name}" id="cfSec_${name}" checked>
+                <label class="form-check-label" for="cfSec_${name}">${name}</label>
+            `;
+            container.appendChild(div);
+        });
+    }
+
+    // Mode toggle
+    document.getElementById('cfModeToggle').addEventListener('change', function() {
+        const wrapper = document.getElementById('cfSectionSelectWrapper');
+        wrapper.style.display = this.checked ? 'block' : 'none';
+        if (this.checked && cfSections.length > 0) {
+            renderSectionCheckboxes();
+        }
+    });
+
+    // Run button
+    document.getElementById('cfRunBtn').addEventListener('click', async function() {
+        const postId = document.getElementById('cfPostSelect').value;
+        if (!postId) return;
+
+        const manualMode = document.getElementById('cfModeToggle').checked;
+        let selectedSections = [];
+
+        if (manualMode) {
+            document.querySelectorAll('.cf-section-cb:checked').forEach(cb => {
+                selectedSections.push(cb.value);
+            });
+            if (selectedSections.length === 0) {
+                showToast('Please select at least one section.', 'warning');
+                return;
+            }
+        }
+
+        // Disable UI
+        const runBtn = this;
+        runBtn.disabled = true;
+
+        // Hide previous results
+        document.getElementById('cfResults').style.display = 'none';
+        document.getElementById('cfResultsAccordion').innerHTML = '';
+
+        try {
+            const resp = await fetch('/insights/content-finder/run/', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': getCsrfToken(),
+                },
+                body: JSON.stringify({
+                    post_id: postId,
+                    mode: manualMode ? 'manual' : 'auto',
+                    selected_sections: selectedSections,
+                }),
+            });
+            const data = await resp.json();
+
+            if (!data.success) {
+                showToast(data.error || GENERIC_ERROR_TOAST, 'danger');
+                runBtn.disabled = false;
+                return;
+            }
+
+            // Start progress bar and polling
+            ProgressBar.start({
+                containerId: 'cfProgressContainer',
+                expectedDuration: {{ progress_durations.content_search }},
+                subtext: 'Searching for content...',
+            });
+            pollContentFinder(data.task_id);
+        } catch (err) {
+            console.error('Error starting content finder:', err);
+            showToast(GENERIC_ERROR_TOAST, 'danger');
+            runBtn.disabled = false;
+        }
+    });
+
+    function pollContentFinder(taskId) {
+        if (cfPollTimer) clearInterval(cfPollTimer);
+
+        cfPollTimer = setInterval(async () => {
+            try {
+                const resp = await fetch(`/insights/content-finder/status/${taskId}/`);
+                const data = await resp.json();
+
+                if (data.status === 'complete') {
+                    clearInterval(cfPollTimer);
+                    cfPollTimer = null;
+                    ProgressBar.complete({ containerId: 'cfProgressContainer', success: true, message: 'Done!' });
+                    document.getElementById('cfRunBtn').disabled = false;
+
+                    if (data.credits_used !== undefined) {
+                        updateCreditsDisplay(data.credits_used, data.credits_quota);
+                    }
+
+                    renderContentFinderResults(data.result_data || {});
+                } else if (data.status === 'error') {
+                    clearInterval(cfPollTimer);
+                    cfPollTimer = null;
+                    ProgressBar.complete({ containerId: 'cfProgressContainer', success: false, message: 'Error' });
+                    document.getElementById('cfRunBtn').disabled = false;
+                    showToast(GENERIC_ERROR_TOAST, 'danger');
+                }
+            } catch (err) {
+                console.error('Polling error:', err);
+            }
+        }, 3000);
+    }
+
+    function escapeHtml(str) {
+        if (!str) return '';
+        const div = document.createElement('div');
+        div.textContent = str;
+        return div.innerHTML;
+    }
+
+    function renderContentFinderResults(resultData) {
+        const accordion = document.getElementById('cfResultsAccordion');
+        accordion.innerHTML = '';
+
+        const sectionNames = Object.keys(resultData);
+        if (sectionNames.length === 0) {
+            accordion.innerHTML = '<p class="text-muted">No content recommendations were generated. All sections were either dismissed or had no historical link data.</p>';
+            document.getElementById('cfResults').style.display = 'block';
+            return;
+        }
+
+        sectionNames.forEach((sectionName, idx) => {
+            const links = resultData[sectionName];
+            const collapseId = `cfCollapse_${idx}`;
+            const headerId = `cfHeader_${idx}`;
+            const isFirst = idx === 0;
+
+            let linksHtml = '';
+            links.forEach(link => {
+                const displayUrl = link.url && link.url.length > 60
+                    ? escapeHtml(link.url.substring(0, 57)) + '...'
+                    : escapeHtml(link.url);
+
+                linksHtml += `
+                    <div class="mb-3 pb-3 border-bottom">
+                        <div class="fw-semibold">
+                            <a href="${escapeHtml(link.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(link.title)}</a>
+                        </div>
+                        <div class="text-muted small">${escapeHtml(link.source)} &middot; ${escapeHtml(link.date)}</div>
+                        <div class="mt-1">${escapeHtml(link.description)}</div>
+                        <div class="mt-1 fst-italic text-muted small">${escapeHtml(link.relevance)}</div>
+                    </div>
+                `;
+            });
+
+            accordion.innerHTML += `
+                <div class="accordion-item">
+                    <h2 class="accordion-header" id="${headerId}">
+                        <button class="accordion-button ${isFirst ? '' : 'collapsed'}" type="button"
+                                data-bs-toggle="collapse" data-bs-target="#${collapseId}"
+                                aria-expanded="${isFirst}" aria-controls="${collapseId}">
+                            ${escapeHtml(sectionName)} &mdash; ${links.length} link${links.length !== 1 ? 's' : ''}
+                        </button>
+                    </h2>
+                    <div id="${collapseId}" class="accordion-collapse collapse ${isFirst ? 'show' : ''}"
+                         aria-labelledby="${headerId}" data-bs-parent="#cfResultsAccordion">
+                        <div class="accordion-body">
+                            ${linksHtml}
+                        </div>
+                    </div>
+                </div>
+            `;
+        });
+
+        document.getElementById('cfResults').style.display = 'block';
+    }
+
+    function getCsrfToken() {
+        const cookie = document.cookie.split(';').find(c => c.trim().startsWith('csrftoken='));
+        return cookie ? cookie.split('=')[1] : '';
+    }
+    {% endif %}
 </script>
 {% endblock %}

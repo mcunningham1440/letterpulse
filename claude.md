@@ -56,7 +56,7 @@ app/
 │   ├── wsgi.py / asgi.py       # WSGI/ASGI entry points
 │   └── __init__.py
 ├── analytics/                  # Main Django app
-│   ├── models.py               # Post, ContentSet, Report, UsageAccount, ExecutionLog, SurveyResponse, ProcessedPost, LinkData, Section, ClickVizEmailLog, CronRunLog models
+│   ├── models.py               # Post, ContentSet, Report, UsageAccount, ExecutionLog, SurveyResponse, ProcessedPost, LinkData, Section, ClickVizEmailLog, CronRunLog, PendingContentSearch models
 │   ├── views.py                # All view logic (login-protected)
 │   ├── urls.py                 # App URL patterns (analytics namespace)
 │   ├── utils.py                # Core utility functions (API calls, AI extraction, credit charging)
@@ -180,7 +180,6 @@ Stores section data extracted from a processed post via an agentic GPT loop:
 - `publication`: ForeignKey to Publication (nullable)
 - `section_name`: Snake-case identifier for the section (e.g., "tech_news", "quick_links")
 - `section_title`: Display title as it appears in the newsletter (nullable, None for untitled sections)
-- `section_description`: Brief description of the section's format
 - `start_line`: 1-based starting line number in the post HTML
 - `end_line`: 1-based ending line number in the post HTML
 - `post_html_length`: Total line count of the post HTML
@@ -217,6 +216,20 @@ Tracks background report generation tasks:
 
 Created when a user initiates section-level report generation. One PendingReport is created per section. The LLM call runs in a background thread per section. The frontend polls `/insights/report-status/<task_id>/` for each task until all complete, then shows a review overlay.
 
+### PendingContentSearch
+Tracks background content finder tasks:
+- `task_id`: UUID (unique, auto-generated)
+- `user`: ForeignKey to User
+- `publication`: ForeignKey to Publication (nullable)
+- `post`: ForeignKey to Post (template post)
+- `mode`: "auto" or "manual"
+- `selected_sections`: JSON list of section names (manual mode only)
+- `status`: "pending", "running", "complete", or "error"
+- `result_data`: JSON dict of `{section_name: [link dicts]}` (populated on completion)
+- `error_message`: Error details (populated on failure)
+
+Created when a user runs Content Finder from the Insights page. A background thread runs a per-section agentic LLM loop with Perplexity web search. The frontend polls `/insights/content-finder/status/<task_id>/` until complete, then renders results in an accordion.
+
 ## Authentication
 
 Uses django-allauth for email-based authentication:
@@ -245,6 +258,7 @@ Uses django-allauth for email-based authentication:
 - **Download Improvement Tips**: ZIP of HTML files with AI-generated improvement tips
 
 ### 2. Insights Page (`/insights/`)
+- **Content Finder** (visible when `PERPLEXITY_API_KEY` is configured): Agentic content recommendation tool. User selects a processed post as a template, optionally toggles manual section selection, and clicks "Run Content Search". A per-section agentic LLM loop uses Perplexity web search to find new content matching historical click patterns. Results display in a Bootstrap accordion grouped by section. Each link shows title, source, URL, date, description, and audience relevance. Costs `CREDITS_PER_CONTENT_SEARCH` credits per run. Background task with polling (3s interval).
 - **Section Data Table**: DataTable showing all Sections for the current publication — Post Title, Post Date, Section Name, Description, Start Line, End Line. Sortable and scrollable. Download CSV button (client-side).
 - **Link Data Table**: DataTable showing all LinkData for the current publication — Post Title, Post Date, Section, URL, Description, Rank in Section, Mean CTR (%), Mean Clicks. Sortable and scrollable. Download CSV button (client-side).
 
@@ -306,9 +320,13 @@ All routes use the `analytics:` namespace.
 - `POST /posts/clear-processed/` - Delete ProcessedPost, Section, and LinkData records for selected posts (AJAX)
 
 ### Insights Routes
-- `GET /insights/` - Insights dashboard (section and link data tables)
+- `GET /insights/` - Insights dashboard (section and link data tables, content finder)
 - `GET /insights/load-processed-data/` - Load all Section items as JSON for the current user/publication
 - `GET /insights/load-link-data/` - Load all LinkData items as JSON for the current user/publication
+- `GET /insights/content-finder/posts/` - List processed posts for content finder dropdown
+- `GET /insights/content-finder/sections/?post_id=` - List section names for a given post
+- `POST /insights/content-finder/run/` - Start content finder background task (JSON body: post_id, mode, selected_sections)
+- `GET /insights/content-finder/status/<uuid>/` - Poll content finder task status and results
 
 ### Account Routes
 - `GET /account/` - Account settings page
@@ -453,6 +471,15 @@ Views use `get_user_api_credentials(user)` helper to retrieve credentials and re
 - `fetch_recent_published_posts(beehiiv_token, beehiiv_pub_id, max_pages=3)`: Async — fetch recently published posts ordered by publish_date desc; stops early if oldest post on page is >24h old
 - `build_click_viz_email_html(viz_html, post_title, site_url)`: Wrap click viz HTML with branded header banner and footer for email delivery
 
+### Content Finder Functions
+- `truncate_url(url, max_len)`: Shorten a URL to max_len characters
+- `format_link_history(section, max_links, max_url_len)`: Build formatted historical link performance string for a section. Returns (formatted_string, link_count)
+- `perplexity_search(queries, max_results, domains, max_days_ago)`: Call Perplexity search API, return formatted results string
+- `build_content_finder_user_prompt(section, link_history_str, link_count, max_url_len)`: Build per-section user prompt with content and historical link data
+- `run_content_finder_agent(messages, allow_exclusion, model, reasoning, max_rounds)`: Async per-section agentic loop. Uses web_search and dismiss_section tools. Returns (response_or_None, all_responses, all_results)
+- `process_content_finder_section(section, allow_exclusion, ...)`: Orchestrate content finding for one section. Returns (section_name, links_or_None)
+- `run_content_finder_background(task_id)`: Background thread entry point. Loads PendingContentSearch, runs all sections in parallel, saves results
+
 ## Management Commands
 
 ### `send_click_viz_emails`
@@ -501,6 +528,15 @@ DAILY_SIGNUP_CAP = 5
 
 # Auto click viz email settings
 SITE_URL = 'https://letterpulse.com'  # Base URL for links in emails (env: SITE_URL)
+
+# Content Finder configuration
+PERPLEXITY_API_KEY = ''              # Perplexity search API key (env: PERPLEXITY_API_KEY)
+CREDITS_PER_CONTENT_SEARCH = 2      # Per content finder run
+CONTENT_FINDER_MODEL = "gpt-5.4-mini"
+CONTENT_FINDER_REASONING = "medium"
+CONTENT_FINDER_MAX_ROUNDS = 3       # Max search round-trips per section
+CONTENT_FINDER_MAX_LINKS = 60       # Max historical links per section for context
+CONTENT_FINDER_MAX_URL_LEN = 75     # Truncate displayed URLs to this length
 
 ```
 

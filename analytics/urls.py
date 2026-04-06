@@ -19,6 +19,10 @@ urlpatterns = [
     path('insights/', views.insights_view, name='insights'),
     path('insights/load-processed-data/', views.load_processed_data, name='load_processed_data'),
     path('insights/load-link-data/', views.load_link_data, name='load_link_data'),
+    path('insights/content-finder/posts/', views.content_finder_posts, name='content_finder_posts'),
+    path('insights/content-finder/sections/', views.content_finder_sections, name='content_finder_sections'),
+    path('insights/content-finder/run/', views.run_content_finder, name='run_content_finder'),
+    path('insights/content-finder/status/<uuid:task_id>/', views.poll_content_finder, name='poll_content_finder'),
     path('survey/submit/', views.submit_survey, name='submit_survey'),
     path('cron/click-viz-status/', views.cron_status, name='cron_status'),
 ]

@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Post, ContentSet, Report, UsageAccount, Publication, ExecutionLog, SurveyResponse, ProcessedPost, LinkData, Section, ClickVizEmailLog, CronRunLog
+from .models import Post, ContentSet, Report, UsageAccount, Publication, ExecutionLog, SurveyResponse, ProcessedPost, LinkData, Section, ClickVizEmailLog, CronRunLog, PendingContentSearch
 
 
 @admin.register(UsageAccount)
@@ -103,10 +103,19 @@ class LinkDataAdmin(admin.ModelAdmin):
 
 @admin.register(Section)
 class SectionAdmin(admin.ModelAdmin):
-    list_display = ('post', 'user', 'section_name', 'section_description', 'start_line', 'end_line', 'created_at')
+    list_display = ('post', 'user', 'section_name', 'start_line', 'end_line', 'created_at')
     list_filter = ('publication', 'user', 'section_name')
-    search_fields = ('post__title', 'user__email', 'section_name', 'section_description')
+    search_fields = ('post__title', 'user__email', 'section_name')
     ordering = ('post', 'start_line')
+
+
+@admin.register(PendingContentSearch)
+class PendingContentSearchAdmin(admin.ModelAdmin):
+    list_display = ('task_id', 'user', 'post', 'mode', 'status', 'created_at')
+    list_filter = ('status', 'mode', 'created_at')
+    search_fields = ('user__email', 'post__title')
+    ordering = ('-created_at',)
+    readonly_fields = ('task_id', 'created_at')
 
 
 @admin.register(SurveyResponse)

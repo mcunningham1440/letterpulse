@@ -16,7 +16,7 @@ import pandas as pd
 import json
 from asgiref.sync import async_to_sync
 
-from .models import Post, ContentSet, Report, UsageAccount, SurveyResponse, ProcessedPost, LinkData, Section
+from .models import Post, ContentSet, Report, UsageAccount, SurveyResponse, ProcessedPost, LinkData, Section, PendingContentSearch
 
 logger = logging.getLogger(__name__)
 
@@ -901,6 +901,8 @@ def insights_view(request):
     context = {
         'has_posts': has_posts,
         'has_processed_data': has_processed_data,
+        'content_finder_enabled': bool(settings.PERPLEXITY_API_KEY),
+        'credits_per_search': settings.CREDITS_PER_CONTENT_SEARCH,
     }
 
     return render(request, 'analytics/insights.html', context)
@@ -946,7 +948,6 @@ def load_processed_data(request):
                 'post_date_sortable': post_date_sortable,
                 'section_name': sec.section_name,
                 'section_title': sec.section_title or '',
-                'description': sec.section_description,
                 'start_line': sec.start_line,
                 'end_line': sec.end_line,
             })
@@ -1014,6 +1015,168 @@ def load_link_data(request):
     except Exception as e:
         return JsonResponse({'success': False, 'error': str(e)}, status=500)
 
+
+
+# =============================================================================
+# Content Finder Views
+# =============================================================================
+
+@login_required
+@require_GET
+@require_valid_api_credentials
+def content_finder_posts(request):
+    """Return list of processed posts for the content finder dropdown."""
+    from .models import Publication
+
+    try:
+        _, beehiiv_pub_id, _ = get_user_api_credentials(request.user)
+        try:
+            publication = Publication.objects.get(pub_id=beehiiv_pub_id)
+        except Publication.DoesNotExist:
+            return JsonResponse({'success': True, 'posts': []})
+
+        processed = ProcessedPost.objects.filter(
+            user=request.user, publication=publication
+        ).select_related('post')
+
+        posts = []
+        for pp in processed:
+            post = pp.post
+            date_display = '-'
+            if post.publish_date:
+                try:
+                    date_display = post.publish_date.strftime('%b %d, %Y')
+                except Exception:
+                    date_display = str(post.publish_date)
+            posts.append({
+                'post_id': post.post_id,
+                'title': post.title or '',
+                'publish_date': date_display,
+            })
+
+        posts.sort(key=lambda p: p['publish_date'], reverse=True)
+
+        return JsonResponse({'success': True, 'posts': posts})
+    except Exception as e:
+        return JsonResponse({'success': False, 'error': str(e)}, status=500)
+
+
+@login_required
+@require_GET
+@require_valid_api_credentials
+def content_finder_sections(request):
+    """Return section names for a given post."""
+    post_id = request.GET.get('post_id')
+    if not post_id:
+        return JsonResponse({'success': False, 'error': 'post_id required'}, status=400)
+
+    sections = Section.objects.filter(
+        post__post_id=post_id, user=request.user
+    ).order_by('start_line').values_list('section_name', flat=True)
+
+    return JsonResponse({'success': True, 'sections': list(sections)})
+
+
+@login_required
+@require_POST
+@require_valid_api_credentials
+def run_content_finder(request):
+    """Start a content finder background task."""
+    import threading
+    from .models import Publication
+    from .utils import charge_credits, NotEnoughCredits, run_content_finder_background
+
+    try:
+        data = json.loads(request.body)
+    except json.JSONDecodeError:
+        return JsonResponse({'success': False, 'error': 'Invalid JSON'}, status=400)
+
+    post_id = data.get('post_id')
+    mode = data.get('mode', 'auto')
+    selected_sections = data.get('selected_sections', [])
+
+    if not post_id:
+        return JsonResponse({'success': False, 'error': 'post_id required'}, status=400)
+    if mode not in ('auto', 'manual'):
+        return JsonResponse({'success': False, 'error': 'mode must be auto or manual'}, status=400)
+
+    if not settings.PERPLEXITY_API_KEY:
+        return JsonResponse({'success': False, 'error': 'Content Finder is not configured. Please contact support.'}, status=500)
+
+    # Look up the post
+    try:
+        post = Post.objects.get(post_id=post_id, user=request.user)
+    except Post.DoesNotExist:
+        return JsonResponse({'success': False, 'error': 'Post not found'}, status=404)
+
+    # Verify sections exist
+    section_qs = Section.objects.filter(post=post, user=request.user)
+    if not section_qs.exists():
+        return JsonResponse({'success': False, 'error': 'No sections found for this post'}, status=400)
+
+    if mode == 'manual':
+        if not selected_sections:
+            return JsonResponse({'success': False, 'error': 'Select at least one section'}, status=400)
+        existing = set(section_qs.values_list('section_name', flat=True))
+        invalid = set(selected_sections) - existing
+        if invalid:
+            return JsonResponse({'success': False, 'error': f'Invalid sections: {", ".join(invalid)}'}, status=400)
+
+    # Charge credits
+    try:
+        charge_credits(request.user, settings.CREDITS_PER_CONTENT_SEARCH)
+    except NotEnoughCredits:
+        return JsonResponse({'success': False, 'error': 'Not enough credits'}, status=400)
+
+    # Get publication
+    _, beehiiv_pub_id, _ = get_user_api_credentials(request.user)
+    try:
+        publication = Publication.objects.get(pub_id=beehiiv_pub_id)
+    except Publication.DoesNotExist:
+        publication = None
+
+    # Create task
+    task = PendingContentSearch.objects.create(
+        user=request.user,
+        publication=publication,
+        post=post,
+        mode=mode,
+        selected_sections=selected_sections if mode == 'manual' else [],
+    )
+
+    # Spawn background thread
+    threading.Thread(
+        target=run_content_finder_background,
+        args=(task.task_id,),
+        daemon=True,
+    ).start()
+
+    return JsonResponse({'success': True, 'task_id': str(task.task_id)})
+
+
+@login_required
+@require_GET
+def poll_content_finder(request, task_id):
+    """Poll the status of a content finder task."""
+    try:
+        task = PendingContentSearch.objects.get(task_id=task_id, user=request.user)
+    except PendingContentSearch.DoesNotExist:
+        return JsonResponse({'success': False, 'error': 'Task not found'}, status=404)
+
+    usage = request.user.usage_account
+    resp = {
+        'success': True,
+        'status': task.status,
+        'credits_used': usage.used_this_period,
+        'credits_quota': usage.monthly_quota,
+    }
+
+    if task.status == 'complete':
+        resp['result_data'] = task.result_data
+    elif task.status == 'error':
+        resp['error_message'] = task.error_message
+
+    return JsonResponse(resp)
 
 
 @login_required
