@@ -202,7 +202,7 @@ async def validate_beehiiv_api_key(beehiiv_token: str) -> tuple[bool, list | str
             return (False, f"Unexpected error: {str(e)}")
 
 
-async def llm_call(function_name, messages, model, reasoning_level, response_format=None, tools=None, user=None):
+async def llm_call(function_name, messages, model, reasoning_level, response_format=None, tools=None, tool_choice=None, user=None, store=False, previous_response_id=None):
     """
     Make an async call to OpenAI API and log the request.
 
@@ -213,7 +213,10 @@ async def llm_call(function_name, messages, model, reasoning_level, response_for
         reasoning_level: Reasoning effort level ("low", "medium", "high")
         response_format: Optional Pydantic model for structured output
         tools: Optional list of tools
+        tool_choice: Optional tool choice constraint ("auto", "required", or specific tool dict)
         user: Django user object for logging (optional)
+        store: If True, OpenAI stores the response server-side for reasoning continuity
+        previous_response_id: ID of a stored response to thread reasoning context from
 
     Returns:
         OpenAI API response object
@@ -228,6 +231,12 @@ async def llm_call(function_name, messages, model, reasoning_level, response_for
     }
     if tools is not None:
         kwargs["tools"] = tools
+    if tool_choice is not None:
+        kwargs["tool_choice"] = tool_choice
+    if store:
+        kwargs["store"] = True
+    if previous_response_id is not None:
+        kwargs["previous_response_id"] = previous_response_id
 
     try:
         if asyncio.get_event_loop().is_running():

@@ -13,3 +13,4 @@ gunicorn>=21.0         # WSGI HTTP server for production
 whitenoise>=6.7        # Static file serving for production
 cryptography>=42.0     # For encrypting sensitive data at rest
 pytz>=2024.1          # Timezone handling for migrations
+perplexityai>=0.20.0   # Perplexity search API client
