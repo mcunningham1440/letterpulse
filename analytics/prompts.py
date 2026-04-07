@@ -573,7 +573,7 @@ Rules:
 - Find items similar in TYPE to what the section features. If it links to news articles, find news articles. If it links to thinkpieces, find thinkpieces. If it links to tools or products, find those
 - Number of items to find = 2 + the number of discrete items in the section. For example: a single essay section = find 3 items; a section with 5 news links = find 7 items
 - Prioritize RECENT content unless the section typically features evergreen content
-- Do NOT recommend URLs that already appear in the historical link data
+- Do NOT recommend news items, stories, pieces, etc. that already appear in the historical link data
 - Output the date field in the format "March 3, 2026"
 - Description should be one sentence explaining what the link is
 - Relevance should be one sentence explaining how the link relates to content that has performed well with your audience in the past
@@ -598,5 +598,5 @@ Search tips:
 try including targeted searches for these domains. Be sure to include whole-web searches as well, however, and only limit to a domain if it appears multiple times in the prior links
 - You can also use the max_days_ago parameter to restrict results by date
 
-IMPORTANT: You MUST NOT use 'site:' prefixes in queries! To filter by domain, use the 'domains' parameter instead.
+CRITICAL: You MUST NOT use 'site:' prefixes in queries! To filter by domain, use the 'domains' parameter instead.
 """

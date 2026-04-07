@@ -57,17 +57,19 @@
 
                 <!-- Mode toggle -->
                 <div class="mb-3 d-flex align-items-center gap-3">
-                    <div class="form-check form-switch">
+                    <div class="form-check form-switch d-flex align-items-center gap-2">
+                        <span class="text-muted">Automatic</span>
                         <input type="checkbox" id="cfModeToggle" class="form-check-input">
                         <label class="form-check-label" for="cfModeToggle">Manual section selection</label>
                     </div>
                 </div>
 
-                <!-- Section checkboxes (hidden by default) -->
+                <!-- Section dropdown (hidden by default) -->
                 <div class="mb-3" id="cfSectionSelectWrapper" style="display:none;">
-                    <label class="form-label">Sections to search</label>
-                    <div id="cfSectionCheckboxes" class="d-flex flex-wrap gap-2">
-                    </div>
+                    <label class="form-label" for="cfSectionSelect">Sections to search</label>
+                    <select id="cfSectionSelect" class="form-select" multiple size="5">
+                    </select>
+                    <small class="text-muted">Hold Ctrl/Cmd to select multiple sections</small>
                 </div>
 
                 <!-- Run button -->
@@ -418,10 +420,10 @@
     document.getElementById('cfPostSelect').addEventListener('change', async function() {
         const postId = this.value;
         const runBtn = document.getElementById('cfRunBtn');
-        const checkboxes = document.getElementById('cfSectionCheckboxes');
+        const sectionSelect = document.getElementById('cfSectionSelect');
 
         cfSections = [];
-        checkboxes.innerHTML = '';
+        sectionSelect.innerHTML = '';
         runBtn.disabled = !postId;
 
         // Hide results from previous run
@@ -435,24 +437,22 @@
             const data = await resp.json();
             if (data.success) {
                 cfSections = data.sections;
-                renderSectionCheckboxes();
+                renderSectionOptions();
             }
         } catch (err) {
             console.error('Error loading sections:', err);
         }
     });
 
-    function renderSectionCheckboxes() {
-        const container = document.getElementById('cfSectionCheckboxes');
-        container.innerHTML = '';
+    function renderSectionOptions() {
+        const select = document.getElementById('cfSectionSelect');
+        select.innerHTML = '';
         cfSections.forEach(name => {
-            const div = document.createElement('div');
-            div.className = 'form-check';
-            div.innerHTML = `
-                <input class="form-check-input cf-section-cb" type="checkbox" value="${name}" id="cfSec_${name}" checked>
-                <label class="form-check-label" for="cfSec_${name}">${name}</label>
-            `;
-            container.appendChild(div);
+            const option = document.createElement('option');
+            option.value = name;
+            option.textContent = name;
+            option.selected = true;
+            select.appendChild(option);
         });
     }
 
@@ -461,7 +461,7 @@
         const wrapper = document.getElementById('cfSectionSelectWrapper');
         wrapper.style.display = this.checked ? 'block' : 'none';
         if (this.checked && cfSections.length > 0) {
-            renderSectionCheckboxes();
+            renderSectionOptions();
         }
     });
 
@@ -474,8 +474,8 @@
         let selectedSections = [];
 
         if (manualMode) {
-            document.querySelectorAll('.cf-section-cb:checked').forEach(cb => {
-                selectedSections.push(cb.value);
+            Array.from(document.getElementById('cfSectionSelect').selectedOptions).forEach(opt => {
+                selectedSections.push(opt.value);
             });
             if (selectedSections.length === 0) {
                 showToast('Please select at least one section.', 'warning');

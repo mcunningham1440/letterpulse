@@ -889,8 +889,12 @@ def format_link_history(section, max_links=60, max_url_len=50):
     return "\n".join(lines), total
 
 
-def perplexity_search(queries, max_results=10, domains=None, max_days_ago=None):
-    """Call the Perplexity search API with one or more queries and return results as a formatted string."""
+def perplexity_search(queries, max_results=10, domains=None, max_days_ago=None, historical_urls=None):
+    """Call the Perplexity search API with one or more queries and return results as a formatted string.
+
+    If historical_urls is provided, any result whose URL is a substring of
+    any historical URL is silently excluded from the output.
+    """
     from perplexity import Perplexity
     from datetime import date, timedelta
 
@@ -915,9 +919,19 @@ def perplexity_search(queries, max_results=10, domains=None, max_days_ago=None):
     if not search.results:
         return "No results found."
 
+    # Filter out results whose URL is a substring of any historical URL
+    results = search.results
+    if historical_urls:
+        results = [
+            r for r in results
+            if not r.url or not any(r.url in h_url for h_url in historical_urls)
+        ]
+        if not results:
+            return "No results found."
+
     today = datetime.now().date()
     lines = []
-    for i, r in enumerate(search.results, 1):
+    for i, r in enumerate(results, 1):
         lines.append(f"{i}. {r.title or '(no title)'}")
         lines.append(f"   URL: {r.url or ''}")
         if getattr(r, "date", None):
@@ -1013,7 +1027,7 @@ The following links have appeared in this section in past issues. Values above 1
 """
 
 
-async def run_content_finder_agent(messages, allow_exclusion, model, reasoning, max_rounds=3):
+async def run_content_finder_agent(messages, allow_exclusion, model, reasoning, max_rounds=3, historical_urls=None):
     """
     Per-section agentic loop: call llm_call, execute tool calls (web search),
     feed results back, repeat until max_rounds is hit.
@@ -1064,7 +1078,7 @@ async def run_content_finder_agent(messages, allow_exclusion, model, reasoning, 
             domains = args.get("domains") or None
             max_days_ago = args.get("max_days_ago") or None
 
-            result = perplexity_search(queries, domains=domains, max_days_ago=max_days_ago)
+            result = perplexity_search(queries, domains=domains, max_days_ago=max_days_ago, historical_urls=historical_urls)
             all_results.append(result)
 
             input_messages.append({
@@ -1087,7 +1101,7 @@ async def run_content_finder_agent(messages, allow_exclusion, model, reasoning, 
     return response, all_responses, all_results
 
 
-async def process_content_finder_section(section, allow_exclusion, max_links=60, max_url_len=75, model="gpt-5.4-mini", reasoning="medium", max_rounds=3):
+async def process_content_finder_section(section, allow_exclusion, max_links=60, max_url_len=75, model="gpt-5.4-mini", reasoning="medium", max_rounds=3, historical_urls=None):
     """
     Orchestrate content finding for a single section.
     Returns (section_name, parsed_links_or_None).
@@ -1111,6 +1125,7 @@ async def process_content_finder_section(section, allow_exclusion, max_links=60,
 
     response, all_responses, all_results = await run_content_finder_agent(
         messages, allow_exclusion, model, reasoning, max_rounds=max_rounds,
+        historical_urls=historical_urls,
     )
 
     if response is None:
@@ -1165,12 +1180,21 @@ def run_content_finder_background(task_id):
         max_links = settings.CONTENT_FINDER_MAX_LINKS
         max_url_len = settings.CONTENT_FINDER_MAX_URL_LEN
 
+        # Load all historical URLs for this user/publication once
+        historical_urls = set(
+            LinkData.objects.filter(
+                user=task.user,
+                publication=task.publication,
+            ).values_list('raw_url', flat=True)
+        )
+
         async def run_all():
             tasks = [
                 process_content_finder_section(
                     section, allow_exclusion,
                     max_links=max_links, max_url_len=max_url_len,
                     model=model, reasoning=reasoning, max_rounds=max_rounds,
+                    historical_urls=historical_urls,
                 )
                 for section in sections
             ]
