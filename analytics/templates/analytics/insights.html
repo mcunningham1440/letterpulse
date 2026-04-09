@@ -1,6 +1,6 @@
 {% extends 'analytics/base.html' %}
 
-{% block title %}Insights - LetterPulse{% endblock %}
+{% block title %}Write - LetterPulse{% endblock %}
 
 {% block extra_css %}
 <style>
@@ -17,7 +17,7 @@
 <div class="confirm-overlay" id="noPostsOverlay" style="display: flex;">
     <div class="confirm-modal">
         <h5 class="mb-3">No Posts Loaded</h5>
-        <p class="mb-4">Fetch your newsletter's posts on the Posts page before viewing Insights.</p>
+        <p class="mb-4">Fetch your newsletter's posts on the Posts page before using Write.</p>
         <div class="d-flex justify-content-end">
             <a href="{% url 'analytics:posts' %}" class="btn btn-primary">Go to Posts</a>
         </div>
@@ -44,7 +44,7 @@
         <!-- Content Finder Card -->
         <div class="card mb-3" id="contentFinderCard">
             <div class="card-header">
-                <h5 class="mb-0">Content Finder</h5>
+                <h5 class="mb-0">1. Find content</h5>
             </div>
             <div class="card-body">
                 <!-- Template Post dropdown -->
@@ -55,29 +55,30 @@
                     </select>
                 </div>
 
-                <!-- Mode toggle -->
-                <div class="mb-3 d-flex align-items-center gap-3">
-                    <div class="form-check form-switch d-flex align-items-center gap-2">
-                        <span class="text-muted">Automatic</span>
-                        <input type="checkbox" id="cfModeToggle" class="form-check-input">
-                        <label class="form-check-label" for="cfModeToggle">Manual section selection</label>
+                <!-- Options shown after post is selected -->
+                <div id="cfPostOptions" style="display:none;">
+                    <!-- Mode toggle -->
+                    <div class="mb-3">
+                        <div class="form-check">
+                            <input type="checkbox" id="cfModeToggle" class="form-check-input">
+                            <label class="form-check-label" for="cfModeToggle">Manually choose sections</label>
+                        </div>
                     </div>
-                </div>
 
-                <!-- Section dropdown (hidden by default) -->
-                <div class="mb-3" id="cfSectionSelectWrapper" style="display:none;">
-                    <label class="form-label" for="cfSectionSelect">Sections to search</label>
-                    <select id="cfSectionSelect" class="form-select" multiple size="5">
-                    </select>
-                    <small class="text-muted">Hold Ctrl/Cmd to select multiple sections</small>
-                </div>
+                    <!-- Section checklist (hidden by default) -->
+                    <div class="mb-3" id="cfSectionSelectWrapper" style="display:none;">
+                        <label class="form-label">Sections to search</label>
+                        <div id="cfSectionChecklist" class="border rounded p-2" style="max-height: 200px; overflow-y: auto;">
+                        </div>
+                    </div>
 
-                <!-- Run button -->
-                <div class="d-flex align-items-center gap-2">
-                    <button id="cfRunBtn" class="btn btn-primary" disabled>
-                        Run Content Search
-                    </button>
-                    <small class="text-muted">Uses <strong>{{ credits_per_search }}</strong> credits</small>
+                    <!-- Run button -->
+                    <div class="d-flex align-items-center gap-2">
+                        <button id="cfRunBtn" class="btn btn-success" disabled>
+                            <i class="bi bi-search"></i> Run Content Search
+                        </button>
+                        <small class="text-muted">Uses <strong>{{ credits_per_search }}</strong> credit</small>
+                    </div>
                 </div>
                 <div id="cfProgressContainer" class="mt-2"></div>
             </div>
@@ -420,11 +421,12 @@
     document.getElementById('cfPostSelect').addEventListener('change', async function() {
         const postId = this.value;
         const runBtn = document.getElementById('cfRunBtn');
-        const sectionSelect = document.getElementById('cfSectionSelect');
+        const postOptions = document.getElementById('cfPostOptions');
 
         cfSections = [];
-        sectionSelect.innerHTML = '';
+        document.getElementById('cfSectionChecklist').innerHTML = '';
         runBtn.disabled = !postId;
+        postOptions.style.display = postId ? 'block' : 'none';
 
         // Hide results from previous run
         document.getElementById('cfResults').style.display = 'none';
@@ -437,22 +439,47 @@
             const data = await resp.json();
             if (data.success) {
                 cfSections = data.sections;
-                renderSectionOptions();
+                renderSectionChecklist();
             }
         } catch (err) {
             console.error('Error loading sections:', err);
         }
     });
 
-    function renderSectionOptions() {
-        const select = document.getElementById('cfSectionSelect');
-        select.innerHTML = '';
-        cfSections.forEach(name => {
-            const option = document.createElement('option');
-            option.value = name;
-            option.textContent = name;
-            option.selected = true;
-            select.appendChild(option);
+    function renderSectionChecklist() {
+        const container = document.getElementById('cfSectionChecklist');
+        container.innerHTML = '';
+
+        // Select/Deselect All toggle
+        const allDiv = document.createElement('div');
+        allDiv.className = 'form-check mb-1 pb-1 border-bottom';
+        allDiv.innerHTML = `
+            <input class="form-check-input" type="checkbox" id="cfSecAll" checked>
+            <label class="form-check-label fw-bold" for="cfSecAll">Select all</label>
+        `;
+        container.appendChild(allDiv);
+
+        cfSections.forEach((name, i) => {
+            const div = document.createElement('div');
+            div.className = 'form-check';
+            div.innerHTML = `
+                <input class="form-check-input cf-section-cb" type="checkbox" value="${name}" id="cfSec_${i}" checked>
+                <label class="form-check-label" for="cfSec_${i}">${name}</label>
+            `;
+            container.appendChild(div);
+        });
+
+        // Toggle all when "Select all" is clicked
+        document.getElementById('cfSecAll').addEventListener('change', function() {
+            container.querySelectorAll('.cf-section-cb').forEach(cb => cb.checked = this.checked);
+        });
+
+        // Update "Select all" state when individual checkboxes change
+        container.addEventListener('change', function(e) {
+            if (e.target.classList.contains('cf-section-cb')) {
+                const allCbs = container.querySelectorAll('.cf-section-cb');
+                document.getElementById('cfSecAll').checked = [...allCbs].every(cb => cb.checked);
+            }
         });
     }
 
@@ -461,7 +488,7 @@
         const wrapper = document.getElementById('cfSectionSelectWrapper');
         wrapper.style.display = this.checked ? 'block' : 'none';
         if (this.checked && cfSections.length > 0) {
-            renderSectionOptions();
+            renderSectionChecklist();
         }
     });
 
@@ -474,8 +501,8 @@
         let selectedSections = [];
 
         if (manualMode) {
-            Array.from(document.getElementById('cfSectionSelect').selectedOptions).forEach(opt => {
-                selectedSections.push(opt.value);
+            document.querySelectorAll('.cf-section-cb:checked').forEach(cb => {
+                selectedSections.push(cb.value);
             });
             if (selectedSections.length === 0) {
                 showToast('Please select at least one section.', 'warning');

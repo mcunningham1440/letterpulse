@@ -278,7 +278,7 @@ SITE_URL = os.environ.get('SITE_URL', 'https://letterpulse.com')
 # Content Finder Configuration
 # =============================================================================
 PERPLEXITY_API_KEY = os.environ.get("PERPLEXITY_API_KEY", "")
-CREDITS_PER_CONTENT_SEARCH = 2
+CREDITS_PER_CONTENT_SEARCH = 1
 CONTENT_FINDER_MODEL = "gpt-5.4-mini"
 CONTENT_FINDER_REASONING = "medium"
 CONTENT_FINDER_MAX_ROUNDS = 3       # Max search round-trips per section before forcing final answer

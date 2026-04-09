@@ -42,7 +42,7 @@ This application helps newsletter creators understand which content resonates wi
 - **Database**: PostgreSQL on AWS RDS (Aurora)
 - **AI**: OpenAI API (GPT-5.1 with reasoning)
 - **Authentication**: django-allauth (email-based auth)
-- **Frontend**: Bootstrap 5, DataTables, jQuery, Marked.js (markdown rendering), Chart.js (trend charts on Insights page)
+- **Frontend**: Bootstrap 5, DataTables, jQuery, Marked.js (markdown rendering), Chart.js (trend charts on Write page)
 - **Async**: aiohttp, asyncio for parallel API calls
 - **Deployment**: AWS App Runner (cloud), local development with gunicorn
 
@@ -228,7 +228,7 @@ Tracks background content finder tasks:
 - `result_data`: JSON dict of `{section_name: [link dicts]}` (populated on completion)
 - `error_message`: Error details (populated on failure)
 
-Created when a user runs Content Finder from the Insights page. A background thread runs a per-section agentic LLM loop with Perplexity web search. The frontend polls `/insights/content-finder/status/<task_id>/` until complete, then renders results in an accordion.
+Created when a user runs Content Finder from the Write page. A background thread runs a per-section agentic LLM loop with Perplexity web search. The frontend polls `/insights/content-finder/status/<task_id>/` until complete, then renders results in an accordion.
 
 ## Authentication
 
@@ -242,7 +242,7 @@ Uses django-allauth for email-based authentication:
 - UsageAccount is auto-created for new users via signals; a signup notification email is sent in a background thread to `SIGNUP_NOTIFICATION_EMAIL` (if configured)
 - "Successfully signed in as" message is suppressed via custom adapter
 - After login, users without API credentials are redirected to Account page (not Posts); users with credentials go to Posts
-- The "Please configure your Beehiiv API credentials" message only appears when navigating to Posts/Insights without credentials, not immediately after login
+- The "Please configure your Beehiiv API credentials" message only appears when navigating to Posts/Write without credentials, not immediately after login
 
 ### Public Pages
 - `/` - About page (unauthenticated users see landing page; authenticated users redirect to posts)
@@ -257,7 +257,7 @@ Uses django-allauth for email-based authentication:
 - **Download Click Visualization**: ZIP of HTML files with click counts overlaid on links
 - **Download Improvement Tips**: ZIP of HTML files with AI-generated improvement tips
 
-### 2. Insights Page (`/insights/`)
+### 2. Write Page (`/insights/`)
 - **Content Finder** (visible when `PERPLEXITY_API_KEY` is configured): Agentic content recommendation tool. User selects a processed post as a template, optionally toggles manual section selection, and clicks "Run Content Search". A per-section agentic LLM loop uses Perplexity web search to find new content matching historical click patterns. Results display in a Bootstrap accordion grouped by section. Each link shows title, source, URL, date, description, and audience relevance. Costs `CREDITS_PER_CONTENT_SEARCH` credits per run. Background task with polling (3s interval).
 - **Section Data Table**: DataTable showing all Sections for the current publication — Post Title, Post Date, Section Name, Description, Start Line, End Line. Sortable and scrollable. Download CSV button (client-side).
 - **Link Data Table**: DataTable showing all LinkData for the current publication — Post Title, Post Date, Section, URL, Description, Rank in Section, Mean CTR (%), Mean Clicks. Sortable and scrollable. Download CSV button (client-side).
@@ -320,7 +320,7 @@ All routes use the `analytics:` namespace.
 - `POST /posts/clear-processed/` - Delete ProcessedPost, Section, and LinkData records for selected posts (AJAX)
 
 ### Insights Routes
-- `GET /insights/` - Insights dashboard (section and link data tables, content finder)
+- `GET /insights/` - Write page (section and link data tables, content finder)
 - `GET /insights/load-processed-data/` - Load all Section items as JSON for the current user/publication
 - `GET /insights/load-link-data/` - Load all LinkData items as JSON for the current user/publication
 - `GET /insights/content-finder/posts/` - List processed posts for content finder dropdown
@@ -531,7 +531,7 @@ SITE_URL = 'https://letterpulse.com'  # Base URL for links in emails (env: SITE_
 
 # Content Finder configuration
 PERPLEXITY_API_KEY = ''              # Perplexity search API key (env: PERPLEXITY_API_KEY)
-CREDITS_PER_CONTENT_SEARCH = 2      # Per content finder run
+CREDITS_PER_CONTENT_SEARCH = 1      # Per content finder run
 CONTENT_FINDER_MODEL = "gpt-5.4-mini"
 CONTENT_FINDER_REASONING = "medium"
 CONTENT_FINDER_MAX_ROUNDS = 3       # Max search round-trips per section
