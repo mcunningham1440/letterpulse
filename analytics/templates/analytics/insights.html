@@ -223,14 +223,6 @@
     let allLinkItems = [];
 
     // =========================================================================
-    // CSRF helper
-    // =========================================================================
-    function getCsrfToken() {
-        const cookie = document.cookie.split(';').find(c => c.trim().startsWith('csrftoken='));
-        return cookie ? cookie.split('=')[1] : '';
-    }
-
-    // =========================================================================
     // Write Post Feedback
     // =========================================================================
     function highlightFeedbackBtn(response) {
@@ -258,15 +250,7 @@
         btn.addEventListener('click', async function() {
             const response = this.dataset.response;
             try {
-                const resp = await fetch("{% url 'analytics:submit_feedback' %}", {
-                    method: 'POST',
-                    headers: {
-                        'X-CSRFToken': getCsrfToken(),
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({ feature: 'write_post', response: response })
-                });
-                const data = await resp.json();
+                const data = await postJSON("{% url 'analytics:submit_feedback' %}", { feature: 'write_post', response: response });
                 if (data.success) {
                     highlightFeedbackBtn(response);
                     showAlert('Thank you for helping us improve!', 'Feedback Received');
@@ -391,20 +375,6 @@
         setTimeout(() => { table.columns.adjust().draw(); }, 0);
     }
 
-    // =========================================================================
-    // Credits display update
-    // =========================================================================
-    function updateCreditsDisplay(creditsUsed, creditsQuota) {
-        if (creditsUsed !== undefined && creditsQuota !== undefined) {
-            const usagePercentage = Math.round((creditsUsed / creditsQuota) * 100);
-            const usageBar = document.querySelector('.usage-bar-fill');
-            const usageText = document.querySelector('.usage-text');
-            if (usageBar && usageText) {
-                usageBar.style.width = usagePercentage + '%';
-                usageText.textContent = Math.round(creditsUsed) + ' / ' + Math.round(creditsQuota) + ' used';
-            }
-        }
-    }
 
     // =========================================================================
     // Initialize
@@ -637,19 +607,11 @@
         document.getElementById('cfResultsAccordion').innerHTML = '';
 
         try {
-            const resp = await fetch('/insights/content-finder/run/', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-CSRFToken': getCsrfToken(),
-                },
-                body: JSON.stringify({
-                    post_id: postId,
-                    mode: manualMode ? 'manual' : 'auto',
-                    selected_sections: selectedSections,
-                }),
+            const data = await postJSON('/insights/content-finder/run/', {
+                post_id: postId,
+                mode: manualMode ? 'manual' : 'auto',
+                selected_sections: selectedSections,
             });
-            const data = await resp.json();
 
             if (!data.success) {
                 showToast(data.error || GENERIC_ERROR_TOAST, 'danger');
@@ -663,49 +625,19 @@
                 expectedDuration: {{ progress_durations.content_search }},
                 subtext: 'Searching for content...',
             });
-            pollContentFinder(data.task_id);
+            if (cfPollTimer) clearInterval(cfPollTimer);
+            cfPollTimer = pollTask('/insights/content-finder/status/', data.task_id, {
+                progressContainerId: 'cfProgressContainer',
+                runBtnId: 'cfRunBtn',
+                devPanelName: 'Content Finder',
+                onComplete: (data) => renderContentFinderResults(data.result_data || {}),
+            });
         } catch (err) {
             console.error('Error starting content finder:', err);
             showToast(GENERIC_ERROR_TOAST, 'danger');
             runBtn.disabled = false;
         }
     });
-
-    function pollContentFinder(taskId) {
-        if (cfPollTimer) clearInterval(cfPollTimer);
-
-        cfPollTimer = setInterval(async () => {
-            try {
-                const resp = await fetch(`/insights/content-finder/status/${taskId}/`);
-                const data = await resp.json();
-
-                if (data.status === 'complete') {
-                    clearInterval(cfPollTimer);
-                    cfPollTimer = null;
-                    ProgressBar.complete({ containerId: 'cfProgressContainer', success: true, message: 'Done!' });
-                    document.getElementById('cfRunBtn').disabled = false;
-
-                    if (data.credits_used !== undefined) {
-                        updateCreditsDisplay(data.credits_used, data.credits_quota);
-                    }
-
-                    renderContentFinderResults(data.result_data || {});
-
-                    if (typeof DevPanel !== 'undefined' && data.dev_panel) {
-                        DevPanel.show(data.dev_panel, 'Content Finder');
-                    }
-                } else if (data.status === 'error') {
-                    clearInterval(cfPollTimer);
-                    cfPollTimer = null;
-                    ProgressBar.complete({ containerId: 'cfProgressContainer', success: false, message: 'Error' });
-                    document.getElementById('cfRunBtn').disabled = false;
-                    showToast(GENERIC_ERROR_TOAST, 'danger');
-                }
-            } catch (err) {
-                console.error('Polling error:', err);
-            }
-        }, 3000);
-    }
 
     function renderContentFinderResults(resultData) {
         const accordion = document.getElementById('cfResultsAccordion');
@@ -832,15 +764,7 @@
         runBtn.disabled = true;
 
         try {
-            const resp = await fetch('/insights/improvement-tips/run/', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-CSRFToken': getCsrfToken(),
-                },
-                body: JSON.stringify({ post_id: postId }),
-            });
-            const data = await resp.json();
+            const data = await postJSON('/insights/improvement-tips/run/', { post_id: postId });
 
             if (!data.success) {
                 showToast(data.error || GENERIC_ERROR_TOAST, 'danger');
@@ -854,54 +778,25 @@
                 expectedDuration: {{ progress_durations.improvement_tips }},
                 subtext: 'Generating improvement tips...',
             });
-            pollImprovementTips(data.task_id);
-        } catch (err) {
-            console.error('Error starting improvement tips:', err);
-            showToast(GENERIC_ERROR_TOAST, 'danger');
-            runBtn.disabled = false;
-        }
-    });
-
-    function pollImprovementTips(taskId) {
-        if (itPollTimer) clearInterval(itPollTimer);
-
-        itPollTimer = setInterval(async () => {
-            try {
-                const resp = await fetch(`/insights/improvement-tips/status/${taskId}/`);
-                const data = await resp.json();
-
-                if (data.status === 'complete') {
-                    clearInterval(itPollTimer);
-                    itPollTimer = null;
-                    ProgressBar.complete({ containerId: 'itProgressContainer', success: true, message: 'Done!' });
-                    document.getElementById('itRunBtn').disabled = false;
-
-                    if (data.credits_used !== undefined) {
-                        updateCreditsDisplay(data.credits_used, data.credits_quota);
-                    }
-
-                    // Trigger download
+            if (itPollTimer) clearInterval(itPollTimer);
+            itPollTimer = pollTask('/insights/improvement-tips/status/', data.task_id, {
+                progressContainerId: 'itProgressContainer',
+                runBtnId: 'itRunBtn',
+                devPanelName: 'Improvement Tips',
+                onComplete: (data, taskId) => {
                     const a = document.createElement('a');
                     a.href = `/insights/improvement-tips/download/${taskId}/`;
                     a.download = '';
                     document.body.appendChild(a);
                     a.click();
                     document.body.removeChild(a);
-
-                    if (typeof DevPanel !== 'undefined' && data.dev_panel) {
-                        DevPanel.show(data.dev_panel, 'Improvement Tips');
-                    }
-                } else if (data.status === 'error') {
-                    clearInterval(itPollTimer);
-                    itPollTimer = null;
-                    ProgressBar.complete({ containerId: 'itProgressContainer', success: false, message: 'Error' });
-                    document.getElementById('itRunBtn').disabled = false;
-                    showToast(GENERIC_ERROR_TOAST, 'danger');
-                }
-            } catch (err) {
-                console.error('Polling error:', err);
-            }
-        }, 3000);
-    }
+                },
+            });
+        } catch (err) {
+            console.error('Error starting improvement tips:', err);
+            showToast(GENERIC_ERROR_TOAST, 'danger');
+            runBtn.disabled = false;
+        }
+    });
 </script>
 {% endblock %}

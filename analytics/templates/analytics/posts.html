@@ -151,8 +151,6 @@
 
 {% block extra_js %}
 <script>
-    const csrfToken = '{{ csrf_token }}';
-
     // Coach mark: spotlight Refresh Posts button when no posts
     {% if not posts %}
     (function() {
@@ -221,16 +219,6 @@
     // Process Selected Posts (direct, no modal)
     // =========================================================================
 
-    function updateCreditsDisplay(creditsUsed, creditsQuota) {
-        if (creditsUsed != null && creditsQuota != null) {
-            const percentage = (parseFloat(creditsUsed) / parseFloat(creditsQuota)) * 100;
-            const usageBarFill = document.querySelector('.usage-bar-fill');
-            if (usageBarFill) usageBarFill.style.width = percentage + '%';
-            const usageText = document.querySelector('.usage-text');
-            if (usageText) usageText.textContent = Math.round(parseFloat(creditsUsed)) + ' / ' + Math.round(parseFloat(creditsQuota)) + ' used';
-        }
-    }
-
     document.getElementById('processPostsBtn').addEventListener('click', async function() {
         const selectedPosts = document.querySelectorAll('.post-checkbox:checked');
         if (selectedPosts.length === 0) {
@@ -270,16 +258,7 @@
         });
 
         try {
-            const response = await fetch("{% url 'analytics:run_processing' %}", {
-                method: 'POST',
-                headers: {
-                    'X-CSRFToken': csrfToken,
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({ selected_posts: selectedIndices })
-            });
-
-            const data = await response.json();
+            const data = await postJSON("{% url 'analytics:run_processing' %}", { selected_posts: selectedIndices });
 
             if (!data.success) {
                 ProgressBar.complete({ containerId: 'processPostsProgress', success: false, message: data.error || 'Error' });
@@ -354,16 +333,7 @@
         if (!await showConfirm('Clear processed data for this post? This cannot be undone.')) return;
 
         try {
-            const response = await fetch("{% url 'analytics:clear_processed_posts' %}", {
-                method: 'POST',
-                headers: {
-                    'X-CSRFToken': csrfToken,
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({ post_ids: [postId] })
-            });
-
-            const data = await response.json();
+            const data = await postJSON("{% url 'analytics:clear_processed_posts' %}", { post_ids: [postId] });
             if (data.success) {
                 showToast(data.message, 'success');
                 window.location.reload();
