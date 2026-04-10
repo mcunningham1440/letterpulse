@@ -4,10 +4,11 @@ Adapted from the original utils.py for Streamlit.
 """
 
 import json
+import math
 from collections import Counter
 from openai import AsyncOpenAI, OpenAI, BadRequestError
 from pydantic import BaseModel
-from typing import List, Literal
+from typing import List, Literal, Optional
 import pandas as pd
 import asyncio
 import aiohttp
@@ -16,13 +17,19 @@ import logging
 from datetime import datetime
 from zoneinfo import ZoneInfo
 import time
-from bs4 import BeautifulSoup
+import html as html_module
+from bs4 import BeautifulSoup, NavigableString
 from django.conf import settings
 from django.db import transaction
 from django.db.models import F
 from Levenshtein import distance as levenshtein_distance
 from dotenv import load_dotenv
-from analytics.prompts import SECTION_PARSING_PROMPT, INSIGHTS_PROMPT, TIP_PROMPT
+from analytics.prompts import (
+    INSIGHTS_PROMPT,
+    CONTENT_FINDER_SYSTEM_PROMPT,
+    CONTENT_FINDER_FILTER_SECTIONS_INSTRUCTION,
+    CONTENT_FINDER_SECTION_INCLUSION_CRITERIA,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -201,7 +208,7 @@ async def validate_beehiiv_api_key(beehiiv_token: str) -> tuple[bool, list | str
             return (False, f"Unexpected error: {str(e)}")
 
 
-async def llm_call(function_name, messages, model, reasoning_level, response_format=None, tools=None, user=None):
+async def llm_call(function_name, messages, model, reasoning_level, response_format=None, tools=None, tool_choice=None, user=None, store=False, previous_response_id=None):
     """
     Make an async call to OpenAI API and log the request.
 
@@ -212,7 +219,10 @@ async def llm_call(function_name, messages, model, reasoning_level, response_for
         reasoning_level: Reasoning effort level ("low", "medium", "high")
         response_format: Optional Pydantic model for structured output
         tools: Optional list of tools
+        tool_choice: Optional tool choice constraint ("auto", "required", or specific tool dict)
         user: Django user object for logging (optional)
+        store: If True, OpenAI stores the response server-side for reasoning continuity
+        previous_response_id: ID of a stored response to thread reasoning context from
 
     Returns:
         OpenAI API response object
@@ -227,6 +237,12 @@ async def llm_call(function_name, messages, model, reasoning_level, response_for
     }
     if tools is not None:
         kwargs["tools"] = tools
+    if tool_choice is not None:
+        kwargs["tool_choice"] = tool_choice
+    if store:
+        kwargs["store"] = True
+    if previous_response_id is not None:
+        kwargs["previous_response_id"] = previous_response_id
 
     try:
         if asyncio.get_event_loop().is_running():
@@ -256,27 +272,10 @@ async def llm_call(function_name, messages, model, reasoning_level, response_for
         raise
     duration = time.time() - start_time
 
-    # Log the call
-    # log_file = settings.DATA_DIR / "llm_call_logs.csv"
-    # file_exists = os.path.exists(log_file)
-
-    # user_email = user.email if user and user.is_authenticated else "anonymous"
-
-    # with open(log_file, 'a', newline='', encoding='utf-8') as f:
-    #     writer = csv.writer(f)
-    #     if not file_exists:
-    #         writer.writerow(['function_name', 'run_datetime', 'run_time_s', 'model', 'input_tokens', 'cached_tokens', 'output_tokens', 'reasoning_tokens', 'user'])
-    #     writer.writerow([
-    #         function_name,
-    #         start_datetime,
-    #         f"{duration:.4f}",
-    #         model,
-    #         response.usage.input_tokens,
-    #         response.usage.input_tokens_details.cached_tokens,
-    #         response.usage.output_tokens,
-    #         response.usage.output_tokens_details.reasoning_tokens,
-    #         user_email
-    #     ])
+    # Record to dev panel tracker (no-op outside local mode)
+    from analytics.llm_tracker import is_tracking, record_call
+    if is_tracking():
+        record_call(function_name, model, messages, response, duration)
 
     return response
 
@@ -480,144 +479,1068 @@ def match_links_with_clicks(html_links_raw, clicks_dict):
     return link_to_clicks, duplicate_raw_urls
 
 
-async def extract_sections(post_html, sections, clicks_dict, title, post_date,
-                           unique_email_opens, custom_instructions="", user=None):
-    """
-    Extract items from a single post HTML grouped by named sections.
+def allocate_links_to_sections(section_link_counts, top_n):
+    """Divide top_n link slots fairly across sections.
+
+    Each section receives either an equal share or all its links, whichever is
+    lesser.  Surplus from capped sections is redistributed iteratively.
 
     Args:
-        post_html: HTML content of the post
-        sections: List of dicts with 'name' and 'description' keys
-        clicks_dict: Dictionary mapping URLs to click counts for this post
-        title: Post title
-        post_date: Date the post was published
-        unique_email_opens: Number of unique email opens
-        custom_instructions: Optional additional instructions for re-processing
-        user: Django user object for credit charging (optional)
+        section_link_counts: dict mapping section_name -> number of available links.
+        top_n: Total link budget to distribute.
 
     Returns:
-        List of section dicts: [{"section_name": "...", "items": [...]}, ...]
+        dict mapping section_name -> allocated count.
     """
-    # Step 1: Get line numbers for sections matching descriptions
-    # Sanitize section names: double quotes break OpenAI structured output schemas
-    for s in sections:
-        s['name'] = s['name'].replace('"', '')
-    section_names = [s['name'] for s in sections]
+    if not section_link_counts or top_n <= 0:
+        return {name: 0 for name in section_link_counts}
 
-    # Build user message with sections (description is optional)
-    sections_xml = "<Sections>\n"
-    for s in sections:
-        desc = s.get("description", "").strip()
-        if desc:
-            sections_xml += f'<Section name="{s["name"]}">{desc}</Section>\n'
-        else:
-            sections_xml += f'<Section name="{s["name"]}">Items in the {s["name"]} section</Section>\n'
-    sections_xml += "</Sections>"
+    total_available = sum(section_link_counts.values())
+    if top_n >= total_available:
+        return dict(section_link_counts)
 
-    if custom_instructions:
-        sections_xml += f"\n\n<CustomInstructions>\n{custom_instructions}\n</CustomInstructions>"
+    allocation = {name: 0 for name in section_link_counts}
+    remaining_budget = top_n
+    uncapped = {name: count for name, count in section_link_counts.items() if count > 0}
 
-    soup = BeautifulSoup(post_html, 'html.parser')
-    all_lines = soup.prettify().split('\n')
-    numbered_lines = [f"{i+1}\t{line}" for i, line in enumerate(all_lines)]
+    while remaining_budget > 0 and uncapped:
+        equal_share = remaining_budget // len(uncapped)
+        if equal_share == 0:
+            # Distribute remainder one-by-one to sections with the most links
+            for name, _ in sorted(uncapped.items(), key=lambda x: -x[1]):
+                if remaining_budget <= 0:
+                    break
+                allocation[name] += 1
+                remaining_budget -= 1
+            break
 
-    # Build dynamic Pydantic models with Literal enum for section names
-    SectionNameLiteral = Literal[tuple(section_names)] if len(section_names) > 1 else Literal[section_names[0]]
+        newly_capped = []
+        for name, count in uncapped.items():
+            give = min(equal_share, count - allocation[name])
+            allocation[name] += give
+            remaining_budget -= give
+            if allocation[name] >= count:
+                newly_capped.append(name)
 
-    class Item(BaseModel):
-        StartLine: int
-        EndLine: int
+        for name in newly_capped:
+            del uncapped[name]
 
-    class Section(BaseModel):
-        Name: SectionNameLiteral
-        Items: List[Item]
+    return allocation
 
-    class AllSections(BaseModel):
-        Sections: List[Section]
 
-    messages = [
-        {"role": "system", "content": SECTION_PARSING_PROMPT},
-        {"role": "user", "content": '\n'.join(numbered_lines)},
-        {"role": "user", "content": sections_xml}
-    ]
+def select_top_bottom(link_stats, n):
+    """Select the top and bottom links by CTR from a sorted list.
 
-    response = await llm_call("extract_sections", messages, "gpt-5.1", "low",
-                              response_format=AllSections, user=user)
-    output = response.output[-1].content[0].parsed
+    Args:
+        link_stats: List of link dicts, sorted by CTR descending.
+        n: Number of links to select.
 
-    # Step 2: Extract text and links from each section's items
-    html_links_raw = [link['href'] for link in soup.find_all('a') if link.has_attr('href')]
-    link_to_clicks, _ = match_links_with_clicks(html_links_raw, clicks_dict)
+    Returns:
+        List of selected link dicts (top ceil(n/2) + bottom floor(n/2)).
+    """
+    if n >= len(link_stats):
+        return list(link_stats)
+    if n <= 0:
+        return []
+    if n == 1:
+        return [link_stats[0]]
+    top_half = math.ceil(n / 2)
+    bottom_half = n - top_half
+    return link_stats[:top_half] + link_stats[-bottom_half:]
 
-    result_sections = []
-    for section in output.Sections:
-        section_items = []
-        for item in section.Items:
-            reconstructed_html = "\n".join(all_lines[item.StartLine - 1:item.EndLine])
-            item_soup = BeautifulSoup(reconstructed_html, 'html.parser')
 
-            text = item_soup.get_text(" ", strip=True)
-            selected_links = [link['href'] for link in item_soup.find_all('a') if link.has_attr('href')]
-            clicks = [link_to_clicks.get(link, 0) for link in selected_links]
+class LinkDescription(BaseModel):
+    tag_id: int
+    description: str
 
-            section_items.append({
-                "post_title": title,
-                "post_date": str(post_date) if post_date else None,
-                "text": text,
-                "links": selected_links,
-                "clicks": clicks,
-                "click_rate": [c / unique_email_opens if unique_email_opens > 0 else 0 for c in clicks]
-            })
+class AllLinkDescriptions(BaseModel):
+    links: List[LinkDescription]
 
-        result_sections.append({
-            "section_name": section.Name,
-            "items": section_items
+
+async def process_post_links(session, post_id, user, beehiiv_token, beehiiv_pub_id,
+                             sections, pretty_html):
+    """
+    Extract, describe, and score clicked links from a single post, grouped by section.
+
+    Click matching is performed at the post level. Links are then assigned to
+    sections based on their line position in the prettified HTML. Each section
+    receives an allocation from LINK_PROCESS_TOP_N; if a section has more links
+    than its allocation, the top and bottom links by CTR are selected.
+
+    Args:
+        session: aiohttp.ClientSession
+        post_id: Beehiiv post ID
+        user: Django user object
+        beehiiv_token: Beehiiv API bearer token
+        beehiiv_pub_id: Beehiiv publication ID
+        sections: List of section dicts from auto_section (name, start_line, end_line, ...)
+        pretty_html: The prettified HTML string used by auto_section
+
+    Returns:
+        List of dicts with keys: post_id, raw_url, description, section_name,
+        rank_in_post, rank_in_section, mean_ctr, mean_clicks
+    """
+    from analytics.models import Post
+
+    post = await asyncio.to_thread(
+        lambda: Post.objects.get(post_id=post_id, user=user)
+    )
+    unique_opens = post.unique_email_opens or 0
+
+    if not sections:
+        return []
+
+    # --- Fetch clicks from Beehiiv API ---
+    semaphore = asyncio.Semaphore(5)
+    _, clicks_dict = await fetch_post_clicks(session, post_id, semaphore, beehiiv_token, beehiiv_pub_id)
+    if clicks_dict is None:
+        clicks_dict = {}
+
+    # --- Extract links from prettified HTML using BeautifulSoup ---
+    soup = BeautifulSoup(pretty_html, 'html.parser')
+    html_links = soup.find_all('a', href=True)
+
+    line_links = []  # list of (1-based line number, raw_url)
+    for link in html_links:
+        line_links.append((link.sourceline, link['href']))
+
+    if not line_links:
+        return []
+
+    # --- Match clicks at post level ---
+    all_raw_urls = [url for _, url in line_links]
+    link_to_clicks, _ = match_links_with_clicks(all_raw_urls, clicks_dict)
+
+    # --- Build section range lookup ---
+    section_ranges = []
+    for sec in sections:
+        section_ranges.append((sec['start_line'], sec['end_line'], sec['name']))
+
+    def find_section(line_num):
+        for start, end, name in section_ranges:
+            if start <= line_num <= end:
+                return name
+        return None
+
+    # --- Assign links to sections and deduplicate per section ---
+    # Key: (section_name, processed_url) -> {ctrs, clicks}
+    section_groups = {}
+    for line_num, raw_url in line_links:
+        sec_name = find_section(line_num)
+        if sec_name is None:
+            continue
+        processed = raw_url.split("&_bhlid=")[0]
+        key = (sec_name, processed)
+        clicks = link_to_clicks.get(raw_url, 0)
+        ctr = (clicks / unique_opens * 100) if unique_opens > 0 else 0
+        if key not in section_groups:
+            section_groups[key] = {'ctrs': [], 'clicks': []}
+        section_groups[key]['ctrs'].append(ctr)
+        section_groups[key]['clicks'].append(clicks)
+
+    # --- Build per-section link stats ---
+    # section_name -> sorted list of link stat dicts (CTR desc)
+    links_by_section = {}
+    for (sec_name, url), data in section_groups.items():
+        mean_ctr = sum(data['ctrs']) / len(data['ctrs'])
+        mean_clicks = sum(data['clicks']) / len(data['clicks'])
+        links_by_section.setdefault(sec_name, []).append({
+            'url': url,
+            'mean_ctr': mean_ctr,
+            'mean_clicks': mean_clicks,
         })
 
-    # Ensure all section names are present in result (even if empty)
-    result_names = {s["section_name"] for s in result_sections}
-    for name in section_names:
-        if name not in result_names:
-            result_sections.append({"section_name": name, "items": []})
+    # Sort each section by CTR descending and assign rank_in_section (all links)
+    # Filter to links with clicks > 0
+    for sec_name in links_by_section:
+        links_by_section[sec_name].sort(key=lambda x: x['mean_ctr'], reverse=True)
+        for rank, ls in enumerate(links_by_section[sec_name], start=1):
+            ls['rank_in_section'] = rank
+        links_by_section[sec_name] = [
+            ls for ls in links_by_section[sec_name] if ls['mean_ctr'] > 0
+        ]
 
-    return result_sections
+    # --- Allocate and select ---
+    section_link_counts = {
+        sec_name: len(stats) for sec_name, stats in links_by_section.items()
+    }
+    top_n = settings.LINK_PROCESS_TOP_N
+    allocation = allocate_links_to_sections(section_link_counts, top_n)
+
+    selected_links = []  # list of (section_name, link_stat_dict)
+    for sec_name, stats in links_by_section.items():
+        n = allocation.get(sec_name, 0)
+        chosen = select_top_bottom(stats, n)
+        for ls in chosen:
+            selected_links.append((sec_name, ls))
+
+    if not selected_links:
+        return []
+
+    # --- Compute global rank_in_post and tag for LLM ---
+    # Sort all selected links by CTR descending for global ranking
+    selected_links.sort(key=lambda x: x[1]['mean_ctr'], reverse=True)
+
+    url_to_tag = {}
+    for i, (sec_name, ls) in enumerate(selected_links, start=1):
+        ls['rank_in_post'] = i
+        url_to_tag[ls['url']] = i
+
+    # Tag links in prettified HTML
+    soup_tagged = BeautifulSoup(pretty_html, 'html.parser')
+    for link in soup_tagged.find_all('a', href=True):
+        processed = link['href'].split("&_bhlid=")[0]
+        if processed in url_to_tag:
+            link['data-tag'] = f"LINK_TAG_{url_to_tag[processed]}"
+
+    tagged_html = str(soup_tagged)
+    n_links = len(selected_links)
+
+    tag_summary = "\n".join(
+        f"  LINK_TAG_{i}: URL={ls['url'][:120]}"
+        for i, (_, ls) in enumerate(selected_links, start=1)
+    )
+
+    messages = [
+        {"role": "user", "content": f"""Below is the HTML of a newsletter post. Certain links have been tagged with a data-tag attribute, e.g. <a data-tag="LINK_TAG_1" href="...">.
+
+For each tagged link, give a brief, specific description of what likely appears at that URL based on the surrounding context in the newsletter. Be specific — for example, "The GitHub repo for LangChain, an open-source framework for building AI agents" rather than "A GitHub link".
+
+Some URLs may appear multiple times; these will be given the same tag. In this case, you may use all of their contexts to infer what the URL is.
+
+There are exactly {n_links} tagged links. Return exactly {n_links} descriptions, one per tag ID.
+
+Tagged links:
+{tag_summary}
+
+Newsletter HTML:
+{tagged_html}"""}
+    ]
+
+    max_retries = settings.LINK_PROCESS_MAX_RETRIES
+    for attempt in range(1, max_retries + 2):
+        response = await llm_call("process_post_links", messages, "gpt-5.4-mini", "low",
+                                   response_format=AllLinkDescriptions, user=user)
+        parsed = response.output[-1].content[0].parsed
+        if len(parsed.links) == n_links:
+            break
+        if attempt <= max_retries:
+            logger.warning(
+                f"[{post.title}] Expected {n_links} descriptions, got {len(parsed.links)} — "
+                f"retrying (attempt {attempt}/{max_retries})"
+            )
+        else:
+            raise ValueError(
+                f"[{post.title}] Expected {n_links} descriptions, got {len(parsed.links)} "
+                f"after {max_retries} retries"
+            )
+
+    desc_by_tag = {ld.tag_id: ld.description for ld in parsed.links}
+
+    rows = []
+    for i, (sec_name, ls) in enumerate(selected_links, start=1):
+        rows.append({
+            'post_id': post_id,
+            'raw_url': ls['url'],
+            'description': desc_by_tag.get(i, ''),
+            'section_name': sec_name,
+            'rank_in_post': ls['rank_in_post'],
+            'rank_in_section': ls['rank_in_section'],
+            'mean_ctr': round(ls['mean_ctr'], 2),
+            'mean_clicks': round(ls['mean_clicks'], 1),
+        })
+    return rows
 
 
-async def extract_sections_parallel(posts_data, sections, htmls, clicks_by_id,
-                                    custom_instructions="", user=None):
+# =============================================================================
+# Section-based post processing
+# =============================================================================
+
+def html_to_text_with_links(html, max_url_len=50):
+    """Convert HTML to plain text, placing truncated link URLs inline after link text."""
+    soup = BeautifulSoup(html, 'html.parser')
+    for a in soup.find_all('a', href=True):
+        link_text = a.get_text(strip=True)
+        href = a['href']
+        if len(href) > max_url_len:
+            href = href[:max_url_len - 3] + "..."
+        if link_text:
+            a.replace_with(f"{link_text} ({href})")
+        else:
+            a.replace_with(href)
+    return soup.get_text(separator='\n', strip=True)
+
+
+# =============================================================================
+# Content Finder
+# =============================================================================
+
+def truncate_url(url, max_len):
+    """Shorten a URL to max_len characters, adding '...' if truncated."""
+    if len(url) <= max_len:
+        return url
+    return url[:max_len - 3] + "..."
+
+
+def format_link_history(section, max_links=60, max_url_len=50):
     """
-    Extract sections from multiple posts in parallel.
+    Build a formatted string of historical link performance for a section_name.
+    Queries ALL LinkData matching the section_name for this user/publication,
+    ordered by CTR descending. If count exceeds max_links, shows top half and
+    bottom half with a truncation note. CTR is shown relative to the section average.
+
+    Returns (formatted_string, total_link_count).
+    """
+    from analytics.models import LinkData
+
+    links = LinkData.objects.filter(
+        user=section.user,
+        publication=section.publication,
+        section_name=section.section_name,
+    ).order_by('-mean_ctr')
+
+    total = links.count()
+    if total == 0:
+        return "", 0
+
+    all_links = list(links)
+    avg_ctr = sum(l.mean_ctr for l in all_links) / total
+
+    if total > max_links:
+        half = max_links // 2
+        selected = all_links[:half] + all_links[-half:]
+        truncation_note = (
+            f"Note: Only the top {half} and bottom {half} links by CTR are shown "
+            f"({total - max_links} middle links omitted).\n\n"
+        )
+    else:
+        selected = all_links
+        truncation_note = ""
+
+    lines = [truncation_note] if truncation_note else []
+    for i, link in enumerate(selected, 1):
+        if avg_ctr > 0:
+            relative = link.mean_ctr / avg_ctr
+            rel_str = f"{relative:.1f}x avg"
+        else:
+            rel_str = "N/A"
+        lines.append(
+            f"{i}. [{rel_str}] {link.description}\n"
+            f"   URL: {truncate_url(link.raw_url, max_url_len)}"
+        )
+
+    return "\n".join(lines), total
+
+
+def perplexity_search(queries, max_results=10, domains=None, max_days_ago=None, historical_urls=None):
+    """Call the Perplexity search API with one or more queries and return results as a formatted string.
+
+    If historical_urls is provided, any result whose URL is a substring of
+    any historical URL is silently excluded from the output.
+    """
+    from perplexity import Perplexity
+    from datetime import date, timedelta
+
+    queries = [q for q in queries if q and q.strip()]
+    if not queries:
+        return "No results found (empty queries)."
+
+    kwargs = {
+        "query": queries,
+        "max_results": max_results,
+        "max_tokens_per_page": 256,
+    }
+    if domains:
+        kwargs["search_domain_filter"] = domains
+    if max_days_ago is not None:
+        after_date = date.today() - timedelta(days=max_days_ago)
+        kwargs["search_after_date_filter"] = after_date.strftime("%m/%d/%Y")
+
+    client = Perplexity(api_key=settings.PERPLEXITY_API_KEY)
+    search = client.search.create(**kwargs)
+
+    if not search.results:
+        return "No results found."
+
+    # Filter out results whose URL is a substring of any historical URL
+    results = search.results
+    if historical_urls:
+        results = [
+            r for r in results
+            if not r.url or not any(r.url in h_url for h_url in historical_urls)
+        ]
+        if not results:
+            return "No results found."
+
+    today = datetime.now().date()
+    lines = []
+    for i, r in enumerate(results, 1):
+        lines.append(f"{i}. {r.title or '(no title)'}")
+        lines.append(f"   URL: {r.url or ''}")
+        if getattr(r, "date", None):
+            try:
+                d = datetime.strptime(r.date, "%Y-%m-%d").date()
+                days_ago = (today - d).days
+                lines.append(f"   Date: {r.date} ({days_ago} days ago)")
+            except ValueError:
+                lines.append(f"   Date: {r.date}")
+        if getattr(r, "snippet", None):
+            lines.append(f"   {r.snippet}")
+        lines.append("")
+
+    return "\n".join(lines)
+
+
+CONTENT_FINDER_SEARCH_TOOL = {
+    "type": "function",
+    "name": "web_search",
+    "description": "Search the web for recent articles, news, tools, and other content. Supports up to 5 queries per call for comprehensive coverage of a topic.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "queries": {
+                "type": "array",
+                "items": {"type": "string"},
+                "minItems": 1,
+                "maxItems": 5,
+                "description": "1-5 search queries. Be specific — include topic, context, and recency (e.g. 'open source AI agent frameworks released April 2026'). IMPORTANT: Do NOT use 'site:' prefix in queries. To filter by domain, use the 'domains' parameter instead."
+            },
+            "domains": {
+                "type": "array",
+                "items": {"type": "string"},
+                "maxItems": 20,
+                "description": "Domains to restrict results to (e.g. ['techcrunch.com', 'arxiv.org']). Pass empty array to search the entire web. This is the ONLY way to filter by domain — 'site:' in queries does not work."
+            },
+            "max_days_ago": {
+                "type": "integer",
+                "description": "Only return results published within this many days. For example, 7 = past week, 14 = past two weeks, 30 = past month. Omit (set to 0) for no date restriction."
+            }
+        },
+        "required": ["queries", "domains", "max_days_ago"],
+        "additionalProperties": False,
+    },
+    "strict": True,
+}
+
+CONTENT_FINDER_DISMISS_TOOL = {
+    "type": "function",
+    "name": "dismiss_section",
+    "description": "Call this to skip a section that does not require new external content (e.g. intro sections, sponsored content, reader polls, self-promotion, recurring sections that don't change week-to-week).",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "reason": {
+                "type": "string",
+                "description": "Brief explanation of why this section does not need new content."
+            }
+        },
+        "required": ["reason"],
+        "additionalProperties": False,
+    },
+    "strict": True,
+}
+
+
+class ContentFinderLink(BaseModel):
+    title: str
+    source: str
+    url: str
+    date: str
+    description: str
+    relevance: str
+
+
+class ContentFinderAllLinks(BaseModel):
+    links: List[ContentFinderLink]
+
+
+def build_content_finder_user_prompt(section, link_history_str, link_count, max_url_len=75):
+    """Build the user prompt for a single section's content finder agent."""
+    section_text = html_to_text_with_links(section.section_html, max_url_len=max_url_len)
+
+    return f"""<{section.section_name}.content>
+{section_text}
+</{section.section_name}.content>
+
+<{section.section_name}.historical_link_performance>
+The following links have appeared in this section in past issues. Values above 1.0x indicate above-average performance.
+
+{link_history_str}
+</{section.section_name}.historical_link_performance>
+"""
+
+
+async def run_content_finder_agent(messages, allow_exclusion, model, reasoning, max_rounds=3, historical_urls=None):
+    """
+    Per-section agentic loop: call llm_call, execute tool calls (web search),
+    feed results back, repeat until max_rounds is hit.
+    Uses store=True + previous_response_id to preserve reasoning traces across rounds.
+    Returns (final_response_or_None, all_responses, all_search_results).
+    If the model dismisses the section, returns (None, ...).
+    """
+    input_messages = list(messages)
+    all_responses, all_results = [], []
+    prev_response_id = None
+
+    for round_num in range(max_rounds):
+        tools = (
+            [CONTENT_FINDER_SEARCH_TOOL, CONTENT_FINDER_DISMISS_TOOL]
+            if round_num == 0 and allow_exclusion
+            else [CONTENT_FINDER_SEARCH_TOOL]
+        )
+
+        response = await llm_call(
+            "content_finder",
+            input_messages,
+            model,
+            reasoning,
+            tools=tools,
+            tool_choice="required",
+            store=True,
+            previous_response_id=prev_response_id,
+        )
+        all_responses.append(response)
+        prev_response_id = response.id
+
+        tool_calls = [item for item in response.output if item.type == "function_call"]
+
+        if not tool_calls:
+            return response, all_responses, all_results
+
+        # Check for dismiss
+        for call in tool_calls:
+            if call.name == "dismiss_section":
+                return None, all_responses, all_results
+
+        # With previous_response_id, only send new tool outputs
+        input_messages = []
+
+        for call in tool_calls:
+            args = json.loads(call.arguments)
+            queries = args["queries"]
+            domains = args.get("domains") or None
+            max_days_ago = args.get("max_days_ago") or None
+
+            result = perplexity_search(queries, domains=domains, max_days_ago=max_days_ago, historical_urls=historical_urls)
+            all_results.append(result)
+
+            input_messages.append({
+                "type": "function_call_output",
+                "call_id": call.call_id,
+                "output": result,
+            })
+
+    # Max rounds reached — force structured output
+    response = await llm_call(
+        "content_finder",
+        input_messages,
+        model,
+        reasoning,
+        response_format=ContentFinderAllLinks,
+        store=True,
+        previous_response_id=prev_response_id,
+    )
+    all_responses.append(response)
+    return response, all_responses, all_results
+
+
+async def process_content_finder_section(section, allow_exclusion, max_links=60, max_url_len=75, model="gpt-5.4-mini", reasoning="medium", max_rounds=3, historical_urls=None):
+    """
+    Orchestrate content finding for a single section.
+    Returns (section_name, parsed_links_or_None).
+    """
+    from asgiref.sync import sync_to_async
+    link_history, link_count = await sync_to_async(format_link_history)(section, max_links=max_links, max_url_len=max_url_len)
+
+    if link_count == 0:
+        return (section.section_name, None)
+
+    system_prompt = CONTENT_FINDER_SYSTEM_PROMPT.format(
+        CONTENT_FINDER_FILTER_SECTIONS_INSTRUCTION if allow_exclusion else "",
+        CONTENT_FINDER_SECTION_INCLUSION_CRITERIA if allow_exclusion else "",
+    )
+    user_prompt = build_content_finder_user_prompt(section, link_history, link_count, max_url_len=max_url_len)
+
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt},
+    ]
+
+    response, all_responses, all_results = await run_content_finder_agent(
+        messages, allow_exclusion, model, reasoning, max_rounds=max_rounds,
+        historical_urls=historical_urls,
+    )
+
+    if response is None:
+        return (section.section_name, None)
+
+    # Parse structured output from the final response
+    try:
+        parsed = response.output[-1].content[0].parsed
+        links = [link.model_dump() for link in parsed.links]
+    except (AttributeError, IndexError):
+        links = []
+
+    return (section.section_name, links)
+
+
+def run_content_finder_background(task_id):
+    """
+    Background thread entry point for running content finder.
+    Loads the PendingContentSearch, processes sections, saves results.
+    """
+    import threading
+    from asgiref.sync import async_to_sync
+    from django.db import connection
+    from analytics.models import PendingContentSearch, Section
+
+    try:
+        task = PendingContentSearch.objects.get(task_id=task_id)
+        task.status = 'running'
+        task.save(update_fields=['status'])
+
+        from analytics.llm_tracker import start_tracking, finish_tracking
+        if settings.ENVIRONMENT == 'local':
+            start_tracking()
+
+        # Load sections for the post
+        sections = Section.objects.filter(
+            post=task.post,
+            user=task.user,
+        ).order_by('start_line')
+
+        if task.mode == 'manual' and task.selected_sections:
+            sections = sections.filter(section_name__in=task.selected_sections)
+
+        sections = list(sections)
+
+        if not sections:
+            task.status = 'complete'
+            task.result_data = {}
+            task.save(update_fields=['status', 'result_data'])
+            return
+
+        allow_exclusion = (task.mode == 'auto')
+        model = settings.CONTENT_FINDER_MODEL
+        reasoning = settings.CONTENT_FINDER_REASONING
+        max_rounds = settings.CONTENT_FINDER_MAX_ROUNDS
+        max_links = settings.CONTENT_FINDER_MAX_LINKS
+        max_url_len = settings.CONTENT_FINDER_MAX_URL_LEN
+
+        # Load all historical URLs for this user/publication once
+        historical_urls = set(
+            LinkData.objects.filter(
+                user=task.user,
+                publication=task.publication,
+            ).values_list('raw_url', flat=True)
+        )
+
+        async def run_all():
+            tasks = [
+                process_content_finder_section(
+                    section, allow_exclusion,
+                    max_links=max_links, max_url_len=max_url_len,
+                    model=model, reasoning=reasoning, max_rounds=max_rounds,
+                    historical_urls=historical_urls,
+                )
+                for section in sections
+            ]
+            return await asyncio.gather(*tasks)
+
+        raw_results = async_to_sync(run_all)()
+
+        result_data = {}
+        for section_name, links in raw_results:
+            if links is not None:
+                result_data[section_name] = links
+
+        task.status = 'complete'
+        task.result_data = result_data
+        if settings.ENVIRONMENT == 'local':
+            task.dev_panel_data = finish_tracking() or {}
+            task.save(update_fields=['status', 'result_data', 'dev_panel_data'])
+        else:
+            task.save(update_fields=['status', 'result_data'])
+
+    except Exception as e:
+        logger.exception("Content finder background task failed")
+        try:
+            task = PendingContentSearch.objects.get(task_id=task_id)
+            task.status = 'error'
+            task.error_message = str(e)
+            task.save(update_fields=['status', 'error_message'])
+        except Exception:
+            logger.exception("Failed to save error status for content finder task")
+    finally:
+        connection.close()
+
+
+def build_sections_desc(user, publication, post, n_examples=5):
+    """Build a human-readable sections description string for the LLM prompt.
+
+    Uses the N posts whose publish_date is closest to the target post as
+    "typical" examples for each known section name.
 
     Args:
-        posts_data: List of tuples (post_id, title, html_filename, post_date, unique_email_opens)
-        sections: List of dicts with 'name' and 'description' keys
-        htmls: Dictionary of HTML content keyed by filename
-        clicks_by_id: Dictionary mapping post IDs to their clicks dictionaries
-        custom_instructions: Optional additional instructions
-        user: Django user object (optional)
+        user: Django User object.
+        publication: Publication model instance.
+        post: Target Post model instance.
+        n_examples: Number of closest posts to use as examples.
 
     Returns:
-        Dict mapping post_id to list of section dicts
+        A formatted string describing each section with typical descriptions,
+        line positions, and first/last HTML lines from nearby posts.
     """
-    tasks = []
-    post_ids_order = []
-    for post_id, title, html_filename, post_date, unique_email_opens in posts_data:
-        if html_filename in htmls and post_id in clicks_by_id:
-            current_html = htmls[html_filename]
-            clicks_dict = clicks_by_id[post_id]
-            task = extract_sections(current_html, sections, clicks_dict, title,
-                                    post_date, unique_email_opens, custom_instructions, user=user)
-            tasks.append(task)
-            post_ids_order.append(post_id)
+    from analytics.models import Section as SectionModel
 
-    results = await asyncio.gather(*tasks, return_exceptions=True)
+    target_date = post.publish_date
+    if not target_date:
+        return ""
+
+    # All sections for this user/publication, excluding the target post
+    sections_qs = SectionModel.objects.filter(
+        user=user, publication=publication
+    ).exclude(post=post).select_related('post')
+
+    # Group by section_name
+    by_name = {}
+    for sec in sections_qs:
+        if not sec.post.publish_date:
+            continue
+        by_name.setdefault(sec.section_name, []).append(sec)
+
+    if not by_name:
+        return ""
+
+    # Find the 10 closest posts (by publish_date proximity) to determine frequency threshold
+    nearby_post_ids = set()
+    all_sections_by_proximity = sorted(
+        [sec for secs in by_name.values() for sec in secs],
+        key=lambda s: abs((s.post.publish_date - target_date).total_seconds()),
+    )
+    for sec in all_sections_by_proximity:
+        nearby_post_ids.add(sec.post_id)
+        if len(nearby_post_ids) >= 10:
+            break
+
+    n_nearby = len(nearby_post_ids)
+    min_appearances = max(1, math.ceil(n_nearby * 0.15))
+
+    # Only include sections that appear in at least 15% of recent posts
+    filtered_by_name = {}
+    for section_name, rows in by_name.items():
+        posts_with_section = {r.post_id for r in rows} & nearby_post_ids
+        if len(posts_with_section) >= min_appearances:
+            filtered_by_name[section_name] = rows
+
+    if not filtered_by_name:
+        return ""
+
+    output_parts = []
+
+    for section_name, rows in sorted(filtered_by_name.items()):
+        # Sort by temporal proximity to target post
+        rows_sorted = sorted(
+            rows,
+            key=lambda r: abs((r.post.publish_date - target_date).total_seconds()),
+        )
+        examples = rows_sorted[:n_examples]
+
+        MAX_CHARS = 500
+        example_parts = []
+        for i, ex in enumerate(examples):
+            total = ex.post_html_length
+            start_pct = round(ex.start_line / total * 100) if total else 0
+            end_pct = round(ex.end_line / total * 100) if total else 0
+
+            html_lines = ex.section_html.splitlines() if ex.section_html else []
+            first_line = html_lines[0].strip() if html_lines else ''
+            last_line = html_lines[-1].strip() if html_lines else ''
+
+            full_text = html_to_text_with_links(ex.section_html)
+            if len(full_text) > MAX_CHARS:
+                half = MAX_CHARS // 2
+                full_text = full_text[:half] + " [...] " + full_text[-half:]
+
+            example_parts.append(
+                f'<example lines="{ex.start_line}-{ex.end_line}" '
+                f'position="{start_pct}%-{end_pct}%">\n'
+                f'<first_html_line>{first_line}</first_html_line>\n'
+                f'<last_html_line>{last_line}</last_html_line>\n'
+                f'<text_content>{full_text}</text_content>\n'
+                f'</example>'
+            )
+
+        part = (
+            f'<section name="{section_name}">\n'
+            + "\n".join(example_parts) + "\n"
+            f'</section>'
+        )
+        output_parts.append(part)
+
+    return "\n".join(output_parts)
+
+
+class SectionItem(BaseModel):
+    name: str
+    title: Optional[str]
+    start_line: int
+    end_line: int
+
+
+class AllSections(BaseModel):
+    sections: List[SectionItem]
+
+
+async def auto_section(html, user, publication, post, n_examples=5, pretty_html=None):
+    """Identify sections in newsletter HTML via a single structured-output LLM call.
+
+    Args:
+        html: The newsletter HTML string (raw, not line-numbered).
+        user: Django User object.
+        publication: Publication model instance.
+        post: Target Post model instance.
+        n_examples: Number of nearby-post examples per section.
+        pretty_html: Optional pre-prettified HTML. If provided, skips internal
+            prettify to avoid double-prettifying when the caller already has it.
+
+    Returns:
+        List of section dicts with keys: name, title, description,
+        start_line, end_line, section_html, post_html_length.
+    """
+    from asgiref.sync import sync_to_async
+    from analytics.prompts import AUTO_SECTION_PROMPT
+
+    if pretty_html is None:
+        pretty_html = BeautifulSoup(html, 'html.parser').prettify()
+    html_lines = pretty_html.split('\n')
+    post_html_length = len(html_lines)
+    numbered_html = "\n".join(f"{i+1}: {line}" for i, line in enumerate(html_lines))
+
+    sections_prompt = await sync_to_async(build_sections_desc)(
+        user, publication, post, n_examples
+    )
+
+    system_content = AUTO_SECTION_PROMPT
+    if sections_prompt:
+        system_content += f"\nSECTIONS FROM NEARBY POSTS\n{sections_prompt}"
+    else:
+        system_content += "\nNo other issues processed yet."
+
+    input_messages = [
+        {
+            "role": "system",
+            "content": system_content,
+        },
+        {
+            "role": "user",
+            "content": numbered_html,
+        }
+    ]
+
+    response = await llm_call(
+        "auto_section", input_messages, "gpt-5.4", "low",
+        response_format=AllSections, user=user
+    )
+
+    parsed = response.output_parsed
+
+    # Enrich each section with section_html and post_html_length
+    results = []
+    for sec in parsed.sections:
+        start = max(1, sec.start_line)
+        end = min(post_html_length, sec.end_line)
+        section_html = "\n".join(html_lines[start - 1:end])
+        results.append({
+            "name": sec.name,
+            "title": sec.title,
+            "start_line": start,
+            "end_line": end,
+            "section_html": section_html,
+            "post_html_length": post_html_length,
+        })
+
+    return results
+
+
+async def process_post_full(session, post_id, user, beehiiv_token, beehiiv_pub_id, publication):
+    """Fetch HTML, extract sections and links for a single post.
+
+    Runs auto_section then process_post_links using the same prettified HTML.
+    If either step fails, the exception propagates and nothing is saved.
+
+    Args:
+        session: aiohttp ClientSession.
+        post_id: Beehiiv post ID.
+        user: Django User object.
+        beehiiv_token: Beehiiv API bearer token.
+        beehiiv_pub_id: Beehiiv publication ID.
+        publication: Publication model instance.
+
+    Returns:
+        Tuple of (sections, link_rows).
+    """
+    from asgiref.sync import sync_to_async
+    from analytics.models import Post
+
+    semaphore = asyncio.Semaphore(5)
+    _, html = await fetch_post_html(session, post_id, semaphore, beehiiv_token, beehiiv_pub_id)
+
+    if not html:
+        raise RuntimeError(f"No HTML fetched for post {post_id}")
+
+    pretty_html = BeautifulSoup(html, 'html.parser').prettify()
+    post = await sync_to_async(Post.objects.get)(post_id=post_id, user=user)
+
+    sections = await auto_section(html, user, publication, post, pretty_html=pretty_html)
+    link_rows = await process_post_links(
+        session, post_id, user, beehiiv_token, beehiiv_pub_id, sections, pretty_html
+    )
+
+    return sections, link_rows
+
+
+async def _save_post_full(post_id, sections, link_rows, user, publication):
+    """Save section and link results to DB atomically and mark post as processed."""
+    from asgiref.sync import sync_to_async
+    from django.db import transaction
+    from analytics.models import Post, Section as SectionModel, LinkData, ProcessedPost
+
+    post = await sync_to_async(Post.objects.get)(post_id=post_id, user=user)
+
+    def _save_in_transaction():
+        with transaction.atomic():
+            SectionModel.objects.filter(post=post, user=user).delete()
+            LinkData.objects.filter(post=post, user=user).delete()
+
+            if sections:
+                seen_names = set()
+                deduped = []
+                for s in sections:
+                    if s['name'] not in seen_names:
+                        seen_names.add(s['name'])
+                        deduped.append(s)
+
+                SectionModel.objects.bulk_create([
+                    SectionModel(
+                        post=post,
+                        user=user,
+                        publication=publication,
+                        section_name=s['name'],
+                        section_title=s.get('title'),
+                        start_line=s['start_line'],
+                        end_line=s['end_line'],
+                        post_html_length=s['post_html_length'],
+                        section_html=s['section_html'],
+                    )
+                    for s in deduped
+                ])
+
+            if link_rows:
+                LinkData.objects.bulk_create([
+                    LinkData(
+                        post=post,
+                        user=user,
+                        publication=publication,
+                        raw_url=row['raw_url'],
+                        description=row['description'],
+                        section_name=row['section_name'],
+                        rank_in_post=row['rank_in_post'],
+                        rank_in_section=row['rank_in_section'],
+                        mean_ctr=row['mean_ctr'],
+                        mean_clicks=row['mean_clicks'],
+                    )
+                    for row in link_rows
+                ])
+
+            ProcessedPost.objects.update_or_create(
+                post=post,
+                user=user,
+                defaults={'publication': publication}
+            )
+
+    await sync_to_async(_save_in_transaction)()
+
+
+async def process_posts_sections_sequential(post_ids, user, beehiiv_token, beehiiv_pub_id, publication):
+    """Process posts for section and link extraction with hybrid sequential/parallel strategy.
+
+    To seed build_sections_desc with context, the first posts are processed
+    sequentially until at least 2 total posts have been processed for this
+    user/publication. Remaining posts run in parallel (semaphore=3).
+
+    Both auto_section and process_post_links must succeed for a post to be
+    saved; failure in either causes the entire post to be skipped.
+
+    Args:
+        post_ids: List of Beehiiv post IDs.
+        user: Django User object.
+        beehiiv_token: Beehiiv API bearer token.
+        beehiiv_pub_id: Beehiiv publication ID.
+        publication: Publication model instance.
+
+    Returns:
+        Dict mapping post_id to list of section dicts.
+    """
+    from asgiref.sync import sync_to_async
+    from analytics.models import Post, Section as SectionModel
 
     results_by_post = {}
-    for i, result in enumerate(results):
-        if isinstance(result, Exception):
-            logger.error(f"Error extracting sections from post {post_ids_order[i]}: {str(result)}")
-        else:
-            results_by_post[post_ids_order[i]] = result
+
+    # Count posts with sections that WON'T be touched by this run.
+    # _save_post_full deletes existing sections for each post in the batch,
+    # so only sections from OTHER posts provide reliable context.
+    batch_post_pks = await sync_to_async(
+        lambda: list(Post.objects.filter(
+            post_id__in=post_ids, user=user
+        ).values_list('pk', flat=True))
+    )()
+
+    stable_context_count = await sync_to_async(
+        lambda: SectionModel.objects.filter(
+            user=user, publication=publication
+        ).exclude(
+            post_id__in=batch_post_pks
+        ).values('post').distinct().count()
+    )()
+
+    # We need at least 2 posts with stable section context before parallelizing.
+    sequential_needed = max(0, 2 - stable_context_count)
+    sequential_needed = min(sequential_needed, len(post_ids))
+    sequential_ids = post_ids[:sequential_needed]
+    parallel_ids = post_ids[sequential_needed:]
+
+    async with aiohttp.ClientSession() as session:
+        # --- Sequential phase ---
+        for post_id in sequential_ids:
+            try:
+                sections, link_rows = await process_post_full(
+                    session, post_id, user, beehiiv_token, beehiiv_pub_id, publication
+                )
+                await _save_post_full(post_id, sections, link_rows, user, publication)
+                results_by_post[post_id] = sections
+            except Exception as e:
+                logger.error(f"Error processing post {post_id}: {e}", exc_info=True)
+
+        # --- Parallel phase ---
+        if parallel_ids:
+            semaphore = asyncio.Semaphore(3)
+
+            async def _process_one(pid):
+                async with semaphore:
+                    sections, link_rows = await process_post_full(
+                        session, pid, user, beehiiv_token, beehiiv_pub_id, publication
+                    )
+                    await _save_post_full(pid, sections, link_rows, user, publication)
+                    return pid, sections
+
+            tasks = [asyncio.create_task(_process_one(pid)) for pid in parallel_ids]
+            for coro in asyncio.as_completed(tasks):
+                try:
+                    pid, sections = await coro
+                    results_by_post[pid] = sections
+                except Exception as e:
+                    logger.error(f"Error processing post in parallel: {e}", exc_info=True)
 
     return results_by_post
 
@@ -992,162 +1915,6 @@ def generate_click_visualization_html(post_html, clicks_dict, unique_email_opens
     return str(soup)
 
 
-async def annotate_post_html(post_id, content_perf_evals, beehiiv_token, beehiiv_pub_id, user=None):
-    """
-    Fetch post HTML, get LLM tips based on performance evaluations,
-    and insert them with yellow highlighting.
-
-    Args:
-        post_id: The Beehiiv post ID
-        content_perf_evals: List of performance evaluation texts to inform tips
-        beehiiv_token: Beehiiv API token
-        beehiiv_pub_id: Beehiiv publication ID
-        user: Django user object for credit charging (optional)
-
-    Returns:
-        Modified HTML string with tips inserted
-    """
-    # Step 1: Fetch the HTML
-    semaphore = asyncio.Semaphore(1)
-    timeout = aiohttp.ClientTimeout(total=60)
-    async with aiohttp.ClientSession(timeout=timeout) as session:
-        post_id_result, post_html = await fetch_post_html(session, post_id, semaphore, beehiiv_token, beehiiv_pub_id)
-        
-    # Step 2: Split into numbered lines
-    soup = BeautifulSoup(post_html, 'html.parser')
-    all_lines = soup.prettify().split('\n')
-    numbered_lines = [f"{i+1}\t{line}" for i, line in enumerate(all_lines)]
-    
-    # Step 3: Define tip schema
-    class Tip(BaseModel):
-        tip_type: Literal["content", "wording"]
-        line_number: int
-        tip_text: str
-        why: str
-    
-    class AllTips(BaseModel):
-        tips: List[Tip]
-    
-    # Step 4: Prompt LLM for tips
-    # Combine all performance evaluations with XML tags
-    combined_perf_eval = "\n\n".join([
-        f"<performance_evaluation_{i+1}>\n{eval_text}\n</performance_evaluation_{i+1}>"
-        for i, eval_text in enumerate(content_perf_evals)
-    ])
-    
-    messages = [
-        {"role": "user", "content": f"{combined_perf_eval}"},
-        {"role": "user", "content": "<html_document>\n" + '\n'.join(numbered_lines) + "\n</html_document>"},
-        {"role": "system", "content": TIP_PROMPT},
-    ]
-
-    response = await llm_call("annotate_post_html", messages, "gpt-5.1", "medium", response_format=AllTips, user=user)
-    tips = response.output[-1].content[0].parsed
-    
-    # Step 5: Insert tips with yellow highlighting
-    # Sort tips by line number in descending order to avoid offset issues
-    sorted_tips = sorted(tips.tips, key=lambda x: x.line_number, reverse=True)
-    tip_type_to_header = {
-        "content": "📰 Content Tip",
-        "wording": "✍️ Wording Tip"
-    }
-    
-    for tip in sorted_tips:
-        if 0 < tip.line_number <= len(all_lines):
-            # Create tip HTML with yellow highlighting
-            tip_html = f"""
-<div style="
-    background-color: yellow;
-    color: black !important;
-    padding: 10px;
-    margin: 10px 0;
-    border-left: 4px solid orange;
-    font-family: Arial, sans-serif;
-    font-size: 14px;
-    line-height: 1.6;
-    text-align: left;
-    font-style: normal !important;
-    font-weight: normal !important;
-    text-decoration: none !important;
-
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-">
-    <div style="
-        width: 0;
-        height: 0;
-        border-left: 8px solid transparent;
-        border-right: 8px solid transparent;
-        border-bottom: 12px solid #4A90A4;
-        margin: 0 auto 8px;
-    "></div>
-    <div style="
-        font-weight: bold !important;
-        font-style: normal !important;
-        text-decoration: none !important;
-    ">
-        {tip_type_to_header[tip.tip_type]}
-    </div>
-    <div style="
-        font-weight: normal !important;
-        font-style: normal !important;
-        text-decoration: none !important;
-    ">
-        {tip.tip_text}
-    </div>
-    <div style="
-        font-weight: bold !important;
-        margin-top: 10px;
-        font-style: normal !important;
-        text-decoration: none !important;
-    ">
-        Why?
-    </div>
-    <div style="
-        font-weight: normal !important;
-        font-style: normal !important;
-        text-decoration: none !important;
-    ">
-        {tip.why}
-    </div>
-</div>
-"""        
-            # Insert at the specified line (converting to 0-indexed)
-            all_lines.insert(tip.line_number - 1, tip_html)
-    
-    # Step 6: Return the modified HTML
-    return '\n'.join(all_lines)
-
-
-async def annotate_posts_parallel(post_ids, content_perf_evals, beehiiv_token, beehiiv_pub_id, user=None):
-    """
-    Annotate multiple posts in parallel using asyncio.
-
-    Args:
-        post_ids: List of Beehiiv post IDs to annotate
-        content_perf_evals: List of performance evaluation texts to inform tips
-        beehiiv_token: Beehiiv API token
-        beehiiv_pub_id: Beehiiv publication ID
-        user: Django user object for credit charging (optional)
-
-    Returns:
-        Dictionary mapping post_ids to their annotated HTML content
-    """
-    tasks = [annotate_post_html(post_id, content_perf_evals, beehiiv_token, beehiiv_pub_id, user=user) for post_id in post_ids]
-    results = await asyncio.gather(*tasks, return_exceptions=True)
-    
-    # Build result dictionary, filtering out exceptions
-    annotated_htmls = {}
-    for post_id, result in zip(post_ids, results):
-        if isinstance(result, Exception):
-            logger.error(f"Error annotating post {post_id}: {result}")
-        else:
-            annotated_htmls[post_id] = result
-    
-    return annotated_htmls
-
-
 async def fetch_recent_published_posts(beehiiv_token, beehiiv_pub_id, max_pages=3):
     """
     Fetch recently published posts from Beehiiv API, ordered by publish_date desc.
@@ -1283,3 +2050,484 @@ def build_click_viz_email_html(viz_html, post_title, site_url):
         return banner + viz_html + footer
 
     return str(soup)
+
+
+# =============================================================================
+# Improvement Tips
+# =============================================================================
+
+IMPROVEMENT_TIP_PROMPT = """
+You are an expert newsletter editor.
+You will be given the text of a newsletter issue with numbered text lines and link click data from similar content.
+Your task is to provide tips on improving the issue's content.
+
+There are 2 types of tips you can provide:
+1. Proofreading tip: Changes to spelling, grammar, etc. to correct mistakes.
+    Proofreading tip example:
+        start_line: 36
+        end_line: 36
+        tip_text: "Change 'there' to 'their'."
+        why: [None]
+
+2. Content tip: Suggested changes to the choice of words or phrasing to improve engagement.
+    Content tip example:
+        start_line: 49
+        line: 51
+        tip_text: "Clearly tell readers the useful information they'll learn — for example, 'how to choose between biological controls and pesticides in real projects.'"
+        why: "Advice that clearly states when and how to use different techniques almost always does better with your audience than neutral articles."
+
+First, review the links to identify content patterns associated with high and low performance.
+Second, identify places in the text where the content most closely follows the negative patterns described in the links or deviates furthest from high-performing patterns. These will be addressed with content tips.
+Third, identify any spelling, grammar, or egregious wording errors. These will be addressed with proofreading tips.
+Finally, for each identified place, suggest a tip to improve it. You may add up to 6 content tips, and as many proofreading tips as necessary.
+If it is a content tip, also add why the tip is relevant based on the performance evaluations.
+If it is a proofreading tip, fill in this field with None.
+
+*start_line* and *end_line* should be the first and last lines of text (inclusive) that the tip applies to.
+If the text consists of a single sentence split across several lines, for example, if interrupted by a hyperlink, include them all.
+*tip_text* should be a single brief sentence suggesting an actionable change.
+*why* should be a single brief sentence explaining the rationale based on performance insights (for content tips; for proofreading tips it should always be None).
+
+Provide the tip type, the line number where each tip should be inserted, the tip text, and the why for each tip (if necessary).
+DO NOT suggest changes to the format of the newsletter or what items are written about, just how items are worded.
+You should NOT start the text of the tip itself with the tip type; this will be added later based on the tip type.
+In the why, refer to "your audience", "your readers", etc. to ensure the writer understands this is personalized to their specific audience.
+
+Do not reference position--the tips will be automatically placed within the file by the program.
+Additionally, do not reference line numbers--the downstream viewer will not have access to these.
+
+Bad: "In the Audi Announcement item (lines 108–110), briefly spell out..."
+Good: "Briefly spell out..."
+
+Use language suitable for content creators, avoiding technical jargon and esoteric wording.
+
+Too advanced:
+tip_text: "Strengthen this link by foregrounding a clear mental model or framework readers will get (e.g., "how to decide between biological controls and pesticides in real projects")."
+why: "Opinionated guidance on when/how to use biological controls consistently outperforms neutral articles with your audience."
+
+Good:
+tip_text: "Clearly tell readers the useful information they'll learn — for example, 'how to choose between biological controls and pesticides in real projects.'"
+why: "Advice that takes a clear stance on when and how to use biological controls almost always does better with your audience than neutral articles."
+
+The links you will be provided with are grouped by sections that have appeared in prior issues of the newsletter.
+These may or may not appear in this issue.
+If any of these sections clearly appear in the newsletter, you may use that data to inform your tips on those sections.
+Do not apply tips to sections that are obviously an ad for a third-party product or service.
+If the section is an ad for the writer's own service/course/consultancy/etc., you may add tips for it.
+"""
+
+
+class ImprovementTip(BaseModel):
+    tip_type: Literal["content", "proofreading"]
+    line_number: int
+    tip_text: str
+    why: str
+
+
+class AllImprovementTips(BaseModel):
+    tips: List[ImprovementTip]
+
+
+async def generate_improvement_tips_html(post, user, publication, beehiiv_token, beehiiv_pub_id):
+    """
+    Generate annotated two-column HTML with improvement tips for a post.
+
+    Fetches post HTML from Beehiiv, builds numbered text with HTML line mapping,
+    gathers link history context, calls LLM for tips, and renders a two-column
+    layout with tip cards connected to their target content via SVG connectors.
+
+    Args:
+        post: Post model instance
+        user: Django User instance
+        publication: Publication model instance
+        beehiiv_token: Beehiiv API token
+        beehiiv_pub_id: Beehiiv publication ID
+
+    Returns:
+        Complete annotated HTML string
+    """
+    from analytics.models import Section
+
+    # --- 1) Fetch post HTML from Beehiiv API ---
+    sem = asyncio.Semaphore(5)
+    async with aiohttp.ClientSession() as session:
+        _, html = await fetch_post_html(session, post.post_id, sem, beehiiv_token, beehiiv_pub_id)
+    if not html:
+        raise RuntimeError(f"Failed to fetch HTML for post {post.post_id}")
+
+    # --- 2) Build numbered text lines with HTML line mapping ---
+    pretty_html = BeautifulSoup(html, 'html.parser').prettify()
+    html_lines = pretty_html.split('\n')
+
+    # Re-parse prettified HTML so element.sourceline == prettified line numbers
+    soup2 = BeautifulSoup(pretty_html, 'html.parser')
+
+    # Record sourceline for each <a> before replacement
+    a_lines = {id(a): a.sourceline for a in soup2.find_all('a', href=True)}
+
+    # Do <a> replacement while tracking source lines
+    replacement_lines = {}
+    for a in list(soup2.find_all('a', href=True)):
+        src = a_lines.get(id(a))
+        link_text = a.get_text(strip=True)
+        href = a['href']
+        if len(href) > 50:
+            href = href[:47] + "..."
+        replacement = f"{link_text} ({href})" if link_text else href
+        new_node = NavigableString(replacement)
+        a.replace_with(new_node)
+        replacement_lines[id(new_node)] = src
+
+    # Walk all NavigableString nodes, collecting (text, sourceline)
+    text_source_pairs = []
+    for node in soup2.descendants:
+        if isinstance(node, NavigableString):
+            text = node.strip()
+            if not text:
+                continue
+            src = replacement_lines.get(id(node))
+            if src is None and node.parent:
+                src = node.parent.sourceline
+            text_source_pairs.append((text, src))
+
+    # Build text output
+    post_text = soup2.get_text(separator='\n', strip=True)
+    text_lines = [line for line in post_text.split('\n') if line.strip()]
+
+    # Map each text line -> prettified HTML line via source pairs
+    text_to_html_line = {}
+    pair_cursor = 0
+    for text_num, text_line in enumerate(text_lines, 1):
+        for p in range(pair_cursor, len(text_source_pairs)):
+            piece_text, piece_src = text_source_pairs[p]
+            if piece_text in text_line and piece_src:
+                text_to_html_line[text_num] = piece_src
+                pair_cursor = p + 1
+                break
+
+    numbered_text = "\n".join(f"{i+1}\t{line}" for i, line in enumerate(text_lines))
+
+    # --- 3) Link history with sample titles for every section ---
+    def _build_link_history():
+        all_section_names = list(
+            Section.objects.filter(user=user, publication=publication)
+            .order_by('section_name')
+            .values_list('section_name', flat=True)
+            .distinct()
+        )
+
+        ref_date = post.publish_date or post.creation_date
+
+        parts = []
+        for sname in sorted(all_section_names):
+            representative = Section.objects.filter(
+                user=user, publication=publication, section_name=sname
+            ).first()
+            formatted, count = format_link_history(representative)
+            if count > 0:
+                nearby_sections = list(
+                    Section.objects.filter(
+                        user=user,
+                        publication=publication,
+                        section_name=sname,
+                        section_title__isnull=False,
+                    )
+                    .exclude(section_title='')
+                    .exclude(post=post)
+                    .select_related('post')
+                )
+                if ref_date:
+                    nearby_sections = sorted(
+                        nearby_sections,
+                        key=lambda s: abs((s.post.publish_date or s.post.creation_date or ref_date) - ref_date)
+                    )
+                sample_titles = []
+                seen = set()
+                for s in nearby_sections:
+                    if s.section_title not in seen:
+                        seen.add(s.section_title)
+                        sample_titles.append(s.section_title)
+                    if len(sample_titles) >= 5:
+                        break
+
+                titles_str = ""
+                if sample_titles:
+                    titles_list = "\n".join(f"  - {t}" for t in sample_titles)
+                    titles_str = f"\nSample titles from recent issues:\n{titles_list}\n"
+
+                parts.append(
+                    f"<section name=\"{sname}\">{titles_str}\n{formatted}\n</section>"
+                )
+
+        return "\n\n".join(parts)
+
+    from asgiref.sync import sync_to_async
+    link_history_str = await sync_to_async(_build_link_history)()
+
+    # --- 4) Call LLM for tips ---
+    messages = [
+        {"role": "user", "content": f"<link_history>\n{link_history_str}\n</link_history>"},
+        {"role": "user", "content": f"<post title=\"{post.title}\">\n{numbered_text}\n</post>"},
+        {"role": "system", "content": IMPROVEMENT_TIP_PROMPT},
+    ]
+
+    response = await llm_call(
+        "generate_improvement_tips",
+        messages,
+        settings.IMPROVEMENT_TIPS_MODEL,
+        settings.IMPROVEMENT_TIPS_REASONING,
+        response_format=AllImprovementTips,
+        user=user,
+    )
+    tips = response.output[-1].content[0].parsed
+
+    # --- 5) Build two-column annotated HTML ---
+    tip_type_to_header = {
+        "content": "\U0001f4f0 Content Tip",
+        "proofreading": "\u270d\ufe0f Proofreading",
+    }
+
+    valid_tips = [t for t in tips.tips if text_to_html_line.get(t.line_number)]
+    sorted_tips_asc = sorted(valid_tips, key=lambda t: text_to_html_line[t.line_number])
+
+    # Insert anchor spans (reverse order to preserve indices)
+    annotated_lines = list(html_lines)
+    for i, tip in enumerate(reversed(sorted_tips_asc)):
+        marker_id = f"tip-target-{len(sorted_tips_asc) - 1 - i}"
+        html_line_num = text_to_html_line[tip.line_number]
+        anchor = f'<span id="{marker_id}" data-tip-anchor="true"></span>'
+        annotated_lines.insert(html_line_num - 1, anchor)
+
+    newsletter_html = '\n'.join(annotated_lines)
+
+    # Build tip card divs
+    tip_cards = []
+    for i, tip in enumerate(sorted_tips_asc):
+        header = tip_type_to_header[tip.tip_type]
+        safe_text = html_module.escape(tip.tip_text)
+        has_why = tip.why and tip.why.lower() not in ('none', '')
+        why_block = ""
+        if has_why:
+            safe_why = html_module.escape(tip.why)
+            why_block = f"""
+        <div style="font-weight: bold; margin-bottom: 4px; margin-top: 10px; color: #E65100;">Why?</div>
+        <div>{safe_why}</div>"""
+        tip_cards.append(f"""
+    <div class="tip-card" id="tip-card-{i}" data-target="tip-target-{i}">
+        <div style="font-weight: bold; margin-bottom: 4px; color: #E65100;">{header}</div>
+        <div style="margin-bottom: 10px;">{safe_text}</div>{why_block}
+    </div>""")
+
+    tip_cards_html = '\n'.join(tip_cards)
+
+    result_html = f"""<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+    body {{
+        margin: 0;
+        padding: 0;
+        background: #f5f5f5;
+    }}
+    .annotated-wrapper {{
+        display: flex;
+        max-width: 1400px;
+        margin: 0 auto;
+        position: relative;
+    }}
+    .tips-column {{
+        flex: 0 0 30%;
+        max-width: 30%;
+        position: relative;
+        min-height: 100%;
+    }}
+    .newsletter-column {{
+        flex: 0 0 70%;
+        max-width: 70%;
+        background: white;
+        box-shadow: 0 1px 4px rgba(0,0,0,0.1);
+        position: relative;
+    }}
+    .tip-card {{
+        position: absolute;
+        width: calc(100% - 32px);
+        right: 0;
+        background-color: #FFFDE7;
+        border-right: 4px solid #F9A825;
+        padding: 12px 14px;
+        font-family: Arial, sans-serif;
+        font-size: 13px;
+        line-height: 1.5;
+        color: #333;
+        border-radius: 4px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        transition: box-shadow 0.2s;
+    }}
+    .tip-card:hover {{
+        box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+    }}
+    svg.connectors {{
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        pointer-events: none;
+        z-index: 10;
+    }}
+    [data-tip-anchor] {{
+        background-color: #FFF9C4;
+        outline: 2px solid #F9A825;
+        outline-offset: 2px;
+        border-radius: 2px;
+    }}
+    .top-banner {{
+        position: absolute;
+        top: 16px;
+        right: 0;
+        width: calc(100% - 32px);
+        background-color: #FFFDE7;
+        border-right: 4px solid #F9A825;
+        padding: 12px 14px;
+        font-family: Arial, sans-serif;
+        font-size: 13px;
+        line-height: 1.5;
+        color: #333;
+        border-radius: 4px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    }}
+</style>
+</head>
+<body>
+<div class="annotated-wrapper" id="annotated-wrapper">
+    <div class="tips-column" id="tips-column">
+        <div class="top-banner">Suggested content changes appear below.</div>
+        {tip_cards_html}
+    </div>
+    <div class="newsletter-column" id="newsletter-column">
+        {newsletter_html}
+    </div>
+    <svg class="connectors" id="connectors-svg"></svg>
+</div>
+<script>
+    function positionCardsAndDrawConnectors() {{
+        const wrapper = document.getElementById('annotated-wrapper');
+        const svg = document.getElementById('connectors-svg');
+        const tipsCol = document.getElementById('tips-column');
+        const wrapperRect = wrapper.getBoundingClientRect();
+
+        svg.setAttribute('width', wrapperRect.width);
+        svg.setAttribute('height', wrapperRect.height);
+        svg.style.width = wrapperRect.width + 'px';
+        svg.style.height = wrapperRect.height + 'px';
+        svg.innerHTML = '';
+
+        const cards = Array.from(document.querySelectorAll('.tip-card'));
+        let minNextTop = 80;
+
+        cards.forEach(function(card) {{
+            const targetId = card.getAttribute('data-target');
+            const target = document.getElementById(targetId);
+            if (!target) return;
+
+            const targetRect = target.getBoundingClientRect();
+            const desiredTop = targetRect.top + targetRect.height / 2 - wrapperRect.top - 20;
+            const actualTop = Math.max(desiredTop, minNextTop);
+            card.style.top = actualTop + 'px';
+
+            const cardHeight = card.getBoundingClientRect().height;
+            minNextTop = actualTop + cardHeight + 12;
+
+            const cardRect = card.getBoundingClientRect();
+            const x1 = cardRect.right - wrapperRect.left;
+            const y1 = cardRect.top + 20 - wrapperRect.top;
+            const x2 = targetRect.left - wrapperRect.left;
+            const y2 = targetRect.top + targetRect.height / 2 - wrapperRect.top;
+
+            const midX = (x1 + x2) / 2;
+            const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+            path.setAttribute('d', 'M ' + x1 + ' ' + y1 + ' C ' + midX + ' ' + y1 + ' ' + midX + ' ' + y2 + ' ' + x2 + ' ' + y2);
+            path.setAttribute('stroke', '#F9A825');
+            path.setAttribute('stroke-width', '2');
+            path.setAttribute('fill', 'none');
+            path.setAttribute('stroke-dasharray', '6,3');
+
+            const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+            circle.setAttribute('cx', x2);
+            circle.setAttribute('cy', y2);
+            circle.setAttribute('r', '4');
+            circle.setAttribute('fill', '#F9A825');
+
+            svg.appendChild(path);
+            svg.appendChild(circle);
+        }});
+
+        const lastCard = cards[cards.length - 1];
+        if (lastCard) {{
+            const lastBottom = parseFloat(lastCard.style.top) + lastCard.getBoundingClientRect().height + 20;
+            tipsCol.style.minHeight = lastBottom + 'px';
+        }}
+    }}
+
+    window.addEventListener('load', positionCardsAndDrawConnectors);
+    window.addEventListener('resize', positionCardsAndDrawConnectors);
+</script>
+</body>
+</html>"""
+
+    return result_html
+
+
+def run_improvement_tips_background(task_id):
+    """
+    Background thread entry point for generating improvement tips.
+    Loads the PendingImprovementTips task, generates annotated HTML, saves result.
+    """
+    from asgiref.sync import async_to_sync
+    from django.db import connection
+    from analytics.models import PendingImprovementTips, UsageAccount
+
+    try:
+        task = PendingImprovementTips.objects.get(task_id=task_id)
+        task.status = 'running'
+        task.save(update_fields=['status'])
+
+        from analytics.llm_tracker import start_tracking, finish_tracking
+        if settings.ENVIRONMENT == 'local':
+            start_tracking()
+
+        post = task.post
+        user = task.user
+        publication = task.publication
+
+        try:
+            usage = UsageAccount.objects.get(user=user)
+            beehiiv_token = usage.beehiiv_token
+            beehiiv_pub_id = usage.beehiiv_pub_id
+        except UsageAccount.DoesNotExist:
+            raise RuntimeError("No API credentials configured")
+
+        result_html = async_to_sync(generate_improvement_tips_html)(
+            post, user, publication, beehiiv_token, beehiiv_pub_id
+        )
+
+        task.status = 'complete'
+        task.result_html = result_html
+        if settings.ENVIRONMENT == 'local':
+            task.dev_panel_data = finish_tracking() or {}
+            task.save(update_fields=['status', 'result_html', 'dev_panel_data'])
+        else:
+            task.save(update_fields=['status', 'result_html'])
+
+    except Exception as e:
+        logger.exception("Improvement tips background task failed")
+        try:
+            task = PendingImprovementTips.objects.get(task_id=task_id)
+            task.status = 'error'
+            task.error_message = str(e)
+            task.save(update_fields=['status', 'error_message'])
+        except Exception:
+            logger.exception("Failed to save error status for improvement tips task")
+    finally:
+        connection.close()

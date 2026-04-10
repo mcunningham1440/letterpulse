@@ -92,6 +92,7 @@ TEMPLATES = [
                 'django.contrib.messages.context_processors.messages',
                 'analytics.context_processors.usage_context',
                 'analytics.context_processors.progress_context',
+                'analytics.context_processors.environment_context',
             ],
         },
     },
@@ -222,7 +223,14 @@ DEFAULT_MONTHLY_CREDITS = 150
 # Credit costs per operation
 CREDITS_PER_EXTRACTION = 1      # Per post extracted from
 CREDITS_PER_REPORT = 1          # Flat cost for generating insights
-CREDITS_PER_ANNOTATION = 1      # Per post annotated with improvement tips
+CREDITS_PER_IMPROVEMENT_TIPS = 1  # Per post improvement tips generation
+
+# Section processing configuration
+SECTION_N_EXAMPLES = 5              # Number of nearby-post examples per section for context
+
+# Link processing configuration
+LINK_PROCESS_TOP_N = 60             # Total links to select across all sections
+LINK_PROCESS_MAX_RETRIES = 2        # Max LLM retries for link description count mismatch
 
 # Maximum items sent to the LLM for report generation. When exceeded, the
 # top and bottom performers from each section are sampled (middle omitted).
@@ -241,10 +249,11 @@ DAILY_SIGNUP_CAP = 5
 # based on number of posts selected.
 PROGRESS_DURATIONS = {
     'refresh_posts': 10,        # empirical
-    'download_annotated': 60,   # empirical
+    'improvement_tips': 20,     # empirical
     'extract_content': 12,      # empirical
     'generate_report': 35,      # empirical
     'process_posts': 20,        # empirical
+    'content_search': 45,       # empirical
 }
 
 # User-facing time warnings (minutes)
@@ -265,3 +274,36 @@ EXECUTION_LOG_ON_FULL = 'drop'       # 'drop' or 'sync' when queue is full
 # Auto Click Visualization Email Configuration
 # =============================================================================
 SITE_URL = os.environ.get('SITE_URL', 'https://letterpulse.com')
+
+# =============================================================================
+# Content Finder Configuration
+# =============================================================================
+PERPLEXITY_API_KEY = os.environ.get("PERPLEXITY_API_KEY", "")
+CREDITS_PER_CONTENT_SEARCH = 1
+CONTENT_FINDER_MODEL = "gpt-5.4-mini"
+CONTENT_FINDER_REASONING = "medium"
+CONTENT_FINDER_MAX_ROUNDS = 3       # Max search round-trips per section before forcing final answer
+CONTENT_FINDER_MAX_LINKS = 60       # Max historical links per section for context
+CONTENT_FINDER_MAX_URL_LEN = 75     # Truncate displayed URLs to this length
+
+# =============================================================================
+# Improvement Tips Configuration
+# =============================================================================
+IMPROVEMENT_TIPS_MODEL = "gpt-5.4-mini"
+IMPROVEMENT_TIPS_REASONING = "medium"
+
+# =============================================================================
+# LLM Pricing (per million tokens) — local dev panel only
+# =============================================================================
+LLM_PRICING = {
+    'gpt-5.4': {
+        'input_per_million': 2.50,
+        'cached_input_per_million': 0.25,
+        'output_per_million': 15.00,
+    },
+    'gpt-5.4-mini': {
+        'input_per_million': 0.75,
+        'cached_input_per_million': 0.075,
+        'output_per_million': 4.50,
+    },
+}

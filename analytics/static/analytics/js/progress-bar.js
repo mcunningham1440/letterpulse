@@ -2,7 +2,7 @@
  * LetterPulse Progress Bar Module
  *
  * Inline time-based progress bars that attach below buttons.
- * Advances in 10% increments at intervals based on expected duration,
+ * Advances in 5% increments at intervals based on expected duration,
  * then jumps to 100% on completion.
  */
 const ProgressBar = (function() {
@@ -88,14 +88,14 @@ const ProgressBar = (function() {
             updateProgressUI(state, initialProgress);
         }
 
-        // Calculate interval: advance 10% at each interval
-        // Total intervals needed: 9 (to reach 90%)
-        const intervalMs = (expectedDuration * 1000) / 9;
+        // Calculate interval: advance 5% at each interval
+        // Total intervals needed: 18 (to reach 90%)
+        const intervalMs = (expectedDuration * 1000) / 18;
 
         // Start progress timer
         state.intervalId = setInterval(function() {
             if (state.currentProgress < MAX_PROGRESS && !state.isComplete) {
-                state.currentProgress += 10;
+                state.currentProgress += 5;
                 updateProgressUI(state, state.currentProgress);
             }
         }, intervalMs);

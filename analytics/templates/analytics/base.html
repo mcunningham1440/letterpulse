@@ -443,9 +443,9 @@
             </li>
             <li class="nav-item">
                 <a class="nav-link {% if request.resolver_match.url_name == 'insights' %}active{% endif %}"
-                   href="{% url 'analytics:insights' %}" title="Insights">
-                    <i class="bi bi-graph-up"></i>
-                    <span class="nav-link-text">Insights</span>
+                   href="{% url 'analytics:insights' %}" title="Write">
+                    <i class="bi bi-pencil-square"></i>
+                    <span class="nav-link-text">Write</span>
                 </a>
             </li>
             <li class="nav-item">
@@ -519,6 +519,11 @@
 
     <!-- Progress Bar -->
     <script src="{% static 'analytics/js/progress-bar.js' %}"></script>
+
+    {% if is_local %}
+    <!-- LLM Dev Panel (local mode only) -->
+    <script src="{% static 'analytics/js/dev-panel.js' %}"></script>
+    {% endif %}
 
     <!-- Sidebar Toggle -->
     <script>
@@ -646,6 +651,94 @@
                 proceedBtn.addEventListener('click', onProceed);
                 cancelBtn.addEventListener('click', onCancel);
             });
+        }
+
+        function showAlert(message, title) {
+            return new Promise(function(resolve) {
+                var overlay = document.getElementById('confirmOverlay');
+                document.getElementById('confirmTitle').textContent = title || '';
+                document.getElementById('confirmMessage').textContent = message;
+                overlay.style.display = 'flex';
+
+                var proceedBtn = document.getElementById('confirmProceedBtn');
+                var cancelBtn = document.getElementById('confirmCancelBtn');
+
+                cancelBtn.style.display = 'none';
+                proceedBtn.textContent = 'OK';
+                proceedBtn.className = 'btn btn-primary btn-sm';
+
+                function cleanup() {
+                    overlay.style.display = 'none';
+                    proceedBtn.removeEventListener('click', onOk);
+                    // Reset for future showConfirm calls
+                    cancelBtn.style.display = '';
+                    proceedBtn.textContent = 'Proceed';
+                    proceedBtn.className = 'btn btn-danger btn-sm';
+                }
+                function onOk() { cleanup(); resolve(true); }
+
+                proceedBtn.addEventListener('click', onOk);
+            });
+        }
+    </script>
+
+    <!-- Shared JS utilities -->
+    <script>
+        function getCsrfToken() {
+            const cookie = document.cookie.split(';').find(c => c.trim().startsWith('csrftoken='));
+            return cookie ? cookie.split('=')[1] : '';
+        }
+
+        async function postJSON(url, body) {
+            const resp = await fetch(url, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': getCsrfToken(),
+                },
+                body: JSON.stringify(body),
+            });
+            return resp.json();
+        }
+
+        function updateCreditsDisplay(creditsUsed, creditsQuota) {
+            if (creditsUsed == null || creditsQuota == null) return;
+            const percentage = Math.round((parseFloat(creditsUsed) / parseFloat(creditsQuota)) * 100);
+            const usageBarFill = document.querySelector('.usage-bar-fill');
+            if (usageBarFill) usageBarFill.style.width = percentage + '%';
+            const usageText = document.querySelector('.usage-text');
+            if (usageText) usageText.textContent = Math.round(parseFloat(creditsUsed)) + ' / ' + Math.round(parseFloat(creditsQuota)) + ' used';
+        }
+
+        function pollTask(statusUrl, taskId, opts) {
+            const { progressContainerId, runBtnId, devPanelName, onComplete, interval } = opts;
+            let timer = setInterval(async () => {
+                try {
+                    const resp = await fetch(`${statusUrl}${taskId}/`);
+                    const data = await resp.json();
+
+                    if (data.status === 'complete') {
+                        clearInterval(timer);
+                        ProgressBar.complete({ containerId: progressContainerId, success: true, message: 'Done!' });
+                        document.getElementById(runBtnId).disabled = false;
+                        if (data.credits_used !== undefined) {
+                            updateCreditsDisplay(data.credits_used, data.credits_quota);
+                        }
+                        if (onComplete) onComplete(data, taskId);
+                        if (typeof DevPanel !== 'undefined' && data.dev_panel) {
+                            DevPanel.show(data.dev_panel, devPanelName);
+                        }
+                    } else if (data.status === 'error') {
+                        clearInterval(timer);
+                        ProgressBar.complete({ containerId: progressContainerId, success: false, message: 'Error' });
+                        document.getElementById(runBtnId).disabled = false;
+                        showToast(GENERIC_ERROR_TOAST, 'danger');
+                    }
+                } catch (err) {
+                    console.error('Polling error:', err);
+                }
+            }, interval || 3000);
+            return timer;
         }
     </script>
 

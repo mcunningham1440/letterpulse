@@ -20,50 +20,9 @@
     .extract-tooltip {
         z-index: 10001 !important;
     }
-    .processing-overlay {
-        position: fixed;
-        top: 0; left: 0; right: 0; bottom: 0;
-        background-color: rgba(0, 0, 0, 0.6);
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        z-index: 9999;
-    }
-    .processing-modal {
-        background: white;
-        border-radius: 0.5rem;
-        padding: 2rem;
-        max-width: 600px;
-        width: 90%;
-        max-height: 90vh;
-        overflow-y: auto;
-        box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
-    }
-    .review-modal {
-        background: white;
-        border-radius: 0.5rem;
-        padding: 2rem;
-        max-width: 900px;
-        width: 95%;
-        max-height: 90vh;
-        overflow-y: auto;
-        box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
-    }
-    .section-pair {
-        border: 1px solid #dee2e6;
-        border-radius: 0.375rem;
-        padding: 0.75rem;
-    }
-    .review-section-table {
-        margin-bottom: 1.5rem;
-    }
-    .processed-eye {
-        cursor: pointer;
+    .processed-check {
         color: #198754;
         font-size: 1.1rem;
-    }
-    .processed-eye:hover {
-        color: #146c43;
     }
     .processed-trash {
         cursor: pointer;
@@ -99,18 +58,6 @@
 </div>
 {% endif %}
 
-<!-- Coach mark: review complete, go to insights (shown via JS after review finishes) -->
-<div class="confirm-overlay" id="reviewCompleteOverlay" style="display: none;">
-    <div class="confirm-modal">
-        <h5 class="mb-3">Review Complete</h5>
-        <p class="mb-4">Head to the <b>Insights</b> tab to see analytics on your processed posts.</p>
-        <div class="d-flex justify-content-end gap-2">
-            <a href="{% url 'analytics:insights' %}" class="btn btn-success">Go to Insights</a>
-            <button type="button" class="btn btn-secondary" id="reviewCompleteStayBtn">Process More Posts</button>
-        </div>
-    </div>
-</div>
-
 <div class="row">
     <div class="col-12">
         <!-- Posts Selection Card -->
@@ -140,7 +87,7 @@
                                 <th data-bs-toggle="tooltip" title="Draft, Scheduled, or Published">Status</th>
                                 <th data-bs-toggle="tooltip" title="When the post was or will be sent to subscribers (in your timezone)">Publish Date</th>
                                 <th data-bs-toggle="tooltip" title="Title of the post">Title</th>
-                                <th class="text-center" data-bs-toggle="tooltip" title="View or delete saved data from this post">Processed</th>
+                                <th class="text-center" data-bs-toggle="tooltip" title="Saved data from this post">Processed</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -166,7 +113,7 @@
                                 <td>{{ post.title }}</td>
                                 <td class="text-center">
                                     {% if post.id in processed_post_ids %}
-                                        <i class="bi bi-eye-fill processed-eye" data-post-id="{{ post.id }}" title="View processed data"></i><i class="bi bi-trash-fill processed-trash" data-post-id="{{ post.id }}" title="Clear processed data"></i>
+                                        <i class="bi bi-check-circle-fill processed-check"></i><i class="bi bi-trash-fill processed-trash" data-post-id="{{ post.id }}" title="Clear processed data"></i>
                                     {% endif %}
                                 </td>
                             </tr>
@@ -191,58 +138,6 @@
                                     <i class="bi bi-gear"></i> Process Selected Posts
                                 </button>
                             </div>
-
-
-                            {% comment %}
-                            <!-- Get Improvement Tips Dropdown -->
-                            <div class="dropdown" id="downloadAnnotatedProgress" style="min-width: 200px;">
-                                <button class="btn btn-warning btn-sm w-100 dropdown-toggle" type="button" id="improvementTipsDropdown" data-bs-toggle="dropdown" aria-expanded="false" data-bs-auto-close="outside">
-                                    <i class="bi bi-lightbulb"></i> Get Improvement Tips
-                                </button>
-                                <div class="dropdown-menu p-3" aria-labelledby="improvementTipsDropdown" style="min-width: 320px;">
-                                    <div class="mb-3">
-                                        <label class="form-label small fw-bold">Select Reports to Inform Analysis</label>
-                                        <div style="max-height: 200px; overflow-y: auto;">
-                                            {% if all_reports %}
-                                                <div class="form-check mb-2">
-                                                    <input class="form-check-input" type="checkbox" id="selectAllReports">
-                                                    <label class="form-check-label fw-bold small" for="selectAllReports">Select All</label>
-                                                </div>
-                                                <hr class="my-2">
-                                                {% for report in all_reports %}
-                                                <div class="form-check">
-                                                    <input class="form-check-input report-checkbox" type="checkbox" name="selected_reports" value="{{ report.id }}" id="report_{{ report.id }}">
-                                                    <label class="form-check-label small" for="report_{{ report.id }}">
-                                                        {{ report.name }}
-                                                        <span class="text-muted d-block" style="font-size: 0.75rem;">{{ report.content_set.name }}</span>
-                                                    </label>
-                                                </div>
-                                                {% endfor %}
-                                            {% else %}
-                                                <span class="text-muted small">No reports generated yet, use the Generate Report functionality in the Insights tab to start</span>
-                                            {% endif %}
-                                        </div>
-                                        <div class="form-text small mt-2">
-                                            <span class="text-primary"
-                                                  data-bs-toggle="tooltip"
-                                                  data-bs-placement="bottom"
-                                                  data-bs-html="true"
-                                                  data-bs-custom-class="extract-tooltip"
-                                                  title="This feature lets you download a copy of your post(s) with suggestions on how to improve the content to increase engagement.<br><br>First, use the <b>Process Selected Posts</b> button to extract and save content from your past issues. Next, use the <b>Insights</b> tab to generate reports analyzing what attracts high engagement. Then select posts you want to get suggestions for here (hint: try a draft you haven't published yet) along with the reports you want our AI to base its suggestions on.<br><br>The AI will annotate each post with specific suggestions based on your report findings, highlighting what can be improved."
-                                                  style="cursor: help;">
-                                                <i class="bi bi-info-circle"></i> How to use this feature
-                                            </span>
-                                        </div>
-                                    </div>
-                                    <div class="d-flex justify-content-between align-items-center">
-                                        <small class="text-muted">🧠 1 AI credit per post</small>
-                                        <button type="button" class="btn btn-warning btn-sm" id="downloadAnnotatedBtn">
-                                            <i class="bi bi-play-fill"></i> Run
-                                        </button>
-                                    </div>
-                                </div>
-                            </div>
-                            {% endcomment %}
                         </div>
                     </div>
                 </div>
@@ -252,220 +147,10 @@
     </div>
 </div>
 
-{% if not processed_post_ids %}
-<!-- Coach mark: processing instructions (shown when processing overlay opens) -->
-<div class="confirm-overlay" id="processingCoachMark" style="display: none; z-index: 10002;">
-    <div class="confirm-modal">
-        <h5 class="mb-3">Processing Posts</h5>
-        <p>Enter the names of each of the sections that regularly appear in your newsletter.</p>
-        <p><i>Try at least 2–3 real ones. If you just enter a name like "test", the AI won't know where to look.</i></p>
-        <p class="mb-4">See <a href="{% static 'analytics/processing_example.html' %}" target="_blank" class="text-primary" style="text-decoration: none;"><i class="bi bi-info-circle"></i> How to use this feature</a> for more details.</p>
-        <div class="d-flex justify-content-end">
-            <button type="button" class="btn btn-primary" id="processingCoachMarkDismissBtn">Got it</button>
-        </div>
-    </div>
-</div>
-{% endif %}
-
-<!-- Processing Modal (survey-style overlay) -->
-<div class="processing-overlay" id="processingOverlay" style="display: none;">
-    <div class="processing-modal">
-        <h4 class="mb-3" id="processingTitle">Processing 0 posts</h4>
-
-        <div class="form-text small mb-3">
-            <a href="{% static 'analytics/processing_example.html' %}" target="_blank" class="text-primary" style="text-decoration: none;">
-                <i class="bi bi-info-circle"></i> How to use this feature
-            </a>
-        </div>
-
-        <datalist id="sectionNameOptions"></datalist>
-
-        <div id="sectionFields">
-            <div class="section-pair mb-3" data-index="0">
-                <div class="d-flex gap-2 align-items-start">
-                    <div class="flex-grow-1">
-                        <input type="text" class="form-control form-control-sm mb-1 section-name"
-                               placeholder="Section name">
-                        <textarea class="form-control form-control-sm section-desc"
-                                  placeholder="Special instructions (optional)"
-                                  rows="1" style="resize: vertical; overflow-y: hidden;"></textarea>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <div class="d-flex justify-content-between align-items-center mb-3">
-            <div class="d-flex gap-2">
-                <button type="button" class="btn btn-outline-secondary btn-sm" id="addSectionBtn">
-                    <i class="bi bi-plus"></i>
-                </button>
-                <button type="button" class="btn btn-outline-danger btn-sm" id="removeSectionBtn" style="display: none;">
-                    <i class="bi bi-dash"></i>
-                </button>
-            </div>
-            <small class="text-muted" id="sectionCount">1 / 15 sections</small>
-        </div>
-
-        <hr>
-
-        <!-- Save/Load Template Row -->
-        <div class="d-flex justify-content-between align-items-center mb-3">
-            <small class="text-muted">Save this layout or load a saved one</small>
-            <div class="d-flex gap-2">
-                <!-- Save Template Dropdown -->
-                <div class="dropdown">
-                    <button class="btn btn-outline-secondary btn-sm dropdown-toggle" type="button"
-                            id="saveTemplateDropdown" data-bs-toggle="dropdown"
-                            aria-expanded="false" data-bs-auto-close="outside">
-                        <i class="bi bi-save"></i> Save
-                    </button>
-                    <div class="dropdown-menu dropdown-menu-end p-3" aria-labelledby="saveTemplateDropdown" style="min-width: 280px;">
-                        <div class="mb-3">
-                            <label class="form-label small fw-bold">Template Name</label>
-                            <input type="text" class="form-control form-control-sm" id="templateNameInput"
-                                   placeholder="e.g. Monday issue">
-                        </div>
-                        <div class="d-flex justify-content-end">
-                            <button type="button" class="btn btn-primary btn-sm" id="saveTemplateBtn">
-                                <i class="bi bi-save"></i> Save
-                            </button>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Load Template Dropdown (dropup to avoid clipping by modal overflow) -->
-                <div class="dropup">
-                    <button class="btn btn-outline-secondary btn-sm dropdown-toggle" type="button"
-                            id="loadTemplateDropdown" data-bs-toggle="dropdown"
-                            aria-expanded="false" data-bs-auto-close="outside">
-                        <i class="bi bi-folder2-open"></i> Load
-                    </button>
-                    <div class="dropdown-menu dropdown-menu-end p-3" aria-labelledby="loadTemplateDropdown" style="min-width: 280px; max-height: 60vh; overflow-y: auto;">
-                        <div id="templateList">
-                            <div class="text-center py-2">
-                                <span class="spinner-border spinner-border-sm"></span> Loading...
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <hr>
-
-        <!-- Progress bar inside processing modal -->
-        <div id="processModalProgress" class="mb-3"></div>
-
-        <div class="d-flex justify-content-between align-items-center">
-            <small class="text-muted">🧠 1 AI credit per post</small>
-            <div class="d-flex gap-2">
-                <button type="button" class="btn btn-secondary btn-sm" id="cancelProcessingBtn">Cancel</button>
-                <button type="button" class="btn btn-primary btn-sm" id="runProcessingBtn">
-                    <i class="bi bi-play-fill"></i> Run
-                </button>
-            </div>
-        </div>
-    </div>
-</div>
-
-{% if not processed_post_ids %}
-<!-- Coach mark: first-time review instructions -->
-<div class="confirm-overlay" id="reviewCoachMark" style="display: none; z-index: 10002;">
-    <div class="confirm-modal">
-        <h5 class="mb-3"><b>Posts Processed</b></h5>
-        <p>You can now review the post data to make sure the AI recognized your content.</p>
-        <p>See if each section and each of the individual items in them appears correctly.</p>
-        <p>If it does, you can click <span class="btn btn-success btn-sm" style="pointer-events:none;">Save and Proceed</span>.</p>
-        <p>If the AI added extra items that should not appear, you can delete them with <span class="btn btn-warning btn-sm" style="pointer-events:none;">Remove Selected Items</span>.</p>
-        <p>If you want to re-process the post with different instructions, use <span class="btn btn-info btn-sm" style="pointer-events:none;">Re-Process Post</span>.</p>
-        <p class="mb-4">Use <span class="btn btn-danger btn-sm" style="pointer-events:none;">Proceed Without Saving</span> if you do not want to save the content.</p>
-        <div class="d-flex justify-content-end">
-            <button type="button" class="btn btn-primary" id="reviewCoachMarkDismissBtn">Got it</button>
-        </div>
-    </div>
-</div>
-{% endif %}
-
-<!-- Review Modal (overlay popup) -->
-<div class="processing-overlay" id="reviewOverlay" style="display: none;">
-    <div class="review-modal">
-        <div class="d-flex justify-content-between align-items-center mb-3">
-            <h5 class="mb-0" id="reviewPostTitle">Reviewing: Post Title</h5>
-            <span class="badge bg-secondary fs-6" id="reviewCounter">1 of 1</span>
-        </div>
-
-        <div class="alert alert-info py-2 px-3 small d-none no-auto-dismiss" id="reviewAveragedClicksNotice">
-            If multiple links in a post go to the same URL, click counts and CTRs for those links are averaged among those links.
-        </div>
-        <div id="reviewSections">
-            <!-- Dynamically populated with section tables -->
-        </div>
-
-        <!-- Re-process progress bar container -->
-        <div id="reprocessProgress"></div>
-
-        <!-- Review Action Bar -->
-        <div class="bg-light border-top py-3 mt-3">
-            <div class="d-flex justify-content-between align-items-center">
-                <div class="d-flex gap-2">
-                    <button type="button" class="btn btn-warning btn-sm" id="deleteSelectedReviewBtn">
-                        <i class="bi bi-trash"></i> Remove Selected Items
-                    </button>
-                    <!-- Re-process dropdown -->
-                    <div class="dropdown">
-                        <button class="btn btn-info btn-sm dropdown-toggle" type="button"
-                                id="reprocessDropdown" data-bs-toggle="dropdown"
-                                aria-expanded="false" data-bs-auto-close="outside">
-                            <i class="bi bi-arrow-clockwise"></i> Re-Process Post
-                        </button>
-                        <div class="dropdown-menu dropdown-menu-end p-3" aria-labelledby="reprocessDropdown" style="min-width: 360px;">
-                            <div class="mb-3">
-                                <label class="form-label small fw-bold">Custom instructions (optional)</label>
-                                <textarea class="form-control form-control-sm" rows="2"
-                                          id="reprocessInstructions"
-                                          placeholder="Quick Bites section should not include the 'Here's what's new...' text at the top"></textarea>
-                            </div>
-                            <div class="d-flex justify-content-between align-items-center">
-                                <small class="text-muted">🧠 1 AI credit</small>
-                                <button type="button" class="btn btn-success btn-sm" id="reprocessBtn">
-                                    <i class="bi bi-play-fill"></i> Run
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-                    <button type="button" class="btn btn-danger btn-sm" id="deletePostBtn">
-                        <i class="bi bi-arrow-right"></i> Proceed Without Saving
-                    </button>
-                </div>
-                <div class="d-flex gap-2">
-                    <button type="button" class="btn btn-success btn-sm" id="approveBtn">
-                        <i class="bi bi-check-lg"></i> Save and Proceed
-                    </button>
-                </div>
-            </div>
-        </div>
-    </div>
-</div>
-<!-- Read-Only Processed Data Popup -->
-<div class="processing-overlay" id="processedDataOverlay" style="display: none;">
-    <div class="review-modal">
-        <div class="d-flex justify-content-between align-items-center mb-3">
-            <h5 class="mb-0" id="processedDataTitle">Processed Data</h5>
-        </div>
-        <div id="processedDataSections">
-            <!-- Dynamically populated with section tables -->
-        </div>
-        <div class="d-flex justify-content-end mt-3">
-            <button type="button" class="btn btn-secondary" id="processedDataExitBtn">Exit</button>
-        </div>
-    </div>
-</div>
 {% endblock %}
 
 {% block extra_js %}
 <script>
-    const csrfToken = '{{ csrf_token }}';
-
     // Coach mark: spotlight Refresh Posts button when no posts
     {% if not posts %}
     (function() {
@@ -531,476 +216,86 @@
     });
 
     // =========================================================================
-    // Processing Modal Logic
+    // Process Selected Posts (direct, no modal)
     // =========================================================================
 
-    function updateSectionUI() {
-        const fields = document.getElementById('sectionFields');
-        const count = fields.querySelectorAll('.section-pair').length;
-        document.getElementById('sectionCount').textContent = count + ' / 15 sections';
-        document.getElementById('addSectionBtn').disabled = count >= 15;
-        document.getElementById('removeSectionBtn').style.display = count > 1 ? '' : 'none';
-    }
-
-    // Open modal
-    document.getElementById('processPostsBtn').addEventListener('click', function() {
+    document.getElementById('processPostsBtn').addEventListener('click', async function() {
         const selectedPosts = document.querySelectorAll('.post-checkbox:checked');
         if (selectedPosts.length === 0) {
             showToast('Please select at least one post.', 'warning');
             return;
         }
-        const n = selectedPosts.length;
-        document.getElementById('processingTitle').textContent = 'Processing ' + n + ' post' + (n !== 1 ? 's' : '');
-        document.getElementById('processingOverlay').style.display = 'flex';
-        {% if not processed_post_ids %}
-        document.getElementById('processingCoachMark').style.display = 'flex';
-        {% endif %}
-    });
 
-    {% if not processed_post_ids %}
-    document.getElementById('processingCoachMarkDismissBtn').addEventListener('click', function() {
-        document.getElementById('processingCoachMark').style.display = 'none';
-    });
-    document.getElementById('reviewCoachMarkDismissBtn').addEventListener('click', function() {
-        document.getElementById('reviewCoachMark').style.display = 'none';
-    });
-    {% endif %}
-
-    document.getElementById('reviewCompleteStayBtn').addEventListener('click', function() {
-        window.location.reload();
-    });
-
-    // Cancel
-    document.getElementById('cancelProcessingBtn').addEventListener('click', function() {
-        document.getElementById('processingOverlay').style.display = 'none';
-    });
-
-    // Add section
-    document.getElementById('addSectionBtn').addEventListener('click', function() {
-        const fields = document.getElementById('sectionFields');
-        const count = fields.querySelectorAll('.section-pair').length;
-        if (count >= 15) return;
-
-        const div = document.createElement('div');
-        div.className = 'section-pair mb-3';
-        div.dataset.index = count;
-        div.innerHTML = `
-            <div class="d-flex gap-2 align-items-start">
-                <div class="flex-grow-1">
-                    <input type="text" class="form-control form-control-sm mb-1 section-name"
-                           placeholder="Section name">
-                    <textarea class="form-control form-control-sm section-desc"
-                              placeholder="Special instructions (optional)"
-                              rows="1" style="resize: vertical; overflow-y: hidden;"></textarea>
-                </div>
-            </div>
-        `;
-        fields.appendChild(div);
-        updateSectionUI();
-    });
-
-    // Auto-expand section-desc textareas as user types
-    document.getElementById('sectionFields').addEventListener('input', function(e) {
-        if (e.target.classList.contains('section-desc')) {
-            e.target.style.height = 'auto';
-            e.target.style.height = e.target.scrollHeight + 'px';
-        }
-    });
-
-    // Remove last section
-    document.getElementById('removeSectionBtn').addEventListener('click', function() {
-        const fields = document.getElementById('sectionFields');
-        const pairs = fields.querySelectorAll('.section-pair');
-        if (pairs.length > 1) {
-            pairs[pairs.length - 1].remove();
-            updateSectionUI();
-        }
-    });
-
-    // Actually run processing (called after overwrite check passes)
-    async function executeProcessing(sections, selectedIndices) {
-        const runBtn = document.getElementById('runProcessingBtn');
-        runBtn.disabled = true;
-        const originalBtnHtml = runBtn.innerHTML;
-        runBtn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Processing...';
-
-        // Start progress bar
-        const numPosts = selectedIndices.length;
-        const baseDuration = {{ progress_durations.process_posts }};
-        const estimatedDuration = Math.max(baseDuration, numPosts * 4);
-
-        ProgressBar.start({
-            containerId: 'processModalProgress',
-            expectedDuration: estimatedDuration,
-            subtext: 'Processing ' + numPosts + ' post' + (numPosts !== 1 ? 's' : '') + '...'
-        });
-
-        try {
-            const response = await fetch("{% url 'analytics:run_processing' %}", {
-                method: 'POST',
-                headers: {
-                    'X-CSRFToken': csrfToken,
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    selected_posts: selectedIndices,
-                    sections: sections
-                })
-            });
-
-            const data = await response.json();
-
-            if (!data.success) {
-                ProgressBar.complete({ containerId: 'processModalProgress', success: false, message: data.error || 'Error' });
-                showToast(GENERIC_ERROR_TOAST, 'danger');
-                return;
-            }
-
-            // Update credits in sidebar
-            updateCreditsDisplay(data.credits_used, data.credits_quota);
-
-            ProgressBar.complete({ containerId: 'processModalProgress', success: true, message: 'Done!' });
-
-            // Close processing modal and start review
-            document.getElementById('processingOverlay').style.display = 'none';
-            startReview(data.review_data);
-
-        } catch (error) {
-            console.error('Error:', error);
-            ProgressBar.complete({ containerId: 'processModalProgress', success: false, message: 'Error' });
-            showToast(GENERIC_ERROR_TOAST, 'danger');
-        } finally {
-            runBtn.disabled = false;
-            runBtn.innerHTML = originalBtnHtml;
-        }
-    }
-
-    // Run processing (with overwrite check)
-    document.getElementById('runProcessingBtn').addEventListener('click', async function() {
-        const pairs = document.querySelectorAll('.section-pair');
-        const sections = [];
-        const seenNames = new Set();
-
-        for (const pair of pairs) {
-            const name = pair.querySelector('.section-name').value.trim();
-            const desc = pair.querySelector('.section-desc').value.trim();
-
-            if (!name) {
-                showToast('Please fill in all section names.', 'warning');
-                return;
-            }
-            if (seenNames.has(name.toLowerCase())) {
-                showToast('Duplicate section name: "' + name + '"', 'warning');
-                return;
-            }
-            seenNames.add(name.toLowerCase());
-            sections.push({ name: name, description: desc });
-        }
-
-        const selectedPosts = document.querySelectorAll('.post-checkbox:checked');
         const selectedIndices = Array.from(selectedPosts).map(cb => cb.value);
 
         // Check how many selected posts are already processed
         const processedCount = Array.from(selectedPosts).filter(cb => cb.dataset.processed === 'true').length;
-
         if (processedCount > 0) {
-            const msg = processedCount + ' of the post' + (processedCount !== 1 ? 's' : '') +
-                        ' you\'re processing already ha' + (processedCount !== 1 ? 've' : 's') +
-                        ' saved data. Re-processing will overwrite it. Do you wish to proceed?';
+            const msg = processedCount + ' of the selected post' + (processedCount !== 1 ? 's' : '') +
+                        ' already ha' + (processedCount !== 1 ? 've' : 's') +
+                        ' processed data. Re-processing will overwrite it.';
             if (!await showConfirm(msg, 'Overwrite Warning')) return;
         }
 
-        executeProcessing(sections, selectedIndices);
-    });
-
-    // =========================================================================
-    // Review Flow Logic
-    // =========================================================================
-
-    let reviewData = null;
-    let currentReviewIndex = 0;
-    const hadNoProcessedPosts = {% if not processed_post_ids %}true{% else %}false{% endif %};
-
-    function updateCreditsDisplay(creditsUsed, creditsQuota) {
-        if (creditsUsed != null && creditsQuota != null) {
-            const percentage = (parseFloat(creditsUsed) / parseFloat(creditsQuota)) * 100;
-            const usageBarFill = document.querySelector('.usage-bar-fill');
-            if (usageBarFill) usageBarFill.style.width = percentage + '%';
-            const usageText = document.querySelector('.usage-text');
-            if (usageText) usageText.textContent = Math.round(parseFloat(creditsUsed)) + ' / ' + Math.round(parseFloat(creditsQuota)) + ' used';
-        }
-    }
-
-    function startReview(data) {
-        reviewData = data;
-        currentReviewIndex = 0;
-        document.getElementById('reviewOverlay').style.display = 'flex';
-        renderCurrentPost();
-        {% if not processed_post_ids %}
-        document.getElementById('reviewCoachMark').style.display = 'flex';
-        {% endif %}
-    }
-
-    function truncateText(text, maxWords) {
-        const words = text.split(/\s+/);
-        if (words.length <= maxWords) return text;
-        const short = words.slice(0, maxWords).join(' ');
-        return '<span class="truncated-text" style="display:inline-flex;align-items:flex-start;gap:4px;">' +
-            '<a href="#" class="text-toggle text-muted" onclick="toggleText(event, this)" style="font-size:0.75em;text-decoration:none;flex-shrink:0;line-height:1.5;">&#9654;</a>' +
-            '<span>' +
-                '<span class="text-short">' + short + '</span>' +
-                '<span class="text-full" style="display:none;">' + text + '</span>' +
-            '</span>' +
-            '</span>';
-    }
-
-    function toggleText(e, el) {
-        e.preventDefault();
-        const wrapper = el.closest('.truncated-text');
-        const short = wrapper.querySelector('.text-short');
-        const full = wrapper.querySelector('.text-full');
-        if (short.style.display !== 'none') {
-            short.style.display = 'none';
-            full.style.display = 'inline';
-            el.innerHTML = '&#9660;';
-        } else {
-            short.style.display = 'inline';
-            full.style.display = 'none';
-            el.innerHTML = '&#9654;';
-        }
-    }
-
-    function renderCurrentPost() {
-        const post = reviewData.posts[currentReviewIndex];
-        document.getElementById('reviewPostTitle').textContent = 'Reviewing: ' + post.post_title;
-        document.getElementById('reviewCounter').textContent = (currentReviewIndex + 1) + ' of ' + reviewData.total_posts;
-
-        const container = document.getElementById('reviewSections');
-        container.innerHTML = '';
-
-        // Check if any items have non-integer click counts (averaged due to duplicate URLs)
-        const hasAveragedClicks = post.sections.some(function(section) {
-            return section.items.some(function(item) {
-                return item.clicks && item.clicks.some(function(c) { return !Number.isInteger(c); });
-            });
-        });
-        const reviewNotice = document.getElementById('reviewAveragedClicksNotice');
-        if (reviewNotice) {
-            if (hasAveragedClicks) {
-                reviewNotice.classList.remove('d-none');
-            } else {
-                reviewNotice.classList.add('d-none');
-            }
-        }
-
-        post.sections.forEach(function(section, sIdx) {
-            const sectionDiv = document.createElement('div');
-            sectionDiv.className = 'review-section-table';
-
-            const header = document.createElement('h6');
-            header.className = 'fw-bold mb-2';
-            header.textContent = section.section_name;
-            sectionDiv.appendChild(header);
-
-            if (section.items.length === 0) {
-                const noItems = document.createElement('p');
-                noItems.className = 'text-muted mb-3';
-                noItems.textContent = 'No items found';
-                sectionDiv.appendChild(noItems);
-            } else {
-                const tableId = 'reviewTable_' + sIdx;
-                const tableHtml = `
-                    <div class="table-responsive">
-                        <table class="table table-hover table-sm" id="${tableId}">
-                            <thead>
-                                <tr>
-                                    <th style="width: 40px;">
-                                        <input type="checkbox" class="form-check-input review-select-all" data-section="${sIdx}">
-                                    </th>
-                                    <th>Item Text</th>
-                                    <th>Links</th>
-                                    <th class="text-end">Max Clicks</th>
-                                    <th class="text-end">Max CTR</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                ${section.items.map(function(item, iIdx) {
-                                    const maxClicks = item.clicks && item.clicks.length > 0 ? Math.max(...item.clicks) : 0;
-                                    const maxClicksDisplay = Number.isInteger(maxClicks) ? maxClicks.toLocaleString() : maxClicks.toFixed(1);
-                                    const maxRate = item.click_rate && item.click_rate.length > 0 ? Math.max(...item.click_rate) : 0;
-                                    const maxRateFormatted = (maxRate * 100).toFixed(2) + '%';
-                                    const linkCount = item.links ? item.links.length : 0;
-                                    return '<tr>' +
-                                        '<td><input type="checkbox" class="form-check-input review-item-checkbox" data-section="' + sIdx + '" data-item="' + iIdx + '"></td>' +
-                                        '<td>' + truncateText(item.text || '', 15) + '</td>' +
-                                        '<td><span class="badge bg-secondary">' + linkCount + ' link' + (linkCount !== 1 ? 's' : '') + '</span></td>' +
-                                        '<td class="text-end">' + maxClicksDisplay + '</td>' +
-                                        '<td class="text-end">' + maxRateFormatted + '</td>' +
-                                    '</tr>';
-                                }).join('')}
-                            </tbody>
-                        </table>
-                    </div>
-                `;
-                sectionDiv.innerHTML += tableHtml;
-            }
-
-            container.appendChild(sectionDiv);
-        });
-
-        // Set up select-all checkboxes for review tables
-        document.querySelectorAll('.review-select-all').forEach(function(cb) {
-            cb.addEventListener('change', function() {
-                const sIdx = this.dataset.section;
-                document.querySelectorAll('.review-item-checkbox[data-section="' + sIdx + '"]')
-                    .forEach(function(itemCb) { itemCb.checked = cb.checked; });
-            });
-        });
-    }
-
-    function advanceToNext() {
-        currentReviewIndex++;
-        if (currentReviewIndex >= reviewData.total_posts) {
-            // Review complete — close overlay and show completion coach mark
-            document.getElementById('reviewOverlay').style.display = 'none';
-            reviewData = null;
-            currentReviewIndex = 0;
-            document.getElementById('reviewCompleteOverlay').style.display = 'flex';
-        } else {
-            renderCurrentPost();
-        }
-    }
-
-    // Approve button
-    document.getElementById('approveBtn').addEventListener('click', async function() {
-        const post = reviewData.posts[currentReviewIndex];
         const btn = this;
         btn.disabled = true;
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Processing...';
 
-        try {
-            const response = await fetch("{% url 'analytics:approve_post' %}", {
-                method: 'POST',
-                headers: {
-                    'X-CSRFToken': csrfToken,
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    post_id: post.post_id,
-                    sections_data: post.sections
-                })
-            });
+        const numPosts = selectedIndices.length;
 
-            const data = await response.json();
-            if (!data.success) {
-                showToast(GENERIC_ERROR_TOAST, 'danger');
-                return;
-            }
+        // Estimate wall-clock time: sequential posts run one-at-a-time,
+        // then remaining posts run in parallel batches of 3, ~12s per iteration.
+        const alreadyProcessed = document.querySelectorAll('.post-checkbox[data-processed="true"]').length;
+        const seqNeeded = Math.max(0, Math.min(numPosts, 2 - alreadyProcessed));
+        const parallelPosts = numPosts - seqNeeded;
+        const iterations = seqNeeded + Math.ceil(parallelPosts / 3);
+        const estimatedSeconds = iterations * 12;
 
-            advanceToNext();
-
-        } catch (error) {
-            console.error('Error:', error);
-            showToast(GENERIC_ERROR_TOAST, 'danger');
-        } finally {
-            btn.disabled = false;
-        }
-    });
-
-    // Remove Selected Items (client-side)
-    document.getElementById('deleteSelectedReviewBtn').addEventListener('click', function() {
-        const checked = document.querySelectorAll('.review-item-checkbox:checked');
-        if (checked.length === 0) {
-            showToast('Please select at least one item to remove.', 'warning');
-            return;
-        }
-
-        // Collect items to remove, grouped by section (process in reverse order to preserve indices)
-        const toRemove = [];
-        checked.forEach(function(cb) {
-            toRemove.push({ section: parseInt(cb.dataset.section), item: parseInt(cb.dataset.item) });
-        });
-
-        // Sort by section desc, then item desc to safely splice
-        toRemove.sort(function(a, b) {
-            if (a.section !== b.section) return b.section - a.section;
-            return b.item - a.item;
-        });
-
-        const post = reviewData.posts[currentReviewIndex];
-        toRemove.forEach(function(r) {
-            post.sections[r.section].items.splice(r.item, 1);
-        });
-
-        renderCurrentPost();
-        showToast(checked.length + ' item' + (checked.length !== 1 ? 's' : '') + ' removed.', 'info');
-    });
-
-    // Re-process button
-    document.getElementById('reprocessBtn').addEventListener('click', async function() {
-        const post = reviewData.posts[currentReviewIndex];
-        const customInstructions = document.getElementById('reprocessInstructions').value.trim();
-        const btn = this;
-        btn.disabled = true;
-        const originalHtml = btn.innerHTML;
-        btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
-
-        // Close the dropdown
-        const dropdown = bootstrap.Dropdown.getInstance(document.getElementById('reprocessDropdown'));
-        if (dropdown) dropdown.hide();
-
-        // Start progress bar for re-processing
         ProgressBar.start({
-            containerId: 'reprocessProgress',
-            expectedDuration: {{ progress_durations.process_posts }},
-            subtext: 'Re-processing post...'
+            containerId: 'processPostsProgress',
+            expectedDuration: estimatedSeconds,
+            subtext: 'Processing ' + numPosts + ' post' + (numPosts !== 1 ? 's' : '') + '...'
         });
 
         try {
-            const response = await fetch("{% url 'analytics:reprocess_post' %}", {
-                method: 'POST',
-                headers: {
-                    'X-CSRFToken': csrfToken,
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    post_id: post.post_id,
-                    sections_config: reviewData.sections_config,
-                    custom_instructions: customInstructions
-                })
-            });
+            const data = await postJSON("{% url 'analytics:run_processing' %}", { selected_posts: selectedIndices });
 
-            const data = await response.json();
             if (!data.success) {
-                ProgressBar.complete({ containerId: 'reprocessProgress', success: false, message: data.error || 'Error' });
-                showToast(GENERIC_ERROR_TOAST, 'danger');
+                ProgressBar.complete({ containerId: 'processPostsProgress', success: false, message: data.error || 'Error' });
+                showToast(data.error || GENERIC_ERROR_TOAST, 'danger');
                 return;
             }
 
-            // Replace sections data with new results
-            reviewData.posts[currentReviewIndex].sections = data.sections;
-            renderCurrentPost();
-
-            // Update credits
             updateCreditsDisplay(data.credits_used, data.credits_quota);
+            ProgressBar.complete({ containerId: 'processPostsProgress', success: true, message: 'Done!' });
 
-            ProgressBar.complete({ containerId: 'reprocessProgress', success: true, message: 'Done!' });
-            showToast('Post re-processed successfully.', 'success');
+            // Update checkmarks in table without full page reload
+            data.processed_post_ids.forEach(function(postId) {
+                const cb = document.querySelector('.post-checkbox[data-post-id="' + postId + '"]');
+                if (cb) {
+                    cb.dataset.processed = 'true';
+                    const row = cb.closest('tr');
+                    const processedCell = row.querySelector('td:last-child');
+                    processedCell.innerHTML =
+                        '<i class="bi bi-check-circle-fill processed-check"></i>' +
+                        '<i class="bi bi-trash-fill processed-trash" data-post-id="' + postId + '" title="Clear processed data"></i>';
+                }
+            });
+
+            showToast(data.processed_post_ids.length + ' post' + (data.processed_post_ids.length !== 1 ? 's' : '') + ' processed.', 'success');
+
+            if (typeof DevPanel !== 'undefined' && data.dev_panel) {
+                DevPanel.show(data.dev_panel, 'Process Posts');
+            }
 
         } catch (error) {
             console.error('Error:', error);
-            ProgressBar.complete({ containerId: 'reprocessProgress', success: false, message: 'Error' });
+            ProgressBar.complete({ containerId: 'processPostsProgress', success: false, message: 'Error' });
             showToast(GENERIC_ERROR_TOAST, 'danger');
         } finally {
             btn.disabled = false;
-            btn.innerHTML = originalHtml;
+            btn.innerHTML = '<i class="bi bi-gear"></i> Process Selected Posts';
         }
-    });
-
-    // Delete (skip) post button
-    document.getElementById('deletePostBtn').addEventListener('click', function() {
-        const post = reviewData.posts[currentReviewIndex];
-        showToast('Post "' + post.post_title + '" skipped.', 'warning');
-        advanceToNext();
     });
 
     } // end if (postsTable exists)
@@ -1031,82 +326,6 @@
     }
 
     // =========================================================================
-    // View Processed Data (eye icon)
-    // =========================================================================
-    $(document).on('click', '.processed-eye', async function() {
-        const postId = this.dataset.postId;
-        try {
-            const response = await fetch(`/posts/load-processed/${encodeURIComponent(postId)}/`);
-            const data = await response.json();
-            if (data.success) {
-                document.getElementById('processedDataTitle').textContent = data.post_title;
-                const container = document.getElementById('processedDataSections');
-                container.innerHTML = '';
-
-                data.sections.forEach(function(section, sIdx) {
-                    const sectionDiv = document.createElement('div');
-                    sectionDiv.className = 'review-section-table';
-
-                    const header = document.createElement('h6');
-                    header.className = 'fw-bold mb-2';
-                    header.textContent = section.section_name;
-                    sectionDiv.appendChild(header);
-
-                    if (!section.items || section.items.length === 0) {
-                        const noItems = document.createElement('p');
-                        noItems.className = 'text-muted mb-3';
-                        noItems.textContent = 'No items found';
-                        sectionDiv.appendChild(noItems);
-                    } else {
-                        const tableHtml = `
-                            <div class="table-responsive">
-                                <table class="table table-hover table-sm">
-                                    <thead>
-                                        <tr>
-                                            <th>Item Text</th>
-                                            <th>Links</th>
-                                            <th class="text-end">Max Clicks</th>
-                                            <th class="text-end">Max CTR</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        ${section.items.map(function(item) {
-                                            const maxClicks = item.clicks && item.clicks.length > 0 ? Math.max(...item.clicks) : 0;
-                                            const maxClicksDisplay = Number.isInteger(maxClicks) ? maxClicks.toLocaleString() : maxClicks.toFixed(1);
-                                            const maxRate = item.click_rate && item.click_rate.length > 0 ? Math.max(...item.click_rate) : 0;
-                                            const maxRateFormatted = (maxRate * 100).toFixed(2) + '%';
-                                            const linkCount = item.links ? item.links.length : 0;
-                                            return '<tr>' +
-                                                '<td>' + truncateText(item.text || '', 15) + '</td>' +
-                                                '<td><span class="badge bg-secondary">' + linkCount + ' link' + (linkCount !== 1 ? 's' : '') + '</span></td>' +
-                                                '<td class="text-end">' + maxClicksDisplay + '</td>' +
-                                                '<td class="text-end">' + maxRateFormatted + '</td>' +
-                                            '</tr>';
-                                        }).join('')}
-                                    </tbody>
-                                </table>
-                            </div>
-                        `;
-                        sectionDiv.innerHTML += tableHtml;
-                    }
-
-                    container.appendChild(sectionDiv);
-                });
-
-                document.getElementById('processedDataOverlay').style.display = 'flex';
-            } else {
-                showToast(GENERIC_ERROR_TOAST, 'danger');
-            }
-        } catch (error) {
-            showToast(GENERIC_ERROR_TOAST, 'danger');
-        }
-    });
-
-    document.getElementById('processedDataExitBtn')?.addEventListener('click', function() {
-        document.getElementById('processedDataOverlay').style.display = 'none';
-    });
-
-    // =========================================================================
     // Clear single post processed data (trash icon)
     // =========================================================================
     $(document).on('click', '.processed-trash', async function() {
@@ -1114,16 +333,7 @@
         if (!await showConfirm('Clear processed data for this post? This cannot be undone.')) return;
 
         try {
-            const response = await fetch("{% url 'analytics:clear_processed_posts' %}", {
-                method: 'POST',
-                headers: {
-                    'X-CSRFToken': csrfToken,
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({ post_ids: [postId] })
-            });
-
-            const data = await response.json();
+            const data = await postJSON("{% url 'analytics:clear_processed_posts' %}", { post_ids: [postId] });
             if (data.success) {
                 showToast(data.message, 'success');
                 window.location.reload();
@@ -1135,275 +345,5 @@
         }
     });
 
-    // =========================================================================
-    // Processing Template Save/Load Logic
-    // =========================================================================
-
-    // Save template
-    document.getElementById('saveTemplateBtn').addEventListener('click', async function() {
-        const nameInput = document.getElementById('templateNameInput');
-        const name = nameInput.value.trim();
-        if (!name) {
-            showToast('Please enter a template name.', 'warning');
-            return;
-        }
-
-        // Collect current sections
-        const pairs = document.querySelectorAll('.section-pair');
-        const sections = [];
-        for (const pair of pairs) {
-            const sName = pair.querySelector('.section-name').value.trim();
-            const sDesc = pair.querySelector('.section-desc').value.trim();
-            if (!sName) {
-                showToast('Please fill in all section names before saving.', 'warning');
-                return;
-            }
-            sections.push({ name: sName, description: sDesc });
-        }
-
-        const btn = this;
-        btn.disabled = true;
-
-        try {
-            const response = await fetch("{% url 'analytics:save_processing_template' %}", {
-                method: 'POST',
-                headers: {
-                    'X-CSRFToken': csrfToken,
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({ name: name, sections: sections })
-            });
-
-            const data = await response.json();
-            if (data.success) {
-                showToast(data.message, 'success');
-                nameInput.value = '';
-                // Close dropdown
-                const dropdown = bootstrap.Dropdown.getInstance(document.getElementById('saveTemplateDropdown'));
-                if (dropdown) dropdown.hide();
-            } else {
-                showToast(GENERIC_ERROR_TOAST, 'danger');
-            }
-        } catch (error) {
-            console.error('Error:', error);
-            showToast(GENERIC_ERROR_TOAST, 'danger');
-        } finally {
-            btn.disabled = false;
-        }
-    });
-
-    // Load templates when dropdown opens
-    document.getElementById('loadTemplateDropdown').addEventListener('show.bs.dropdown', async function() {
-        const listContainer = document.getElementById('templateList');
-        listContainer.innerHTML = '<div class="text-center py-2"><span class="spinner-border spinner-border-sm"></span> Loading...</div>';
-
-        try {
-            const response = await fetch("{% url 'analytics:load_processing_templates' %}");
-            const data = await response.json();
-
-            if (!data.success) {
-                listContainer.innerHTML = '<span class="text-danger small">Error loading templates.</span>';
-                return;
-            }
-
-            if (data.templates.length === 0) {
-                listContainer.innerHTML = '<span class="text-muted small">No saved templates.</span>';
-                return;
-            }
-
-            listContainer.innerHTML = '';
-            data.templates.forEach(function(tmpl) {
-                const row = document.createElement('div');
-                row.className = 'd-flex justify-content-between align-items-center py-1';
-                row.dataset.templateId = tmpl.id;
-
-                const nameLink = document.createElement('a');
-                nameLink.href = '#';
-                nameLink.className = 'text-decoration-none small flex-grow-1';
-                nameLink.textContent = tmpl.name;
-                nameLink.addEventListener('click', function(e) {
-                    e.preventDefault();
-                    loadTemplate(tmpl.sections_data);
-                    // Close dropdown
-                    const dropdown = bootstrap.Dropdown.getInstance(document.getElementById('loadTemplateDropdown'));
-                    if (dropdown) dropdown.hide();
-                });
-
-                const deleteBtn = document.createElement('button');
-                deleteBtn.className = 'btn btn-link btn-sm text-danger p-0 ms-2';
-                deleteBtn.innerHTML = '<i class="bi bi-x-lg"></i>';
-                deleteBtn.title = 'Delete template';
-                deleteBtn.addEventListener('click', async function(e) {
-                    e.stopPropagation();
-                    await deleteTemplate(tmpl.id, row);
-                });
-
-                row.appendChild(nameLink);
-                row.appendChild(deleteBtn);
-                listContainer.appendChild(row);
-            });
-        } catch (error) {
-            console.error('Error:', error);
-            listContainer.innerHTML = '<span class="text-danger small">Error loading templates.</span>';
-        }
-    });
-
-    function loadTemplate(sectionsData) {
-        const fields = document.getElementById('sectionFields');
-        fields.innerHTML = '';
-
-        sectionsData.forEach(function(section, idx) {
-            const div = document.createElement('div');
-            div.className = 'section-pair mb-3';
-            div.dataset.index = idx;
-            div.innerHTML = `
-                <div class="d-flex gap-2 align-items-start">
-                    <div class="flex-grow-1">
-                        <input type="text" class="form-control form-control-sm mb-1 section-name"
-                               placeholder="Section name" value="${(section.name || '').replace(/"/g, '&quot;')}">
-                        <textarea class="form-control form-control-sm section-desc"
-                                  placeholder="Special instructions (optional)"
-                                  rows="1" style="resize: vertical; overflow-y: hidden;">${(section.description || '').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</textarea>
-                    </div>
-                </div>
-            `;
-            fields.appendChild(div);
-            // Auto-size textarea for pre-populated content
-            const ta = div.querySelector('.section-desc');
-            if (ta && ta.value) {
-                ta.style.height = 'auto';
-                ta.style.height = ta.scrollHeight + 'px';
-            }
-        });
-
-        updateSectionUI();
-    }
-
-    async function deleteTemplate(templateId, rowElement) {
-        try {
-            const response = await fetch("{% url 'analytics:delete_processing_template' template_id=0 %}".replace('/0/', '/' + templateId + '/'), {
-                method: 'POST',
-                headers: {
-                    'X-CSRFToken': csrfToken,
-                    'Content-Type': 'application/json'
-                }
-            });
-
-            const data = await response.json();
-            if (data.success) {
-                rowElement.remove();
-                // Check if list is now empty
-                const listContainer = document.getElementById('templateList');
-                if (listContainer.children.length === 0) {
-                    listContainer.innerHTML = '<span class="text-muted small">No saved templates.</span>';
-                }
-                showToast(data.message, 'success');
-            } else {
-                showToast(GENERIC_ERROR_TOAST, 'danger');
-            }
-        } catch (error) {
-            console.error('Error:', error);
-            showToast(GENERIC_ERROR_TOAST, 'danger');
-        }
-    }
-
-    // Handle select all reports checkbox
-    const selectAllReports = document.getElementById('selectAllReports');
-    if (selectAllReports) {
-        selectAllReports.addEventListener('change', function() {
-            const checkboxes = document.querySelectorAll('.report-checkbox');
-            checkboxes.forEach(cb => cb.checked = this.checked);
-        });
-    }
-
-    // Handle Get Improvement Tips button
-    const downloadAnnotatedBtn = document.getElementById('downloadAnnotatedBtn');
-    if (downloadAnnotatedBtn) {
-        downloadAnnotatedBtn.addEventListener('click', async function() {
-            const selectedPostCheckboxes = document.querySelectorAll('.post-checkbox:checked');
-
-            if (selectedPostCheckboxes.length === 0) {
-                showToast('Please select at least one post.', 'warning');
-                return;
-            }
-
-            const selectedReportCheckboxes = document.querySelectorAll('.report-checkbox:checked');
-
-            if (selectedReportCheckboxes.length === 0) {
-                showToast('Please select at least one report.', 'warning');
-                return;
-            }
-
-            // Close the dropdown
-            const dropdown = bootstrap.Dropdown.getInstance(document.getElementById('improvementTipsDropdown'));
-            if (dropdown) dropdown.hide();
-
-            const numPosts = selectedPostCheckboxes.length;
-            const baseDuration = {{ progress_durations.download_annotated }};
-            const estimatedDuration = Math.min(baseDuration, 120);
-
-            ProgressBar.start({
-                containerId: 'downloadAnnotatedProgress',
-                expectedDuration: estimatedDuration,
-                subtext: 'Annotating ' + numPosts + ' post' + (numPosts !== 1 ? 's' : '') + '...'
-            });
-
-            downloadAnnotatedBtn.disabled = true;
-
-            try {
-                const formData = new FormData();
-                formData.append('csrfmiddlewaretoken', csrfToken);
-
-                selectedPostCheckboxes.forEach(checkbox => {
-                    formData.append('selected_posts', checkbox.value);
-                });
-
-                selectedReportCheckboxes.forEach(checkbox => {
-                    formData.append('selected_reports', checkbox.value);
-                });
-
-                const response = await fetch("{% url 'analytics:download_annotated_posts' %}", {
-                    method: 'POST',
-                    body: formData
-                });
-
-                if (!response.ok) {
-                    ProgressBar.forceClose({ containerId: 'downloadAnnotatedProgress' });
-                    showToast(GENERIC_ERROR_TOAST, 'danger');
-                    return;
-                }
-
-                const blob = await response.blob();
-
-                const contentDisposition = response.headers.get('Content-Disposition');
-                let filename = 'annotated_posts.zip';
-                if (contentDisposition) {
-                    const match = contentDisposition.match(/filename="?([^"]+)"?/);
-                    if (match) filename = match[1];
-                }
-
-                const url = window.URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = filename;
-                document.body.appendChild(a);
-                a.click();
-                window.URL.revokeObjectURL(url);
-                document.body.removeChild(a);
-
-                const creditsUsed = response.headers.get('X-Credits-Used');
-                const creditsQuota = response.headers.get('X-Credits-Quota');
-                updateCreditsDisplay(creditsUsed, creditsQuota);
-
-                ProgressBar.complete({ containerId: 'downloadAnnotatedProgress', success: true, message: 'Download ready!' });
-
-            } catch (error) {
-                console.error('Error:', error);
-                ProgressBar.complete({ containerId: 'downloadAnnotatedProgress', success: false, message: 'Error generating files' });
-            } finally {
-                downloadAnnotatedBtn.disabled = false;
-            }
-        });
-    }
 </script>
 {% endblock %}

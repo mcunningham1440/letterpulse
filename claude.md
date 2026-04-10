@@ -8,6 +8,11 @@ Any time you make a change to the code, determine whether it makes any informati
 - **Error messages shown to users must be generic**: "An error occurred. Please note this in the feedback form." with a link to the Google Form. This message is stored in the `GENERIC_ERROR_TOAST` constant in base.html (available globally).
 - **Validation messages** (e.g., "Please select at least one post") can be specific but must still use `showToast(..., 'warning')`, not `alert()`.
 - **Never use `confirm()`** for confirmation dialogs. Use `showConfirm(message, title)` instead (defined in base.html). It returns a Promise that resolves to `true` (Proceed) or `false` (Cancel). The caller must be `async` and use `await`. Example: `if (!await showConfirm('Delete this item?')) return;`
+- **For success/info messages that the user should acknowledge**, use `showAlert(message, title)` instead of `showToast()`. It displays a modal overlay with an OK button that the user must dismiss. Returns a Promise. Defined in base.html, available globally. Reserve `showToast()` for transient background notifications (e.g., "3 posts processed") — use `showAlert()` when you want the user to actually read the message.
+
+### Async / ORM gotcha when porting from notebooks
+
+When porting code from Jupyter notebooks or standalone scripts into `async` Django utility functions, **all synchronous Django ORM calls must be wrapped with `sync_to_async`**. Jupyter notebooks run in their own event loop and don't enforce Django's async safety checks, so ORM code that works fine in a notebook will raise `SynchronousOnlyOperation` at runtime in an `async def` function. Extract ORM-heavy blocks into a sync helper and call it via `await sync_to_async(helper)()`.
 
 ### Coach mark / spotlight pattern
 
@@ -42,7 +47,7 @@ This application helps newsletter creators understand which content resonates wi
 - **Database**: PostgreSQL on AWS RDS (Aurora)
 - **AI**: OpenAI API (GPT-5.1 with reasoning)
 - **Authentication**: django-allauth (email-based auth)
-- **Frontend**: Bootstrap 5, DataTables, jQuery, Marked.js (markdown rendering), Chart.js (trend charts on Insights page)
+- **Frontend**: Bootstrap 5, DataTables, jQuery, Marked.js (markdown rendering), Chart.js (trend charts on Write page)
 - **Async**: aiohttp, asyncio for parallel API calls
 - **Deployment**: AWS App Runner (cloud), local development with gunicorn
 
@@ -56,7 +61,7 @@ app/
 │   ├── wsgi.py / asgi.py       # WSGI/ASGI entry points
 │   └── __init__.py
 ├── analytics/                  # Main Django app
-│   ├── models.py               # Post, ContentSet, Report, UsageAccount, ExecutionLog, SurveyResponse, ProcessedPost, ClickVizEmailLog, CronRunLog models
+│   ├── models.py               # Post, ContentSet, Report, UsageAccount, ExecutionLog, SurveyResponse, ProcessedPost, LinkData, Section, ClickVizEmailLog, CronRunLog, PendingContentSearch models
 │   ├── views.py                # All view logic (login-protected)
 │   ├── urls.py                 # App URL patterns (analytics namespace)
 │   ├── utils.py                # Core utility functions (API calls, AI extraction, credit charging)
@@ -164,52 +169,53 @@ Stores user responses to the signup survey (displayed on first login):
 
 The survey modal appears automatically on first login and is dismissed once submitted. Survey completion is tracked via `UsageAccount.survey_completed`.
 
+### Feedback
+Captures user feedback on features and product direction:
+- `user`: ForeignKey to User
+- `feature`: CharField — feature area identifier (e.g. "write_post")
+- `response`: CharField — the option the user selected
+- `created_at`: DateTimeField (auto_now_add)
+- Unique constraint: `(user, feature)` — one response per feature per user (update_or_create on resubmit)
+
 ### ProcessedPost
-Stores section-aware extracted content for a single post after user review/approval:
+Lightweight marker indicating a post has been processed for section data:
 - `post`: ForeignKey to Post (the source post)
 - `user`: ForeignKey to User (owner)
 - `publication`: ForeignKey to Publication (nullable)
-- `sections_data`: JSON array of sections, each containing a `section_name` and `items` list
-- Unique constraint: `(post, user)` - one processed result per post per user
+- Unique constraint: `(post, user)` - one marker per post per user
 
-`sections_data` structure:
-```json
-[
-  {
-    "section_name": "Quick Bites",
-    "items": [
-      {
-        "post_title": "Newsletter #42",
-        "post_date": "2025-12-01",
-        "text": "Extracted item text",
-        "links": ["https://example.com"],
-        "clicks": [45],
-        "click_rate": [0.03]
-      }
-    ]
-  }
-]
-```
+Created automatically when "Process Selected Posts" runs. The actual section data is stored in the `Section` model.
 
-Created via the "Process Selected Posts" workflow on the Posts page. Each item within a section has the same fields as ContentSet items (`text`, `links`, `clicks`, `click_rate`, `post_title`, `post_date`).
-
-### ProcessingTemplate
-Saved section layout templates for the Process Selected Posts workflow:
-- `name`: Template name (unique per publication and user)
+### Section
+Stores section data extracted from a processed post via an agentic GPT loop:
+- `post`: ForeignKey to Post (the source post)
 - `user`: ForeignKey to User (owner)
 - `publication`: ForeignKey to Publication (nullable)
-- `sections_data`: JSON array of `{name, description}` dicts defining section layouts
-- Unique constraint: `(name, publication, user)`
+- `section_name`: Snake-case identifier for the section (e.g., "tech_news", "quick_links")
+- `section_title`: Display title as it appears in the newsletter (nullable, None for untitled sections)
+- `start_line`: 1-based starting line number in the post HTML
+- `end_line`: 1-based ending line number in the post HTML
+- `post_html_length`: Total line count of the post HTML
+- `section_html`: The raw HTML content of the section
+- Unique constraint: `(post, user, section_name)`
 
-`sections_data` structure:
-```json
-[
-  {"name": "Quick Bites", "description": "Items in the Quick Bites section"},
-  {"name": "Deep Dives", "description": ""}
-]
-```
+Created via the "Process Selected Posts" workflow. Each row represents one structural section identified in the post HTML. Posts are processed sequentially so each post's sections enrich the context for subsequent posts.
 
-Users can save/load templates from the processing modal to avoid re-entering section definitions for newsletters with a consistent layout.
+### LinkData
+Stores described link data extracted from a processed post, grouped by section:
+- `post`: ForeignKey to Post
+- `user`: ForeignKey to User
+- `publication`: ForeignKey to Publication (nullable)
+- `raw_url`: The link URL (tracking params stripped)
+- `description`: AI-generated description of the link destination
+- `section_name`: Which section this link belongs to (matches `Section.section_name`)
+- `rank_in_post`: Global rank among all selected links in the post (by CTR descending)
+- `rank_in_section`: Rank among ALL links in the section (by CTR descending, computed before filtering)
+- `mean_ctr`: Mean CTR as percentage
+- `mean_clicks`: Mean unique clicks
+- Unique constraint: `(post, user, raw_url, section_name)`
+
+Created atomically alongside Section rows during "Process Selected Posts". Links are allocated across sections using `LINK_PROCESS_TOP_N`; if a section has more links than its allocation, the top and bottom by CTR are selected.
 
 ### PendingReport
 Tracks background report generation tasks:
@@ -223,6 +229,34 @@ Tracks background report generation tasks:
 
 Created when a user initiates section-level report generation. One PendingReport is created per section. The LLM call runs in a background thread per section. The frontend polls `/insights/report-status/<task_id>/` for each task until all complete, then shows a review overlay.
 
+### PendingContentSearch
+Tracks background content finder tasks:
+- `task_id`: UUID (unique, auto-generated)
+- `user`: ForeignKey to User
+- `publication`: ForeignKey to Publication (nullable)
+- `post`: ForeignKey to Post (template post)
+- `mode`: "auto" or "manual"
+- `selected_sections`: JSON list of section names (manual mode only)
+- `status`: "pending", "running", "complete", or "error"
+- `result_data`: JSON dict of `{section_name: [link dicts]}` (populated on completion)
+- `error_message`: Error details (populated on failure)
+- `dev_panel_data`: JSON dict of LLM call tracking data (local mode only)
+
+Created when a user runs Content Finder from the Write page. A background thread runs a per-section agentic LLM loop with Perplexity web search. The frontend polls `/insights/content-finder/status/<task_id>/` until complete, then renders results in an accordion.
+
+### PendingImprovementTips
+Tracks background improvement tips generation tasks:
+- `task_id`: UUID (unique, auto-generated)
+- `user`: ForeignKey to User
+- `publication`: ForeignKey to Publication (nullable)
+- `post`: ForeignKey to Post
+- `status`: "pending", "running", "complete", or "error"
+- `result_html`: TextField — the generated annotated HTML (populated on completion)
+- `error_message`: Error details (populated on failure)
+- `dev_panel_data`: JSON dict of LLM call tracking data (local mode only)
+
+Created when a user runs "Get Improvement Tips" from the Write page. A background thread fetches post HTML, builds text/link context, calls LLM for tips, and generates a two-column annotated HTML. The frontend polls `/insights/improvement-tips/status/<task_id>/` until complete, then triggers a file download.
+
 ## Authentication
 
 Uses django-allauth for email-based authentication:
@@ -235,7 +269,7 @@ Uses django-allauth for email-based authentication:
 - UsageAccount is auto-created for new users via signals; a signup notification email is sent in a background thread to `SIGNUP_NOTIFICATION_EMAIL` (if configured)
 - "Successfully signed in as" message is suppressed via custom adapter
 - After login, users without API credentials are redirected to Account page (not Posts); users with credentials go to Posts
-- The "Please configure your Beehiiv API credentials" message only appears when navigating to Posts/Insights without credentials, not immediately after login
+- The "Please configure your Beehiiv API credentials" message only appears when navigating to Posts/Write without credentials, not immediately after login
 
 ### Public Pages
 - `/` - About page (unauthenticated users see landing page; authenticated users redirect to posts)
@@ -245,36 +279,16 @@ Uses django-allauth for email-based authentication:
 ### 1. Posts Page (`/posts/`)
 - **Refresh Posts**: Fetches all posts from Beehiiv API with pagination
 - **Select Posts**: DataTable with sorting by date, opens, clicks
-- **Process Selected Posts**: Opens a modal to define named sections (up to 15), each with a name and optional description
-  - **Save/Load Templates**: Users can save the current section layout as a named template and load saved templates to pre-populate section fields (stored in `ProcessingTemplate` model, scoped to user + publication)
-  - Uses GPT-5.1 to identify HTML line ranges for each section
-  - Extracts text and links from each item, grouped by section
-  - Matches links with click data using Levenshtein fuzzy matching
-  - Shows progress bar during extraction
-  - If any selected posts already have saved ProcessedPost data, shows an overwrite warning before proceeding
-  - Opens a review overlay popup (post-by-post) where users can:
-    - **Save and Proceed**: Save the post's sections to the `ProcessedPost` table
-    - **Delete Selected Items**: Remove specific items from section tables
-    - **Re-process post**: Re-run extraction with custom instructions (costs 1 additional credit, shows progress bar)
-    - **Proceed Without Saving**: Skip the post without saving
-  - On review completion, page reloads to update the Processed column
-- **Processed Column**: Shows a green checkmark for posts that have been processed and saved
+- **Process Selected Posts**: Runs immediately when clicked (no modal). For each post, fetches HTML from Beehiiv, runs `auto_section` to identify structural sections, then runs `process_post_links` to extract/describe/score links within each section. Both operations must succeed atomically — if either fails, nothing is saved for that post. Section and LinkData rows plus the `ProcessedPost` marker are saved in a single DB transaction. Shows progress bar during extraction. If any selected posts already have processed data, shows an overwrite warning. First 2 posts are processed sequentially to seed section context; remaining posts run in parallel.
+- **Processed Column**: Shows a green checkmark for posts that have been processed. Trash icon to clear processed data (deletes `ProcessedPost`, `Section`, and `LinkData` records).
 - **Download Click Visualization**: ZIP of HTML files with click counts overlaid on links
-- **Download Improvement Tips**: ZIP of HTML files with AI-generated improvement tips
 
-### 2. Insights Page (`/insights/`)
-- **Trend Chart**: Chart.js time-series line chart showing section performance over time, driven by ProcessedPost data
-  - Metric selector: "Average max CTR" (default), "CTR of most clicked link", "Average max clicks", "Clicks of most clicked link"
-  - Date range filters (start/end) with "All" clear buttons
-  - Section checkboxes below chart (color-coded, all checked by default)
-- **Data Table Card** with Items/Sections toggle:
-  - **Items view** (default): Filtered ProcessedPost items showing Post Title, Post Date, Section, Item Text, Links, Max Clicks, Max CTR. Download CSV button.
-  - **Sections view**: Aggregated per-section table (Total Items, Avg Max Clicks, Avg Max CTR, Insights status). Uses all items (unaffected by chart filters).
-    - **Get Insights**: Select sections, click "Get Insights from Selected Sections" to generate per-section AI reports in parallel background threads. Credits charged upfront (1 per section). Shows overwrite warning if sections already have saved reports.
-    - **Review overlay**: After generation completes, a review popup shows each section's report sequentially with Accept/Skip buttons. Accepted reports are saved via `update_or_create`.
-    - **Eyeball icon**: Green eye icon appears for sections with saved reports. Clicking opens a read-only popup showing the saved report.
-    - **Clear Insights**: Delete saved reports for selected sections.
-- **Phrase Analysis**: Same n-gram algorithm, recalculates on every filter change using currently displayed items
+### 2. Write Page (`/insights/`)
+- **1. Find content (Content Finder)**: Agentic content recommendation tool. User selects a processed post as a template, optionally toggles manual section selection, and clicks "Run Content Search". A per-section agentic LLM loop uses Perplexity web search to find new content matching historical click patterns. Results display in a Bootstrap accordion grouped by section. Each link shows title, source, URL, date, description, and audience relevance. Costs `CREDITS_PER_CONTENT_SEARCH` credits per run. Background task with polling (3s interval). Always visible; errors at runtime if Perplexity API key is not configured.
+- **Section Data Table**: DataTable showing all Sections for the current publication — Post Title, Post Date, Section Name, Description, Start Line, End Line. Sortable and scrollable. Download CSV button (client-side). Hidden by default.
+- **Link Data Table**: DataTable showing all LinkData for the current publication — Post Title, Post Date, Section, URL, Description, Rank in Section, Mean CTR (%), Mean Clicks. Sortable and scrollable. Download CSV button (client-side). Hidden by default.
+- **2. Write your post**: Feedback card asking users whether an AI writing feature would be valuable. Three options: write drafts, outlines only, or no thanks. Response saved to `Feedback` model (feature="write_post"). Shows "Thanks for your feedback!" after submission.
+- **4. Improve your post**: User selects any post (published or draft, with status shown) from a dropdown, then clicks "Get Improvement Tips". Runs a background task that fetches post HTML, builds numbered text with HTML line mapping, gathers link history context for all sections, calls LLM with structured output for tips, and generates a two-column annotated HTML with tip cards and SVG connectors. The annotated HTML is downloaded as a file. Costs `CREDITS_PER_IMPROVEMENT_TIPS` credits per run. Background task with polling (3s interval). Uses `PendingImprovementTips` model for task tracking.
 
 ### 3. Account Page (`/account/`)
 - **Usage Stats**: View AI credits used and remaining
@@ -325,36 +339,32 @@ All routes use the `analytics:` namespace.
 ### Posts Routes
 - `GET /posts/` - Main posts page
 - `POST /posts/run/` - Run AI content extraction (legacy single-description flow)
-- `POST /posts/process/` - Run multi-section extraction (returns JSON for review flow)
-- `POST /posts/review/approve/` - Save reviewed post sections to ProcessedPost (AJAX)
-- `POST /posts/review/reprocess/` - Re-run extraction for a single post with custom instructions (AJAX)
+- `POST /posts/process/` - Run section-level extraction on selected posts, stores results in Section (AJAX)
 - `POST /posts/save/` - Save extracted items as ContentSet
 - `POST /posts/delete-items/` - Remove items from session
 - `POST /posts/refresh-posts/` - Fetch latest posts from Beehiiv
 - `POST /posts/download-click-viz/` - Generate click visualization ZIP
-- `POST /posts/download-annotated/` - Generate annotated HTML ZIP
-- `POST /posts/save-template/` - Save section layout as a named processing template (AJAX)
-- `GET /posts/load-templates/` - List saved processing templates for current publication (AJAX)
-- `POST /posts/delete-template/<id>/` - Delete a processing template (AJAX)
-- `POST /posts/clear-processed/` - Delete ProcessedPost records for selected posts (AJAX)
-- `GET /posts/load-processed/<post_id>/` - Load ProcessedPost sections data for a single post (AJAX)
+- `POST /posts/clear-processed/` - Delete ProcessedPost, Section, and LinkData records for selected posts (AJAX)
 
 ### Insights Routes
-- `GET /insights/` - Insights dashboard (trend chart + section-level insights)
-- `GET /insights/load-processed-data/` - Load all ProcessedPost items as JSON (flattened with section_name)
-- `GET /insights/load-content-set/<name>/` - Load ContentSet as JSON
-- `POST /insights/generate-section-insights/` - Start parallel background AI report generation for selected sections (accepts sections_json + all_items_json, returns list of task_ids)
-- `GET /insights/report-status/<uuid:task_id>/` - Poll background report generation status (includes section_name in response)
-- `POST /insights/save-section-report/` - Save/upsert a section report (accepts section_name + report_text)
-- `GET /insights/load-section-report/?section_name=...` - Load a saved section report
-- `POST /insights/delete-section-reports/` - Delete reports for given section names (accepts sections_json)
-- `GET /insights/section-report-status/` - Get list of section names that have saved reports
-- `GET /insights/download-csv/<name>/` - Export as CSV
-- `POST /insights/rename-set/`, `/copy-set/`, `/merge-sets/`, `/delete-set/`, `/delete-items/`
+- `GET /insights/` - Write page (section and link data tables, content finder, improvement tips)
+- `GET /insights/load-processed-data/` - Load all Section items as JSON for the current user/publication
+- `GET /insights/load-link-data/` - Load all LinkData items as JSON for the current user/publication
+- `GET /insights/content-finder/posts/` - List processed posts for content finder dropdown
+- `GET /insights/content-finder/sections/?post_id=` - List section names for a given post
+- `POST /insights/content-finder/run/` - Start content finder background task (JSON body: post_id, mode, selected_sections)
+- `GET /insights/content-finder/status/<uuid>/` - Poll content finder task status and results
+- `GET /insights/improvement-tips/posts/` - List all posts (published + drafts) for improvement tips dropdown
+- `POST /insights/improvement-tips/run/` - Start improvement tips background task (JSON body: post_id)
+- `GET /insights/improvement-tips/status/<uuid>/` - Poll improvement tips task status
+- `GET /insights/improvement-tips/download/<uuid>/` - Download annotated HTML for completed task
 
 ### Account Routes
 - `GET /account/` - Account settings page
 - `POST /account/` - Update API credentials, toggle click viz email
+
+### Feedback Routes
+- `POST /feedback/submit/` - Submit user feedback (JSON body: feature, response)
 
 ### Survey Routes
 - `POST /survey/submit/` - Submit signup survey response
@@ -481,13 +491,30 @@ Views use `get_user_api_credentials(user)` helper to retrieve credentials and re
 - `charge_credits(user, credits)`: Atomically charge credits against user quota
 - `NotEnoughCredits`: Exception raised when quota exceeded
 - `extract_items()`: AI-powered content extraction from HTML (single-description, legacy)
-- `extract_sections()`: AI-powered multi-section content extraction from HTML (used by Process Selected Posts)
-- `extract_sections_parallel()`: Parallel multi-section extraction across multiple posts
+- `allocate_links_to_sections(section_link_counts, top_n)`: Divide `top_n` link slots fairly across sections; sections with fewer links than their share get capped and surplus is redistributed
+- `select_top_bottom(link_stats, n)`: Select top `ceil(n/2)` and bottom `floor(n/2)` links by CTR from a sorted list
+- `process_post_links(session, post_id, user, beehiiv_token, beehiiv_pub_id, sections, pretty_html)`: Section-aware link extraction. Matches clicks at post level, assigns links to sections by line position, allocates via `LINK_PROCESS_TOP_N`, selects top/bottom per section, uses GPT-5.4-mini for descriptions. Returns list of link row dicts with `section_name` and `rank_in_section`.
+- `build_sections_desc(user, publication, post, n_examples=5)`: Build context prompt from existing sections of nearby posts for the agentic loop
+- `auto_section(html, user, publication, post, n_examples=5, pretty_html=None)`: Single structured-output LLM call (returns `AllSections` Pydantic model) to identify structural sections in newsletter HTML. Accepts optional pre-prettified HTML to avoid double-prettifying.
+- `process_post_full(session, post_id, user, beehiiv_token, beehiiv_pub_id, publication)`: Fetch HTML, run `auto_section` then `process_post_links` using the same prettified HTML. If either fails, the exception propagates and nothing is saved.
+- `_save_post_full(post_id, sections, link_rows, user, publication)`: Save Section rows, LinkData rows, and ProcessedPost marker in a single atomic transaction.
+- `process_posts_sections_sequential(post_ids, user, beehiiv_token, beehiiv_pub_id, publication)`: Process multiple posts with hybrid sequential/parallel strategy. Uses `process_post_full` + `_save_post_full` per post.
 - `generate_content_insights()`: Generate performance analysis report for a single section. When item count exceeds `MAX_REPORT_ITEMS`, top and bottom performers by CTR are kept and middle items are omitted (with a note to the LLM).
-- `annotate_post_html(post_id, content_perf_evals, beehiiv_token, beehiiv_pub_id, user=None)`: Insert improvement tips into HTML
-- `annotate_posts_parallel(post_ids, content_perf_evals, beehiiv_token, beehiiv_pub_id, user=None)`: Parallel annotation of multiple posts
 - `fetch_recent_published_posts(beehiiv_token, beehiiv_pub_id, max_pages=3)`: Async — fetch recently published posts ordered by publish_date desc; stops early if oldest post on page is >24h old
 - `build_click_viz_email_html(viz_html, post_title, site_url)`: Wrap click viz HTML with branded header banner and footer for email delivery
+
+### Content Finder Functions
+- `truncate_url(url, max_len)`: Shorten a URL to max_len characters
+- `format_link_history(section, max_links, max_url_len)`: Build formatted historical link performance string for a section. Returns (formatted_string, link_count)
+- `perplexity_search(queries, max_results, domains, max_days_ago)`: Call Perplexity search API, return formatted results string
+- `build_content_finder_user_prompt(section, link_history_str, link_count, max_url_len)`: Build per-section user prompt with content and historical link data
+- `run_content_finder_agent(messages, allow_exclusion, model, reasoning, max_rounds)`: Async per-section agentic loop. Uses web_search and dismiss_section tools. Returns (response_or_None, all_responses, all_results)
+- `process_content_finder_section(section, allow_exclusion, ...)`: Orchestrate content finding for one section. Returns (section_name, links_or_None)
+- `run_content_finder_background(task_id)`: Background thread entry point. Loads PendingContentSearch, runs all sections in parallel, saves results
+
+### Improvement Tips Functions
+- `generate_improvement_tips_html(post, user, publication, beehiiv_token, beehiiv_pub_id)`: Async — fetches post HTML, builds numbered text with HTML line mapping (BeautifulSoup sourceline tracking through `<a>` replacement), gathers link history for all sections with sample titles, calls LLM with structured output (`AllImprovementTips` Pydantic model), and renders a two-column annotated HTML with tip cards and SVG Bezier connectors. Returns HTML string.
+- `run_improvement_tips_background(task_id)`: Background thread entry point. Loads PendingImprovementTips, calls `generate_improvement_tips_html`, saves result_html or error.
 
 ## Management Commands
 
@@ -517,7 +544,14 @@ DEFAULT_MONTHLY_CREDITS = 150
 # Credit costs per operation
 CREDITS_PER_EXTRACTION = 1      # Per post extracted from
 CREDITS_PER_REPORT = 1          # Flat cost for generating insights
-CREDITS_PER_ANNOTATION = 1      # Per post annotated with improvement tips
+CREDITS_PER_IMPROVEMENT_TIPS = 1  # Per post improvement tips generation
+
+# Section processing configuration
+SECTION_N_EXAMPLES = 5              # Number of nearby-post examples per section for context
+
+# Link processing configuration
+LINK_PROCESS_TOP_N = 60             # Total links to select across all sections
+LINK_PROCESS_MAX_RETRIES = 2        # Max LLM retries for link description count mismatch
 
 # Maximum items sent to the LLM for report generation
 MAX_REPORT_ITEMS = 150
@@ -531,9 +565,37 @@ DAILY_SIGNUP_CAP = 5
 # Auto click viz email settings
 SITE_URL = 'https://letterpulse.com'  # Base URL for links in emails (env: SITE_URL)
 
+# Content Finder configuration
+PERPLEXITY_API_KEY = ''              # Perplexity search API key (env: PERPLEXITY_API_KEY)
+CREDITS_PER_CONTENT_SEARCH = 1      # Per content finder run
+CONTENT_FINDER_MODEL = "gpt-5.4-mini"
+CONTENT_FINDER_REASONING = "medium"
+CONTENT_FINDER_MAX_ROUNDS = 3       # Max search round-trips per section
+CONTENT_FINDER_MAX_LINKS = 60       # Max historical links per section for context
+CONTENT_FINDER_MAX_URL_LEN = 75     # Truncate displayed URLs to this length
+
+# Improvement Tips configuration
+IMPROVEMENT_TIPS_MODEL = "gpt-5.4-mini"
+IMPROVEMENT_TIPS_REASONING = "medium"
+
+# LLM Pricing (per million tokens) — local dev panel only
+LLM_PRICING = {
+    'gpt-5.4': { 'input_per_million': 2.50, 'cached_input_per_million': 0.25, 'output_per_million': 15.00 },
+    'gpt-5.4-mini': { 'input_per_million': 0.75, 'cached_input_per_million': 0.075, 'output_per_million': 4.50 },
+}
 ```
 
 Credits are charged at the view level before each AI operation runs.
+
+### LLM Dev Panel (local mode only)
+
+When `ENVIRONMENT == 'local'`, a floating dark-themed panel appears in the top-right corner after any LLM-powered workflow completes (Process Posts, Content Finder, Improvement Tips). It shows per-call details (model, prompts, runtime, token usage, costs) and aggregated totals. A "Download JSON" button exports the full report.
+
+**Architecture:**
+- `analytics/llm_tracker.py`: Thread-local accumulator. `start_tracking()` / `finish_tracking()` bracket a workflow; `llm_call()` in `utils.py` automatically records each call via `record_call()`. All functions are no-ops when `ENVIRONMENT != 'local'`.
+- **Data transport**: For sync workflows (Process Posts), dev panel data is included directly in the JSON response. For background-thread workflows (Content Finder, Improvement Tips), data is stored in the `dev_panel_data` JSONField on `PendingContentSearch` / `PendingImprovementTips` and returned via the polling endpoint.
+- `analytics/static/analytics/js/dev-panel.js`: Frontend component. `DevPanel.show(data, workflowName)` renders the panel. Loaded conditionally via `{% if is_local %}` in `base.html`.
+- `is_local` template variable provided by `analytics.context_processors.environment_context`.
 
 ### Link Matching
 - `match_links_with_clicks()`: Uses exact matching first, then Levenshtein distance (40% threshold) for fuzzy matching

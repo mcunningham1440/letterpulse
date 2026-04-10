@@ -456,7 +456,7 @@ class ExecutionLog(models.Model):
 
 
 class ProcessedPost(models.Model):
-    """Stores section-aware extracted content for a single post after review approval"""
+    """Lightweight marker indicating a post has been processed for link data."""
 
     post = models.ForeignKey(
         'Post',
@@ -478,9 +478,6 @@ class ProcessedPost(models.Model):
         related_name='processed_posts',
         help_text="The publication this processed post belongs to"
     )
-    sections_data = models.JSONField(
-        help_text="JSON array of sections, each with section_name and items list"
-    )
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -494,46 +491,94 @@ class ProcessedPost(models.Model):
     def __str__(self):
         return f"{self.post.title} - {self.user.email}"
 
-    def get_section_count(self):
-        """Return the number of sections"""
-        if isinstance(self.sections_data, list):
-            return len(self.sections_data)
-        return 0
 
-    def get_total_items_count(self):
-        """Return total number of items across all sections"""
-        if not isinstance(self.sections_data, list):
-            return 0
-        return sum(len(s.get('items', [])) for s in self.sections_data)
+class LinkData(models.Model):
+    """Stores described link data extracted from a processed post."""
 
-
-class ProcessingTemplate(models.Model):
-    """Saved section layout template for the Process Selected Posts workflow."""
-    name = models.CharField(max_length=255)
+    post = models.ForeignKey(
+        'Post',
+        on_delete=models.CASCADE,
+        related_name='link_data',
+        help_text="The post this link was extracted from"
+    )
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
-        related_name='processing_templates'
+        related_name='link_data',
+        help_text="The user who owns this link data"
     )
     publication = models.ForeignKey(
         Publication,
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
-        related_name='processing_templates'
+        related_name='link_data',
+        help_text="The publication this link data belongs to"
     )
-    sections_data = models.JSONField(help_text="JSON array of {name, description} dicts")
+    raw_url = models.URLField(max_length=2048)
+    description = models.TextField(blank=True)
+    section_name = models.CharField(max_length=255, blank=True, default='')
+    rank_in_post = models.PositiveIntegerField()
+    rank_in_section = models.PositiveIntegerField(null=True)
+    mean_ctr = models.FloatField(help_text="Mean CTR as percentage (e.g. 3.5 = 3.5%)")
+    mean_clicks = models.FloatField()
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['post', 'section_name', 'rank_in_section']
+        unique_together = [['post', 'user', 'raw_url', 'section_name']]
+        verbose_name = "Link Data"
+        verbose_name_plural = "Link Data"
+
+    def __str__(self):
+        return f"{self.post.title} - {self.section_name} rank {self.rank_in_section} - {self.raw_url[:60]}"
+
+
+class Section(models.Model):
+    """Stores section data extracted from a processed post via agentic GPT loop."""
+
+    post = models.ForeignKey(
+        'Post',
+        on_delete=models.CASCADE,
+        related_name='sections',
+        help_text="The post this section was extracted from"
+    )
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='sections',
+        help_text="The user who owns this section data"
+    )
+    publication = models.ForeignKey(
+        Publication,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='sections',
+        help_text="The publication this section belongs to"
+    )
+    section_name = models.CharField(max_length=255)
+    section_title = models.CharField(max_length=500, blank=True, null=True,
+        help_text="Display title as it appears in the newsletter, or None if untitled")
+    start_line = models.PositiveIntegerField()
+    end_line = models.PositiveIntegerField()
+    post_html_length = models.PositiveIntegerField(
+        help_text="Total line count of the post HTML"
+    )
+    section_html = models.TextField(blank=True)
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        ordering = ['-created_at']
-        unique_together = [['name', 'publication', 'user']]
-        verbose_name = "Processing Template"
-        verbose_name_plural = "Processing Templates"
+        ordering = ['post', 'start_line']
+        unique_together = [['post', 'user', 'section_name']]
+        verbose_name = "Section"
+        verbose_name_plural = "Sections"
 
     def __str__(self):
-        return f"{self.name} ({self.user})"
+        return f"{self.post.title} - {self.section_name}"
 
 
 class PendingReport(models.Model):
@@ -567,6 +612,74 @@ class PendingReport(models.Model):
 
     def __str__(self):
         return f"PendingReport {self.task_id} ({self.status})"
+
+
+class PendingContentSearch(models.Model):
+    """Tracks background content finder tasks"""
+
+    task_id = models.UUIDField(default=uuid.uuid4, unique=True)
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='pending_content_searches'
+    )
+    publication = models.ForeignKey(
+        Publication,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
+    post = models.ForeignKey(Post, on_delete=models.CASCADE)
+    mode = models.CharField(max_length=10, default='auto')
+    selected_sections = models.JSONField(default=list, blank=True)
+    status = models.CharField(
+        max_length=20,
+        default='pending',
+        help_text="pending, running, complete, or error"
+    )
+    result_data = models.JSONField(default=dict, blank=True)
+    error_message = models.TextField(blank=True)
+    dev_panel_data = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"PendingContentSearch {self.task_id} ({self.status})"
+
+
+class PendingImprovementTips(models.Model):
+    """Tracks background improvement tips generation tasks"""
+
+    task_id = models.UUIDField(default=uuid.uuid4, unique=True)
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='pending_improvement_tips'
+    )
+    publication = models.ForeignKey(
+        Publication,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
+    post = models.ForeignKey(Post, on_delete=models.CASCADE)
+    status = models.CharField(
+        max_length=20,
+        default='pending',
+        help_text="pending, running, complete, or error"
+    )
+    result_html = models.TextField(blank=True)
+    error_message = models.TextField(blank=True)
+    dev_panel_data = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"PendingImprovementTips {self.task_id} ({self.status})"
 
 
 class SurveyResponse(models.Model):
@@ -627,6 +740,25 @@ class CronRunLog(models.Model):
     def __str__(self):
         status = "OK" if self.success else "FAIL"
         return f"{self.command} at {self.started_at:%Y-%m-%d %H:%M} ({status})"
+
+
+class Feedback(models.Model):
+    """Captures user feedback on features and product direction"""
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='feedback'
+    )
+    feature = models.CharField(max_length=100, help_text="Feature area (e.g. 'write_post')")
+    response = models.CharField(max_length=255, help_text="The option the user selected")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ('user', 'feature')
+        verbose_name = "Feedback"
+        verbose_name_plural = "Feedback"
+
+    def __str__(self):
+        return f"{self.user} — {self.feature}: {self.response}"
 
 
 class ClickVizEmailLog(models.Model):

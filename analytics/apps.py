@@ -50,7 +50,7 @@ class AnalyticsConfig(AppConfig):
             is_gunicorn = 'gunicorn' in os.environ.get('SERVER_SOFTWARE', '')
             is_runserver_main = os.environ.get('RUN_MAIN') == 'true'
 
-            if is_gunicorn or is_runserver_main:
+            if False and (is_gunicorn or is_runserver_main):  # disabled
                 t = threading.Thread(
                     target=_click_viz_email_loop,
                     name="ClickVizEmailLoop",
