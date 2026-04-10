@@ -94,7 +94,6 @@ from .utils import (
     fetch_posts_html_and_clicks_parallel,
     process_posts_sections_sequential,
     refresh_posts_data,
-    annotate_posts_parallel,
     NotEnoughCredits,
     charge_credits,
     validate_beehiiv_api_key,
@@ -898,11 +897,17 @@ def insights_view(request):
     except Publication.DoesNotExist:
         has_processed_data = False
 
+    from .models import Feedback
+    write_post_feedback = Feedback.objects.filter(
+        user=request.user, feature='write_post'
+    ).first()
+
     context = {
         'has_posts': has_posts,
         'has_processed_data': has_processed_data,
-        'content_finder_enabled': bool(settings.PERPLEXITY_API_KEY),
         'credits_per_search': settings.CREDITS_PER_CONTENT_SEARCH,
+        'credits_per_improvement_tips': settings.CREDITS_PER_IMPROVEMENT_TIPS,
+        'write_post_feedback_response': write_post_feedback.response if write_post_feedback else '',
     }
 
     return render(request, 'analytics/insights.html', context)
@@ -1180,6 +1185,148 @@ def poll_content_finder(request, task_id):
 
 
 @login_required
+@require_GET
+@require_valid_api_credentials
+def improvement_tips_posts(request):
+    """Return list of all posts for the improvement tips dropdown."""
+    from .models import Publication
+
+    try:
+        _, beehiiv_pub_id, _ = get_user_api_credentials(request.user)
+        try:
+            publication = Publication.objects.get(pub_id=beehiiv_pub_id)
+        except Publication.DoesNotExist:
+            return JsonResponse({'success': True, 'posts': []})
+
+        all_posts = Post.objects.filter(
+            user=request.user, publication=publication
+        ).order_by('-creation_date')
+
+        posts = []
+        for post in all_posts:
+            date_display = '-'
+            date_val = post.publish_date or post.creation_date
+            if date_val:
+                try:
+                    date_display = date_val.strftime('%b %d, %Y')
+                except Exception:
+                    date_display = str(date_val)
+            posts.append({
+                'post_id': post.post_id,
+                'title': post.title or '',
+                'date': date_display,
+                'status': post.status or 'Published',
+            })
+
+        return JsonResponse({'success': True, 'posts': posts})
+    except Exception as e:
+        return JsonResponse({'success': False, 'error': str(e)}, status=500)
+
+
+@login_required
+@require_POST
+@require_valid_api_credentials
+def run_improvement_tips(request):
+    """Start an improvement tips background task."""
+    import threading
+    from .models import Publication, PendingImprovementTips
+    from .utils import charge_credits, NotEnoughCredits, run_improvement_tips_background
+
+    try:
+        data = json.loads(request.body)
+    except json.JSONDecodeError:
+        return JsonResponse({'success': False, 'error': 'Invalid JSON'}, status=400)
+
+    post_id = data.get('post_id')
+    if not post_id:
+        return JsonResponse({'success': False, 'error': 'post_id required'}, status=400)
+
+    # Look up the post
+    try:
+        post = Post.objects.get(post_id=post_id, user=request.user)
+    except Post.DoesNotExist:
+        return JsonResponse({'success': False, 'error': 'Post not found'}, status=404)
+
+    # Charge credits
+    try:
+        charge_credits(request.user, settings.CREDITS_PER_IMPROVEMENT_TIPS)
+    except NotEnoughCredits:
+        return JsonResponse({'success': False, 'error': 'Not enough credits'}, status=400)
+
+    # Get publication
+    _, beehiiv_pub_id, _ = get_user_api_credentials(request.user)
+    try:
+        publication = Publication.objects.get(pub_id=beehiiv_pub_id)
+    except Publication.DoesNotExist:
+        publication = None
+
+    # Create task
+    task = PendingImprovementTips.objects.create(
+        user=request.user,
+        publication=publication,
+        post=post,
+    )
+
+    # Spawn background thread
+    threading.Thread(
+        target=run_improvement_tips_background,
+        args=(task.task_id,),
+        daemon=True,
+    ).start()
+
+    return JsonResponse({'success': True, 'task_id': str(task.task_id)})
+
+
+@login_required
+@require_GET
+def poll_improvement_tips(request, task_id):
+    """Poll the status of an improvement tips task."""
+    from .models import PendingImprovementTips
+
+    try:
+        task = PendingImprovementTips.objects.get(task_id=task_id, user=request.user)
+    except PendingImprovementTips.DoesNotExist:
+        return JsonResponse({'success': False, 'error': 'Task not found'}, status=404)
+
+    usage = request.user.usage_account
+    resp = {
+        'success': True,
+        'status': task.status,
+        'credits_used': usage.used_this_period,
+        'credits_quota': usage.monthly_quota,
+    }
+
+    if task.status == 'complete':
+        resp['download_ready'] = True
+    elif task.status == 'error':
+        resp['error_message'] = task.error_message
+
+    return JsonResponse(resp)
+
+
+@login_required
+@require_GET
+def download_improvement_tips(request, task_id):
+    """Download the annotated HTML from a completed improvement tips task."""
+    from .models import PendingImprovementTips
+
+    try:
+        task = PendingImprovementTips.objects.get(task_id=task_id, user=request.user)
+    except PendingImprovementTips.DoesNotExist:
+        return JsonResponse({'success': False, 'error': 'Task not found'}, status=404)
+
+    if task.status != 'complete' or not task.result_html:
+        return JsonResponse({'success': False, 'error': 'Tips not ready'}, status=400)
+
+    safe_title = sanitize_filename(task.post.title or 'post')[:50]
+    filename = f"improvement_tips_{safe_title}.html"
+
+    response = HttpResponse(task.result_html, content_type='text/html')
+    response['Content-Disposition'] = f'attachment; filename="{filename}"'
+    return response
+
+
+@login_required
 @require_POST
 @require_valid_api_credentials
 def refresh_posts(request):
@@ -1358,133 +1505,24 @@ def download_click_visualization(request):
 
 @login_required
 @require_POST
-@require_valid_api_credentials
-def download_annotated_posts(request):
-    """
-    Generate and download annotated HTML files for selected posts using selected reports.
-    Returns a ZIP file containing annotated HTML files with tips inserted.
-    """
-    import zipfile
-    import io
-
+def submit_feedback(request):
+    """Save a user feedback response."""
+    from .models import Feedback
     try:
-        # Get API credentials (already validated by decorator)
-        beehiiv_token, beehiiv_pub_id, _ = get_user_api_credentials(request.user)
+        data = json.loads(request.body)
+        feature = data.get('feature', '')
+        response = data.get('response', '')
+        if not feature or not response:
+            return JsonResponse({'success': False, 'error': 'Missing fields'}, status=400)
 
-        # Get selected post indices
-        selected_indices = request.POST.getlist('selected_posts')
-        # Get selected report IDs
-        selected_report_ids = request.POST.getlist('selected_reports')
-
-        if not selected_indices:
-            messages.error(request, "Please select at least one post.")
-            return redirect('analytics:posts')
-
-        if not selected_report_ids:
-            messages.error(request, "Please select at least one report.")
-            return redirect('analytics:posts')
-
-        # Convert indices to integers
-        selected_indices = [int(idx) for idx in selected_indices]
-        selected_report_ids = [int(rid) for rid in selected_report_ids]
-
-        # Load posts from database filtered by publication and user
-        posts_df = load_posts_from_db(publication_id=beehiiv_pub_id, user=request.user)
-        posts_df = posts_df.iloc[::-1].reset_index(drop=True)  # Reverse to match display
-
-        # Get selected posts
-        posts_of_interest = posts_df.iloc[selected_indices]
-
-        # Get report texts for selected reports (owned by this user)
-        reports = Report.objects.filter(id__in=selected_report_ids, content_set__user=request.user)
-        content_perf_evals = [report.report_text for report in reports]
-
-        if not content_perf_evals:
-            messages.error(request, "No valid reports found.")
-            return redirect('analytics:posts')
-
-        # Get post IDs (beehiiv post_id, not Django id)
-        post_ids = posts_of_interest['id'].tolist()
-
-        # Charge credits before annotation (1 credit per post)
-        credits_needed = len(post_ids) * settings.CREDITS_PER_ANNOTATION
-        charge_credits(request.user, credits_needed)
-
-        # Run parallel annotation
-        annotated_htmls = async_to_sync(annotate_posts_parallel)(post_ids, content_perf_evals, beehiiv_token, beehiiv_pub_id, user=request.user)
-
-        if not annotated_htmls:
-            messages.error(request, "Failed to generate any annotated posts.")
-            return redirect('analytics:posts')
-
-        # Build list of generated files
-        generated_files = []
-
-        for _, row in posts_of_interest.iterrows():
-            post_id = row['id']
-
-            if post_id not in annotated_htmls:
-                continue
-
-            annotated_html = annotated_htmls[post_id]
-
-            # Create a safe filename from the post title
-            safe_title = sanitize_filename(row['title'])[:50]
-
-            generated_files.append((f"{safe_title}.html", annotated_html))
-
-        # Single file: return HTML directly
-        if len(generated_files) == 1:
-            filename, html_content = generated_files[0]
-            response = HttpResponse(html_content, content_type='text/html')
-            response['Content-Disposition'] = f'attachment; filename="{filename}"'
-
-            # Add credit info headers for frontend to update sidebar
-            from .models import UsageAccount
-            try:
-                usage = UsageAccount.objects.get(user=request.user)
-                usage.ensure_current_period()
-                response['X-Credits-Used'] = str(usage.used_this_period)
-                response['X-Credits-Quota'] = str(usage.monthly_quota)
-                response['Access-Control-Expose-Headers'] = 'X-Credits-Used, X-Credits-Quota'
-            except UsageAccount.DoesNotExist:
-                pass
-
-            return response
-
-        # Multiple files: create ZIP
-        zip_buffer = io.BytesIO()
-        with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
-            for filename, html_content in generated_files:
-                zip_file.writestr(filename, html_content)
-
-        zip_buffer.seek(0)
-        response = HttpResponse(zip_buffer.getvalue(), content_type='application/zip')
-        response['Content-Disposition'] = 'attachment; filename="annotated_posts.zip"'
-
-        # Add credit info headers for frontend to update sidebar
-        from .models import UsageAccount
-        try:
-            usage = UsageAccount.objects.get(user=request.user)
-            usage.ensure_current_period()
-            response['X-Credits-Used'] = str(usage.used_this_period)
-            response['X-Credits-Quota'] = str(usage.monthly_quota)
-            response['Access-Control-Expose-Headers'] = 'X-Credits-Used, X-Credits-Quota'
-        except UsageAccount.DoesNotExist:
-            pass
-
-        return response
-
-    except NotEnoughCredits as e:
-        return JsonResponse({
-            'success': False,
-            'error': str(e)
-        }, status=402)
-    except Exception as e:
-        return JsonResponse({
-            'success': False,
-            'error': f"Error generating annotated posts: {str(e)}"
-        }, status=500)
+        Feedback.objects.update_or_create(
+            user=request.user,
+            feature=feature,
+            defaults={'response': response},
+        )
+        return JsonResponse({'success': True})
+    except Exception:
+        return JsonResponse({'success': False}, status=500)
 
 
 @login_required

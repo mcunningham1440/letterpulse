@@ -647,6 +647,34 @@
                 cancelBtn.addEventListener('click', onCancel);
             });
         }
+
+        function showAlert(message, title) {
+            return new Promise(function(resolve) {
+                var overlay = document.getElementById('confirmOverlay');
+                document.getElementById('confirmTitle').textContent = title || '';
+                document.getElementById('confirmMessage').textContent = message;
+                overlay.style.display = 'flex';
+
+                var proceedBtn = document.getElementById('confirmProceedBtn');
+                var cancelBtn = document.getElementById('confirmCancelBtn');
+
+                cancelBtn.style.display = 'none';
+                proceedBtn.textContent = 'OK';
+                proceedBtn.className = 'btn btn-primary btn-sm';
+
+                function cleanup() {
+                    overlay.style.display = 'none';
+                    proceedBtn.removeEventListener('click', onOk);
+                    // Reset for future showConfirm calls
+                    cancelBtn.style.display = '';
+                    proceedBtn.textContent = 'Proceed';
+                    proceedBtn.className = 'btn btn-danger btn-sm';
+                }
+                function onOk() { cleanup(); resolve(true); }
+
+                proceedBtn.addEventListener('click', onOk);
+            });
+        }
     </script>
 
     {% block extra_js %}{% endblock %}

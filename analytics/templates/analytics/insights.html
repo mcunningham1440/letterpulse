@@ -40,7 +40,6 @@
     <div class="col-12">
         {% if has_processed_data %}
 
-        {% if content_finder_enabled %}
         <!-- Content Finder Card -->
         <div class="card mb-3" id="contentFinderCard">
             <div class="card-header">
@@ -90,7 +89,8 @@
                 </div>
             </div>
         </div>
-        {% endif %}
+
+        <!-- 2. Analyze your data (hidden data tables) -->
 
         <!-- Section Data Table Card (hidden) -->
         <div class="card d-none" id="dataTableCard">
@@ -156,6 +156,58 @@
             </div>
         </div>
 
+        <!-- Write your post Card (feedback) -->
+        <div class="card mb-3 mt-3" id="writePostCard">
+            <div class="card-header">
+                <h5 class="mb-0">2. Write your post</h5>
+            </div>
+            <div class="card-body">
+                <p class="mb-1"><strong>LetterPulse doesn't do this for you...yet</strong></p>
+                <p class="mb-3">Would a feature that drafts content for your newsletter be valuable to you?</p>
+                <div class="d-flex gap-2" id="writePostFeedbackBtns">
+                    <button class="btn btn-outline-primary flex-fill write-post-feedback-btn" style="flex-basis:0; font-size:0.875rem;" data-response="write_drafts">Yes, I want LetterPulse to write drafts of new content</button>
+                    <button class="btn btn-outline-primary flex-fill write-post-feedback-btn" style="flex-basis:0; font-size:0.875rem;" data-response="outlines_only">Yes, but just make them outlines. I want to write the actual text myself</button>
+                    <button class="btn btn-outline-primary flex-fill write-post-feedback-btn" style="flex-basis:0; font-size:0.875rem;" data-response="no_thanks">No, I prefer to write all my own content</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Improve your post Card -->
+        <div class="card mb-3" id="improvementTipsCard">
+            <div class="card-header">
+                <h5 class="mb-0">3. Improve your post</h5>
+            </div>
+            <div class="card-body">
+                <!-- Post dropdown -->
+                <div class="mb-3">
+                    <label for="itPostSelect" class="form-label">Select a post</label>
+                    <select id="itPostSelect" class="form-select">
+                        <option value="">Select a post...</option>
+                    </select>
+                    <div class="mt-1 d-flex align-items-center gap-3">
+                        <div id="itLegend" class="small text-muted">
+                            🟡 Draft &nbsp;&nbsp; 🔵 Scheduled &nbsp;&nbsp; 🟢 Published
+                        </div>
+                        <div class="form-check form-check-inline small mb-0">
+                            <input class="form-check-input" type="checkbox" id="itDraftsOnly">
+                            <label class="form-check-label text-muted" for="itDraftsOnly">Drafts only</label>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Options shown after post is selected -->
+                <div id="itPostOptions" style="display:none;">
+                    <div class="d-flex align-items-center gap-2">
+                        <button id="itRunBtn" class="btn btn-success" disabled>
+                            <i class="bi bi-lightbulb"></i> Get Improvement Tips
+                        </button>
+                        <small class="text-muted">Uses <strong>{{ credits_per_improvement_tips }}</strong> credit</small>
+                    </div>
+                </div>
+                <div id="itProgressContainer" class="mt-2"></div>
+            </div>
+        </div>
+
         {% endif %}
     </div>
 </div>
@@ -169,6 +221,63 @@
     // =========================================================================
     let allItems = [];
     let allLinkItems = [];
+
+    // =========================================================================
+    // CSRF helper
+    // =========================================================================
+    function getCsrfToken() {
+        const cookie = document.cookie.split(';').find(c => c.trim().startsWith('csrftoken='));
+        return cookie ? cookie.split('=')[1] : '';
+    }
+
+    // =========================================================================
+    // Write Post Feedback
+    // =========================================================================
+    function highlightFeedbackBtn(response) {
+        document.querySelectorAll('.write-post-feedback-btn').forEach(b => {
+            if (b.dataset.response === response) {
+                b.classList.remove('btn-outline-primary');
+                b.classList.add('btn-outline-primary');
+                b.style.backgroundColor = '#0d6efd';
+                b.style.borderColor = '#0d6efd';
+                b.style.color = '#fff';
+            } else {
+                b.style.backgroundColor = '';
+                b.style.borderColor = '';
+                b.style.color = '';
+            }
+        });
+    }
+
+    // Pre-highlight if user already submitted
+    {% if write_post_feedback_response %}
+    highlightFeedbackBtn('{{ write_post_feedback_response }}');
+    {% endif %}
+
+    document.querySelectorAll('.write-post-feedback-btn').forEach(btn => {
+        btn.addEventListener('click', async function() {
+            const response = this.dataset.response;
+            try {
+                const resp = await fetch("{% url 'analytics:submit_feedback' %}", {
+                    method: 'POST',
+                    headers: {
+                        'X-CSRFToken': getCsrfToken(),
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ feature: 'write_post', response: response })
+                });
+                const data = await resp.json();
+                if (data.success) {
+                    highlightFeedbackBtn(response);
+                    showAlert('Thank you for helping us improve!', 'Feedback Received');
+                } else {
+                    showToast(GENERIC_ERROR_TOAST, 'danger');
+                }
+            } catch (err) {
+                showToast(GENERIC_ERROR_TOAST, 'danger');
+            }
+        });
+    });
 
     // =========================================================================
     // Truncate text helper
@@ -200,6 +309,16 @@
             full.style.display = 'none';
             el.innerHTML = '&#9654;';
         }
+    }
+
+    // =========================================================================
+    // HTML escape helper
+    // =========================================================================
+    function escapeHtml(str) {
+        if (!str) return '';
+        const div = document.createElement('div');
+        div.textContent = str;
+        return div.innerHTML;
     }
 
     // =========================================================================
@@ -394,7 +513,6 @@
     // =========================================================================
     // Content Finder
     // =========================================================================
-    {% if content_finder_enabled %}
     let cfSections = [];
     let cfPollTimer = null;
 
@@ -585,13 +703,6 @@
         }, 3000);
     }
 
-    function escapeHtml(str) {
-        if (!str) return '';
-        const div = document.createElement('div');
-        div.textContent = str;
-        return div.innerHTML;
-    }
-
     function renderContentFinderResults(resultData) {
         const accordion = document.getElementById('cfResultsAccordion');
         accordion.innerHTML = '';
@@ -649,10 +760,140 @@
         document.getElementById('cfResults').style.display = 'block';
     }
 
-    function getCsrfToken() {
-        const cookie = document.cookie.split(';').find(c => c.trim().startsWith('csrftoken='));
-        return cookie ? cookie.split('=')[1] : '';
+    // =========================================================================
+    // Improvement Tips
+    // =========================================================================
+    let itPollTimer = null;
+    let itAllPosts = [];
+
+    function populateItDropdown(posts) {
+        const select = document.getElementById('itPostSelect');
+        // Clear existing options except placeholder
+        select.length = 1;
+        select.value = '';
+        posts.forEach(p => {
+            const opt = document.createElement('option');
+            opt.value = p.post_id;
+            const statusIcon = p.status === 'Draft' ? '🟡 ' : p.status === 'Scheduled' ? '🔵 ' : '🟢 ';
+            opt.textContent = `${statusIcon}${p.title} (${p.date})`;
+            select.appendChild(opt);
+        });
+        // Reset selection state
+        document.getElementById('itPostOptions').style.display = 'none';
+        document.getElementById('itRunBtn').disabled = true;
     }
-    {% endif %}
+
+    // Load all posts into dropdown
+    (async function loadImprovementTipsPosts() {
+        try {
+            const resp = await fetch('/insights/improvement-tips/posts/');
+            const data = await resp.json();
+            if (data.success && data.posts.length > 0) {
+                itAllPosts = data.posts;
+                populateItDropdown(itAllPosts);
+            }
+        } catch (err) {
+            console.error('Error loading improvement tips posts:', err);
+        }
+    })();
+
+    // Drafts only checkbox
+    document.getElementById('itDraftsOnly').addEventListener('change', function() {
+        const legend = document.getElementById('itLegend');
+        if (this.checked) {
+            legend.style.display = 'none';
+            populateItDropdown(itAllPosts.filter(p => p.status === 'Draft'));
+        } else {
+            legend.style.display = '';
+            populateItDropdown(itAllPosts);
+        }
+    });
+
+    // Post selection change
+    document.getElementById('itPostSelect').addEventListener('change', function() {
+        const postId = this.value;
+        const runBtn = document.getElementById('itRunBtn');
+        const postOptions = document.getElementById('itPostOptions');
+
+        runBtn.disabled = !postId;
+        postOptions.style.display = postId ? 'block' : 'none';
+    });
+
+    // Run button
+    document.getElementById('itRunBtn').addEventListener('click', async function() {
+        const postId = document.getElementById('itPostSelect').value;
+        if (!postId) return;
+
+        const runBtn = this;
+        runBtn.disabled = true;
+
+        try {
+            const resp = await fetch('/insights/improvement-tips/run/', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': getCsrfToken(),
+                },
+                body: JSON.stringify({ post_id: postId }),
+            });
+            const data = await resp.json();
+
+            if (!data.success) {
+                showToast(data.error || GENERIC_ERROR_TOAST, 'danger');
+                runBtn.disabled = false;
+                return;
+            }
+
+            // Start progress bar and polling
+            ProgressBar.start({
+                containerId: 'itProgressContainer',
+                expectedDuration: {{ progress_durations.improvement_tips }},
+                subtext: 'Generating improvement tips...',
+            });
+            pollImprovementTips(data.task_id);
+        } catch (err) {
+            console.error('Error starting improvement tips:', err);
+            showToast(GENERIC_ERROR_TOAST, 'danger');
+            runBtn.disabled = false;
+        }
+    });
+
+    function pollImprovementTips(taskId) {
+        if (itPollTimer) clearInterval(itPollTimer);
+
+        itPollTimer = setInterval(async () => {
+            try {
+                const resp = await fetch(`/insights/improvement-tips/status/${taskId}/`);
+                const data = await resp.json();
+
+                if (data.status === 'complete') {
+                    clearInterval(itPollTimer);
+                    itPollTimer = null;
+                    ProgressBar.complete({ containerId: 'itProgressContainer', success: true, message: 'Done!' });
+                    document.getElementById('itRunBtn').disabled = false;
+
+                    if (data.credits_used !== undefined) {
+                        updateCreditsDisplay(data.credits_used, data.credits_quota);
+                    }
+
+                    // Trigger download
+                    const a = document.createElement('a');
+                    a.href = `/insights/improvement-tips/download/${taskId}/`;
+                    a.download = '';
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                } else if (data.status === 'error') {
+                    clearInterval(itPollTimer);
+                    itPollTimer = null;
+                    ProgressBar.complete({ containerId: 'itProgressContainer', success: false, message: 'Error' });
+                    document.getElementById('itRunBtn').disabled = false;
+                    showToast(GENERIC_ERROR_TOAST, 'danger');
+                }
+            } catch (err) {
+                console.error('Polling error:', err);
+            }
+        }, 3000);
+    }
 </script>
 {% endblock %}

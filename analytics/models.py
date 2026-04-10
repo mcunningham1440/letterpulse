@@ -648,6 +648,38 @@ class PendingContentSearch(models.Model):
         return f"PendingContentSearch {self.task_id} ({self.status})"
 
 
+class PendingImprovementTips(models.Model):
+    """Tracks background improvement tips generation tasks"""
+
+    task_id = models.UUIDField(default=uuid.uuid4, unique=True)
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='pending_improvement_tips'
+    )
+    publication = models.ForeignKey(
+        Publication,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
+    post = models.ForeignKey(Post, on_delete=models.CASCADE)
+    status = models.CharField(
+        max_length=20,
+        default='pending',
+        help_text="pending, running, complete, or error"
+    )
+    result_html = models.TextField(blank=True)
+    error_message = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"PendingImprovementTips {self.task_id} ({self.status})"
+
+
 class SurveyResponse(models.Model):
     """Stores user responses to the signup survey"""
 
@@ -706,6 +738,25 @@ class CronRunLog(models.Model):
     def __str__(self):
         status = "OK" if self.success else "FAIL"
         return f"{self.command} at {self.started_at:%Y-%m-%d %H:%M} ({status})"
+
+
+class Feedback(models.Model):
+    """Captures user feedback on features and product direction"""
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='feedback'
+    )
+    feature = models.CharField(max_length=100, help_text="Feature area (e.g. 'write_post')")
+    response = models.CharField(max_length=255, help_text="The option the user selected")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ('user', 'feature')
+        verbose_name = "Feedback"
+        verbose_name_plural = "Feedback"
+
+    def __str__(self):
+        return f"{self.user} — {self.feature}: {self.response}"
 
 
 class ClickVizEmailLog(models.Model):

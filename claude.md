@@ -8,6 +8,11 @@ Any time you make a change to the code, determine whether it makes any informati
 - **Error messages shown to users must be generic**: "An error occurred. Please note this in the feedback form." with a link to the Google Form. This message is stored in the `GENERIC_ERROR_TOAST` constant in base.html (available globally).
 - **Validation messages** (e.g., "Please select at least one post") can be specific but must still use `showToast(..., 'warning')`, not `alert()`.
 - **Never use `confirm()`** for confirmation dialogs. Use `showConfirm(message, title)` instead (defined in base.html). It returns a Promise that resolves to `true` (Proceed) or `false` (Cancel). The caller must be `async` and use `await`. Example: `if (!await showConfirm('Delete this item?')) return;`
+- **For success/info messages that the user should acknowledge**, use `showAlert(message, title)` instead of `showToast()`. It displays a modal overlay with an OK button that the user must dismiss. Returns a Promise. Defined in base.html, available globally. Reserve `showToast()` for transient background notifications (e.g., "3 posts processed") — use `showAlert()` when you want the user to actually read the message.
+
+### Async / ORM gotcha when porting from notebooks
+
+When porting code from Jupyter notebooks or standalone scripts into `async` Django utility functions, **all synchronous Django ORM calls must be wrapped with `sync_to_async`**. Jupyter notebooks run in their own event loop and don't enforce Django's async safety checks, so ORM code that works fine in a notebook will raise `SynchronousOnlyOperation` at runtime in an `async def` function. Extract ORM-heavy blocks into a sync helper and call it via `await sync_to_async(helper)()`.
 
 ### Coach mark / spotlight pattern
 
@@ -164,6 +169,14 @@ Stores user responses to the signup survey (displayed on first login):
 
 The survey modal appears automatically on first login and is dismissed once submitted. Survey completion is tracked via `UsageAccount.survey_completed`.
 
+### Feedback
+Captures user feedback on features and product direction:
+- `user`: ForeignKey to User
+- `feature`: CharField — feature area identifier (e.g. "write_post")
+- `response`: CharField — the option the user selected
+- `created_at`: DateTimeField (auto_now_add)
+- Unique constraint: `(user, feature)` — one response per feature per user (update_or_create on resubmit)
+
 ### ProcessedPost
 Lightweight marker indicating a post has been processed for section data:
 - `post`: ForeignKey to Post (the source post)
@@ -230,6 +243,18 @@ Tracks background content finder tasks:
 
 Created when a user runs Content Finder from the Write page. A background thread runs a per-section agentic LLM loop with Perplexity web search. The frontend polls `/insights/content-finder/status/<task_id>/` until complete, then renders results in an accordion.
 
+### PendingImprovementTips
+Tracks background improvement tips generation tasks:
+- `task_id`: UUID (unique, auto-generated)
+- `user`: ForeignKey to User
+- `publication`: ForeignKey to Publication (nullable)
+- `post`: ForeignKey to Post
+- `status`: "pending", "running", "complete", or "error"
+- `result_html`: TextField — the generated annotated HTML (populated on completion)
+- `error_message`: Error details (populated on failure)
+
+Created when a user runs "Get Improvement Tips" from the Write page. A background thread fetches post HTML, builds text/link context, calls LLM for tips, and generates a two-column annotated HTML. The frontend polls `/insights/improvement-tips/status/<task_id>/` until complete, then triggers a file download.
+
 ## Authentication
 
 Uses django-allauth for email-based authentication:
@@ -255,12 +280,13 @@ Uses django-allauth for email-based authentication:
 - **Process Selected Posts**: Runs immediately when clicked (no modal). For each post, fetches HTML from Beehiiv, runs `auto_section` to identify structural sections, then runs `process_post_links` to extract/describe/score links within each section. Both operations must succeed atomically — if either fails, nothing is saved for that post. Section and LinkData rows plus the `ProcessedPost` marker are saved in a single DB transaction. Shows progress bar during extraction. If any selected posts already have processed data, shows an overwrite warning. First 2 posts are processed sequentially to seed section context; remaining posts run in parallel.
 - **Processed Column**: Shows a green checkmark for posts that have been processed. Trash icon to clear processed data (deletes `ProcessedPost`, `Section`, and `LinkData` records).
 - **Download Click Visualization**: ZIP of HTML files with click counts overlaid on links
-- **Download Improvement Tips**: ZIP of HTML files with AI-generated improvement tips
 
 ### 2. Write Page (`/insights/`)
-- **Content Finder** (visible when `PERPLEXITY_API_KEY` is configured): Agentic content recommendation tool. User selects a processed post as a template, optionally toggles manual section selection, and clicks "Run Content Search". A per-section agentic LLM loop uses Perplexity web search to find new content matching historical click patterns. Results display in a Bootstrap accordion grouped by section. Each link shows title, source, URL, date, description, and audience relevance. Costs `CREDITS_PER_CONTENT_SEARCH` credits per run. Background task with polling (3s interval).
-- **Section Data Table**: DataTable showing all Sections for the current publication — Post Title, Post Date, Section Name, Description, Start Line, End Line. Sortable and scrollable. Download CSV button (client-side).
-- **Link Data Table**: DataTable showing all LinkData for the current publication — Post Title, Post Date, Section, URL, Description, Rank in Section, Mean CTR (%), Mean Clicks. Sortable and scrollable. Download CSV button (client-side).
+- **1. Find content (Content Finder)**: Agentic content recommendation tool. User selects a processed post as a template, optionally toggles manual section selection, and clicks "Run Content Search". A per-section agentic LLM loop uses Perplexity web search to find new content matching historical click patterns. Results display in a Bootstrap accordion grouped by section. Each link shows title, source, URL, date, description, and audience relevance. Costs `CREDITS_PER_CONTENT_SEARCH` credits per run. Background task with polling (3s interval). Always visible; errors at runtime if Perplexity API key is not configured.
+- **Section Data Table**: DataTable showing all Sections for the current publication — Post Title, Post Date, Section Name, Description, Start Line, End Line. Sortable and scrollable. Download CSV button (client-side). Hidden by default.
+- **Link Data Table**: DataTable showing all LinkData for the current publication — Post Title, Post Date, Section, URL, Description, Rank in Section, Mean CTR (%), Mean Clicks. Sortable and scrollable. Download CSV button (client-side). Hidden by default.
+- **2. Write your post**: Feedback card asking users whether an AI writing feature would be valuable. Three options: write drafts, outlines only, or no thanks. Response saved to `Feedback` model (feature="write_post"). Shows "Thanks for your feedback!" after submission.
+- **4. Improve your post**: User selects any post (published or draft, with status shown) from a dropdown, then clicks "Get Improvement Tips". Runs a background task that fetches post HTML, builds numbered text with HTML line mapping, gathers link history context for all sections, calls LLM with structured output for tips, and generates a two-column annotated HTML with tip cards and SVG connectors. The annotated HTML is downloaded as a file. Costs `CREDITS_PER_IMPROVEMENT_TIPS` credits per run. Background task with polling (3s interval). Uses `PendingImprovementTips` model for task tracking.
 
 ### 3. Account Page (`/account/`)
 - **Usage Stats**: View AI credits used and remaining
@@ -316,21 +342,27 @@ All routes use the `analytics:` namespace.
 - `POST /posts/delete-items/` - Remove items from session
 - `POST /posts/refresh-posts/` - Fetch latest posts from Beehiiv
 - `POST /posts/download-click-viz/` - Generate click visualization ZIP
-- `POST /posts/download-annotated/` - Generate annotated HTML ZIP
 - `POST /posts/clear-processed/` - Delete ProcessedPost, Section, and LinkData records for selected posts (AJAX)
 
 ### Insights Routes
-- `GET /insights/` - Write page (section and link data tables, content finder)
+- `GET /insights/` - Write page (section and link data tables, content finder, improvement tips)
 - `GET /insights/load-processed-data/` - Load all Section items as JSON for the current user/publication
 - `GET /insights/load-link-data/` - Load all LinkData items as JSON for the current user/publication
 - `GET /insights/content-finder/posts/` - List processed posts for content finder dropdown
 - `GET /insights/content-finder/sections/?post_id=` - List section names for a given post
 - `POST /insights/content-finder/run/` - Start content finder background task (JSON body: post_id, mode, selected_sections)
 - `GET /insights/content-finder/status/<uuid>/` - Poll content finder task status and results
+- `GET /insights/improvement-tips/posts/` - List all posts (published + drafts) for improvement tips dropdown
+- `POST /insights/improvement-tips/run/` - Start improvement tips background task (JSON body: post_id)
+- `GET /insights/improvement-tips/status/<uuid>/` - Poll improvement tips task status
+- `GET /insights/improvement-tips/download/<uuid>/` - Download annotated HTML for completed task
 
 ### Account Routes
 - `GET /account/` - Account settings page
 - `POST /account/` - Update API credentials, toggle click viz email
+
+### Feedback Routes
+- `POST /feedback/submit/` - Submit user feedback (JSON body: feature, response)
 
 ### Survey Routes
 - `POST /survey/submit/` - Submit signup survey response
@@ -466,8 +498,6 @@ Views use `get_user_api_credentials(user)` helper to retrieve credentials and re
 - `_save_post_full(post_id, sections, link_rows, user, publication)`: Save Section rows, LinkData rows, and ProcessedPost marker in a single atomic transaction.
 - `process_posts_sections_sequential(post_ids, user, beehiiv_token, beehiiv_pub_id, publication)`: Process multiple posts with hybrid sequential/parallel strategy. Uses `process_post_full` + `_save_post_full` per post.
 - `generate_content_insights()`: Generate performance analysis report for a single section. When item count exceeds `MAX_REPORT_ITEMS`, top and bottom performers by CTR are kept and middle items are omitted (with a note to the LLM).
-- `annotate_post_html(post_id, content_perf_evals, beehiiv_token, beehiiv_pub_id, user=None)`: Insert improvement tips into HTML
-- `annotate_posts_parallel(post_ids, content_perf_evals, beehiiv_token, beehiiv_pub_id, user=None)`: Parallel annotation of multiple posts
 - `fetch_recent_published_posts(beehiiv_token, beehiiv_pub_id, max_pages=3)`: Async — fetch recently published posts ordered by publish_date desc; stops early if oldest post on page is >24h old
 - `build_click_viz_email_html(viz_html, post_title, site_url)`: Wrap click viz HTML with branded header banner and footer for email delivery
 
@@ -479,6 +509,10 @@ Views use `get_user_api_credentials(user)` helper to retrieve credentials and re
 - `run_content_finder_agent(messages, allow_exclusion, model, reasoning, max_rounds)`: Async per-section agentic loop. Uses web_search and dismiss_section tools. Returns (response_or_None, all_responses, all_results)
 - `process_content_finder_section(section, allow_exclusion, ...)`: Orchestrate content finding for one section. Returns (section_name, links_or_None)
 - `run_content_finder_background(task_id)`: Background thread entry point. Loads PendingContentSearch, runs all sections in parallel, saves results
+
+### Improvement Tips Functions
+- `generate_improvement_tips_html(post, user, publication, beehiiv_token, beehiiv_pub_id)`: Async — fetches post HTML, builds numbered text with HTML line mapping (BeautifulSoup sourceline tracking through `<a>` replacement), gathers link history for all sections with sample titles, calls LLM with structured output (`AllImprovementTips` Pydantic model), and renders a two-column annotated HTML with tip cards and SVG Bezier connectors. Returns HTML string.
+- `run_improvement_tips_background(task_id)`: Background thread entry point. Loads PendingImprovementTips, calls `generate_improvement_tips_html`, saves result_html or error.
 
 ## Management Commands
 
@@ -508,7 +542,7 @@ DEFAULT_MONTHLY_CREDITS = 150
 # Credit costs per operation
 CREDITS_PER_EXTRACTION = 1      # Per post extracted from
 CREDITS_PER_REPORT = 1          # Flat cost for generating insights
-CREDITS_PER_ANNOTATION = 1      # Per post annotated with improvement tips
+CREDITS_PER_IMPROVEMENT_TIPS = 1  # Per post improvement tips generation
 
 # Section processing configuration
 SECTION_N_EXAMPLES = 5              # Number of nearby-post examples per section for context
@@ -537,6 +571,10 @@ CONTENT_FINDER_REASONING = "medium"
 CONTENT_FINDER_MAX_ROUNDS = 3       # Max search round-trips per section
 CONTENT_FINDER_MAX_LINKS = 60       # Max historical links per section for context
 CONTENT_FINDER_MAX_URL_LEN = 75     # Truncate displayed URLs to this length
+
+# Improvement Tips configuration
+IMPROVEMENT_TIPS_MODEL = "gpt-5.4-mini"
+IMPROVEMENT_TIPS_REASONING = "medium"
 
 ```
 

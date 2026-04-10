@@ -17,14 +17,15 @@ import logging
 from datetime import datetime
 from zoneinfo import ZoneInfo
 import time
-from bs4 import BeautifulSoup
+import html as html_module
+from bs4 import BeautifulSoup, NavigableString
 from django.conf import settings
 from django.db import transaction
 from django.db.models import F
 from Levenshtein import distance as levenshtein_distance
 from dotenv import load_dotenv
 from analytics.prompts import (
-    INSIGHTS_PROMPT, TIP_PROMPT,
+    INSIGHTS_PROMPT,
     CONTENT_FINDER_SYSTEM_PROMPT,
     CONTENT_FINDER_FILTER_SECTIONS_INSTRUCTION,
     CONTENT_FINDER_SECTION_INCLUSION_CRITERIA,
@@ -1990,162 +1991,6 @@ def generate_click_visualization_html(post_html, clicks_dict, unique_email_opens
     return str(soup)
 
 
-async def annotate_post_html(post_id, content_perf_evals, beehiiv_token, beehiiv_pub_id, user=None):
-    """
-    Fetch post HTML, get LLM tips based on performance evaluations,
-    and insert them with yellow highlighting.
-
-    Args:
-        post_id: The Beehiiv post ID
-        content_perf_evals: List of performance evaluation texts to inform tips
-        beehiiv_token: Beehiiv API token
-        beehiiv_pub_id: Beehiiv publication ID
-        user: Django user object for credit charging (optional)
-
-    Returns:
-        Modified HTML string with tips inserted
-    """
-    # Step 1: Fetch the HTML
-    semaphore = asyncio.Semaphore(1)
-    timeout = aiohttp.ClientTimeout(total=60)
-    async with aiohttp.ClientSession(timeout=timeout) as session:
-        post_id_result, post_html = await fetch_post_html(session, post_id, semaphore, beehiiv_token, beehiiv_pub_id)
-        
-    # Step 2: Split into numbered lines
-    soup = BeautifulSoup(post_html, 'html.parser')
-    all_lines = soup.prettify().split('\n')
-    numbered_lines = [f"{i+1}\t{line}" for i, line in enumerate(all_lines)]
-    
-    # Step 3: Define tip schema
-    class Tip(BaseModel):
-        tip_type: Literal["content", "wording"]
-        line_number: int
-        tip_text: str
-        why: str
-    
-    class AllTips(BaseModel):
-        tips: List[Tip]
-    
-    # Step 4: Prompt LLM for tips
-    # Combine all performance evaluations with XML tags
-    combined_perf_eval = "\n\n".join([
-        f"<performance_evaluation_{i+1}>\n{eval_text}\n</performance_evaluation_{i+1}>"
-        for i, eval_text in enumerate(content_perf_evals)
-    ])
-    
-    messages = [
-        {"role": "user", "content": f"{combined_perf_eval}"},
-        {"role": "user", "content": "<html_document>\n" + '\n'.join(numbered_lines) + "\n</html_document>"},
-        {"role": "system", "content": TIP_PROMPT},
-    ]
-
-    response = await llm_call("annotate_post_html", messages, "gpt-5.1", "medium", response_format=AllTips, user=user)
-    tips = response.output[-1].content[0].parsed
-    
-    # Step 5: Insert tips with yellow highlighting
-    # Sort tips by line number in descending order to avoid offset issues
-    sorted_tips = sorted(tips.tips, key=lambda x: x.line_number, reverse=True)
-    tip_type_to_header = {
-        "content": "📰 Content Tip",
-        "wording": "✍️ Wording Tip"
-    }
-    
-    for tip in sorted_tips:
-        if 0 < tip.line_number <= len(all_lines):
-            # Create tip HTML with yellow highlighting
-            tip_html = f"""
-<div style="
-    background-color: yellow;
-    color: black !important;
-    padding: 10px;
-    margin: 10px 0;
-    border-left: 4px solid orange;
-    font-family: Arial, sans-serif;
-    font-size: 14px;
-    line-height: 1.6;
-    text-align: left;
-    font-style: normal !important;
-    font-weight: normal !important;
-    text-decoration: none !important;
-
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-">
-    <div style="
-        width: 0;
-        height: 0;
-        border-left: 8px solid transparent;
-        border-right: 8px solid transparent;
-        border-bottom: 12px solid #4A90A4;
-        margin: 0 auto 8px;
-    "></div>
-    <div style="
-        font-weight: bold !important;
-        font-style: normal !important;
-        text-decoration: none !important;
-    ">
-        {tip_type_to_header[tip.tip_type]}
-    </div>
-    <div style="
-        font-weight: normal !important;
-        font-style: normal !important;
-        text-decoration: none !important;
-    ">
-        {tip.tip_text}
-    </div>
-    <div style="
-        font-weight: bold !important;
-        margin-top: 10px;
-        font-style: normal !important;
-        text-decoration: none !important;
-    ">
-        Why?
-    </div>
-    <div style="
-        font-weight: normal !important;
-        font-style: normal !important;
-        text-decoration: none !important;
-    ">
-        {tip.why}
-    </div>
-</div>
-"""        
-            # Insert at the specified line (converting to 0-indexed)
-            all_lines.insert(tip.line_number - 1, tip_html)
-    
-    # Step 6: Return the modified HTML
-    return '\n'.join(all_lines)
-
-
-async def annotate_posts_parallel(post_ids, content_perf_evals, beehiiv_token, beehiiv_pub_id, user=None):
-    """
-    Annotate multiple posts in parallel using asyncio.
-
-    Args:
-        post_ids: List of Beehiiv post IDs to annotate
-        content_perf_evals: List of performance evaluation texts to inform tips
-        beehiiv_token: Beehiiv API token
-        beehiiv_pub_id: Beehiiv publication ID
-        user: Django user object for credit charging (optional)
-
-    Returns:
-        Dictionary mapping post_ids to their annotated HTML content
-    """
-    tasks = [annotate_post_html(post_id, content_perf_evals, beehiiv_token, beehiiv_pub_id, user=user) for post_id in post_ids]
-    results = await asyncio.gather(*tasks, return_exceptions=True)
-    
-    # Build result dictionary, filtering out exceptions
-    annotated_htmls = {}
-    for post_id, result in zip(post_ids, results):
-        if isinstance(result, Exception):
-            logger.error(f"Error annotating post {post_id}: {result}")
-        else:
-            annotated_htmls[post_id] = result
-    
-    return annotated_htmls
-
-
 async def fetch_recent_published_posts(beehiiv_token, beehiiv_pub_id, max_pages=3):
     """
     Fetch recently published posts from Beehiiv API, ordered by publish_date desc.
@@ -2281,3 +2126,476 @@ def build_click_viz_email_html(viz_html, post_title, site_url):
         return banner + viz_html + footer
 
     return str(soup)
+
+
+# =============================================================================
+# Improvement Tips
+# =============================================================================
+
+IMPROVEMENT_TIP_PROMPT = """
+You are an expert newsletter editor.
+You will be given the text of a newsletter issue with numbered text lines and link click data from similar content.
+Your task is to provide tips on improving the issue's content.
+
+There are 2 types of tips you can provide:
+1. Proofreading tip: Changes to spelling, grammar, etc. to correct mistakes.
+    Proofreading tip example:
+        start_line: 36
+        end_line: 36
+        tip_text: "Change 'there' to 'their'."
+        why: [None]
+
+2. Content tip: Suggested changes to the choice of words or phrasing to improve engagement.
+    Content tip example:
+        start_line: 49
+        line: 51
+        tip_text: "Clearly tell readers the useful information they'll learn — for example, 'how to choose between biological controls and pesticides in real projects.'"
+        why: "Advice that clearly states when and how to use different techniques almost always does better with your audience than neutral articles."
+
+First, review the links to identify content patterns associated with high and low performance.
+Second, identify places in the text where the content most closely follows the negative patterns described in the links or deviates furthest from high-performing patterns. These will be addressed with content tips.
+Third, identify any spelling, grammar, or egregious wording errors. These will be addressed with proofreading tips.
+Finally, for each identified place, suggest a tip to improve it. You may add up to 6 content tips, and as many proofreading tips as necessary.
+If it is a content tip, also add why the tip is relevant based on the performance evaluations.
+If it is a proofreading tip, fill in this field with None.
+
+*start_line* and *end_line* should be the first and last lines of text (inclusive) that the tip applies to.
+If the text consists of a single sentence split across several lines, for example, if interrupted by a hyperlink, include them all.
+*tip_text* should be a single brief sentence suggesting an actionable change.
+*why* should be a single brief sentence explaining the rationale based on performance insights (for content tips; for proofreading tips it should always be None).
+
+Provide the tip type, the line number where each tip should be inserted, the tip text, and the why for each tip (if necessary).
+DO NOT suggest changes to the format of the newsletter or what items are written about, just how items are worded.
+You should NOT start the text of the tip itself with the tip type; this will be added later based on the tip type.
+In the why, refer to "your audience", "your readers", etc. to ensure the writer understands this is personalized to their specific audience.
+
+Do not reference position--the tips will be automatically placed within the file by the program.
+Additionally, do not reference line numbers--the downstream viewer will not have access to these.
+
+Bad: "In the Audi Announcement item (lines 108–110), briefly spell out..."
+Good: "Briefly spell out..."
+
+Use language suitable for content creators, avoiding technical jargon and esoteric wording.
+
+Too advanced:
+tip_text: "Strengthen this link by foregrounding a clear mental model or framework readers will get (e.g., "how to decide between biological controls and pesticides in real projects")."
+why: "Opinionated guidance on when/how to use biological controls consistently outperforms neutral articles with your audience."
+
+Good:
+tip_text: "Clearly tell readers the useful information they'll learn — for example, 'how to choose between biological controls and pesticides in real projects.'"
+why: "Advice that takes a clear stance on when and how to use biological controls almost always does better with your audience than neutral articles."
+
+The links you will be provided with are grouped by sections that have appeared in prior issues of the newsletter.
+These may or may not appear in this issue.
+If any of these sections clearly appear in the newsletter, you may use that data to inform your tips on those sections.
+Do not apply tips to sections that are obviously an ad for a third-party product or service.
+If the section is an ad for the writer's own service/course/consultancy/etc., you may add tips for it.
+"""
+
+
+class ImprovementTip(BaseModel):
+    tip_type: Literal["content", "proofreading"]
+    line_number: int
+    tip_text: str
+    why: str
+
+
+class AllImprovementTips(BaseModel):
+    tips: List[ImprovementTip]
+
+
+async def generate_improvement_tips_html(post, user, publication, beehiiv_token, beehiiv_pub_id):
+    """
+    Generate annotated two-column HTML with improvement tips for a post.
+
+    Fetches post HTML from Beehiiv, builds numbered text with HTML line mapping,
+    gathers link history context, calls LLM for tips, and renders a two-column
+    layout with tip cards connected to their target content via SVG connectors.
+
+    Args:
+        post: Post model instance
+        user: Django User instance
+        publication: Publication model instance
+        beehiiv_token: Beehiiv API token
+        beehiiv_pub_id: Beehiiv publication ID
+
+    Returns:
+        Complete annotated HTML string
+    """
+    from analytics.models import Section
+
+    # --- 1) Fetch post HTML from Beehiiv API ---
+    sem = asyncio.Semaphore(5)
+    async with aiohttp.ClientSession() as session:
+        _, html = await fetch_post_html(session, post.post_id, sem, beehiiv_token, beehiiv_pub_id)
+    if not html:
+        raise RuntimeError(f"Failed to fetch HTML for post {post.post_id}")
+
+    # --- 2) Build numbered text lines with HTML line mapping ---
+    pretty_html = BeautifulSoup(html, 'html.parser').prettify()
+    html_lines = pretty_html.split('\n')
+
+    # Re-parse prettified HTML so element.sourceline == prettified line numbers
+    soup2 = BeautifulSoup(pretty_html, 'html.parser')
+
+    # Record sourceline for each <a> before replacement
+    a_lines = {id(a): a.sourceline for a in soup2.find_all('a', href=True)}
+
+    # Do <a> replacement while tracking source lines
+    replacement_lines = {}
+    for a in list(soup2.find_all('a', href=True)):
+        src = a_lines.get(id(a))
+        link_text = a.get_text(strip=True)
+        href = a['href']
+        if len(href) > 50:
+            href = href[:47] + "..."
+        replacement = f"{link_text} ({href})" if link_text else href
+        new_node = NavigableString(replacement)
+        a.replace_with(new_node)
+        replacement_lines[id(new_node)] = src
+
+    # Walk all NavigableString nodes, collecting (text, sourceline)
+    text_source_pairs = []
+    for node in soup2.descendants:
+        if isinstance(node, NavigableString):
+            text = node.strip()
+            if not text:
+                continue
+            src = replacement_lines.get(id(node))
+            if src is None and node.parent:
+                src = node.parent.sourceline
+            text_source_pairs.append((text, src))
+
+    # Build text output
+    post_text = soup2.get_text(separator='\n', strip=True)
+    text_lines = [line for line in post_text.split('\n') if line.strip()]
+
+    # Map each text line -> prettified HTML line via source pairs
+    text_to_html_line = {}
+    pair_cursor = 0
+    for text_num, text_line in enumerate(text_lines, 1):
+        for p in range(pair_cursor, len(text_source_pairs)):
+            piece_text, piece_src = text_source_pairs[p]
+            if piece_text in text_line and piece_src:
+                text_to_html_line[text_num] = piece_src
+                pair_cursor = p + 1
+                break
+
+    numbered_text = "\n".join(f"{i+1}\t{line}" for i, line in enumerate(text_lines))
+
+    # --- 3) Link history with sample titles for every section ---
+    def _build_link_history():
+        all_section_names = list(
+            Section.objects.filter(user=user, publication=publication)
+            .order_by('section_name')
+            .values_list('section_name', flat=True)
+            .distinct()
+        )
+
+        ref_date = post.publish_date or post.creation_date
+
+        parts = []
+        for sname in sorted(all_section_names):
+            representative = Section.objects.filter(
+                user=user, publication=publication, section_name=sname
+            ).first()
+            formatted, count = format_link_history(representative)
+            if count > 0:
+                nearby_sections = list(
+                    Section.objects.filter(
+                        user=user,
+                        publication=publication,
+                        section_name=sname,
+                        section_title__isnull=False,
+                    )
+                    .exclude(section_title='')
+                    .exclude(post=post)
+                    .select_related('post')
+                )
+                if ref_date:
+                    nearby_sections = sorted(
+                        nearby_sections,
+                        key=lambda s: abs((s.post.publish_date or s.post.creation_date or ref_date) - ref_date)
+                    )
+                sample_titles = []
+                seen = set()
+                for s in nearby_sections:
+                    if s.section_title not in seen:
+                        seen.add(s.section_title)
+                        sample_titles.append(s.section_title)
+                    if len(sample_titles) >= 5:
+                        break
+
+                titles_str = ""
+                if sample_titles:
+                    titles_list = "\n".join(f"  - {t}" for t in sample_titles)
+                    titles_str = f"\nSample titles from recent issues:\n{titles_list}\n"
+
+                parts.append(
+                    f"<section name=\"{sname}\">{titles_str}\n{formatted}\n</section>"
+                )
+
+        return "\n\n".join(parts)
+
+    from asgiref.sync import sync_to_async
+    link_history_str = await sync_to_async(_build_link_history)()
+
+    # --- 4) Call LLM for tips ---
+    messages = [
+        {"role": "user", "content": f"<link_history>\n{link_history_str}\n</link_history>"},
+        {"role": "user", "content": f"<post title=\"{post.title}\">\n{numbered_text}\n</post>"},
+        {"role": "system", "content": IMPROVEMENT_TIP_PROMPT},
+    ]
+
+    response = await llm_call(
+        "generate_improvement_tips",
+        messages,
+        settings.IMPROVEMENT_TIPS_MODEL,
+        settings.IMPROVEMENT_TIPS_REASONING,
+        response_format=AllImprovementTips,
+        user=user,
+    )
+    tips = response.output[-1].content[0].parsed
+
+    # --- 5) Build two-column annotated HTML ---
+    tip_type_to_header = {
+        "content": "\U0001f4f0 Content Tip",
+        "proofreading": "\u270d\ufe0f Proofreading",
+    }
+
+    valid_tips = [t for t in tips.tips if text_to_html_line.get(t.line_number)]
+    sorted_tips_asc = sorted(valid_tips, key=lambda t: text_to_html_line[t.line_number])
+
+    # Insert anchor spans (reverse order to preserve indices)
+    annotated_lines = list(html_lines)
+    for i, tip in enumerate(reversed(sorted_tips_asc)):
+        marker_id = f"tip-target-{len(sorted_tips_asc) - 1 - i}"
+        html_line_num = text_to_html_line[tip.line_number]
+        anchor = f'<span id="{marker_id}" data-tip-anchor="true"></span>'
+        annotated_lines.insert(html_line_num - 1, anchor)
+
+    newsletter_html = '\n'.join(annotated_lines)
+
+    # Build tip card divs
+    tip_cards = []
+    for i, tip in enumerate(sorted_tips_asc):
+        header = tip_type_to_header[tip.tip_type]
+        safe_text = html_module.escape(tip.tip_text)
+        has_why = tip.why and tip.why.lower() not in ('none', '')
+        why_block = ""
+        if has_why:
+            safe_why = html_module.escape(tip.why)
+            why_block = f"""
+        <div style="font-weight: bold; margin-bottom: 4px; margin-top: 10px; color: #E65100;">Why?</div>
+        <div>{safe_why}</div>"""
+        tip_cards.append(f"""
+    <div class="tip-card" id="tip-card-{i}" data-target="tip-target-{i}">
+        <div style="font-weight: bold; margin-bottom: 4px; color: #E65100;">{header}</div>
+        <div style="margin-bottom: 10px;">{safe_text}</div>{why_block}
+    </div>""")
+
+    tip_cards_html = '\n'.join(tip_cards)
+
+    result_html = f"""<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+    body {{
+        margin: 0;
+        padding: 0;
+        background: #f5f5f5;
+    }}
+    .annotated-wrapper {{
+        display: flex;
+        max-width: 1400px;
+        margin: 0 auto;
+        position: relative;
+    }}
+    .tips-column {{
+        flex: 0 0 30%;
+        max-width: 30%;
+        position: relative;
+        min-height: 100%;
+    }}
+    .newsletter-column {{
+        flex: 0 0 70%;
+        max-width: 70%;
+        background: white;
+        box-shadow: 0 1px 4px rgba(0,0,0,0.1);
+        position: relative;
+    }}
+    .tip-card {{
+        position: absolute;
+        width: calc(100% - 32px);
+        right: 0;
+        background-color: #FFFDE7;
+        border-right: 4px solid #F9A825;
+        padding: 12px 14px;
+        font-family: Arial, sans-serif;
+        font-size: 13px;
+        line-height: 1.5;
+        color: #333;
+        border-radius: 4px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        transition: box-shadow 0.2s;
+    }}
+    .tip-card:hover {{
+        box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+    }}
+    svg.connectors {{
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        pointer-events: none;
+        z-index: 10;
+    }}
+    [data-tip-anchor] {{
+        background-color: #FFF9C4;
+        outline: 2px solid #F9A825;
+        outline-offset: 2px;
+        border-radius: 2px;
+    }}
+    .top-banner {{
+        position: absolute;
+        top: 16px;
+        right: 0;
+        width: calc(100% - 32px);
+        background-color: #FFFDE7;
+        border-right: 4px solid #F9A825;
+        padding: 12px 14px;
+        font-family: Arial, sans-serif;
+        font-size: 13px;
+        line-height: 1.5;
+        color: #333;
+        border-radius: 4px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    }}
+</style>
+</head>
+<body>
+<div class="annotated-wrapper" id="annotated-wrapper">
+    <div class="tips-column" id="tips-column">
+        <div class="top-banner">Suggested content changes appear below.</div>
+        {tip_cards_html}
+    </div>
+    <div class="newsletter-column" id="newsletter-column">
+        {newsletter_html}
+    </div>
+    <svg class="connectors" id="connectors-svg"></svg>
+</div>
+<script>
+    function positionCardsAndDrawConnectors() {{
+        const wrapper = document.getElementById('annotated-wrapper');
+        const svg = document.getElementById('connectors-svg');
+        const tipsCol = document.getElementById('tips-column');
+        const wrapperRect = wrapper.getBoundingClientRect();
+
+        svg.setAttribute('width', wrapperRect.width);
+        svg.setAttribute('height', wrapperRect.height);
+        svg.style.width = wrapperRect.width + 'px';
+        svg.style.height = wrapperRect.height + 'px';
+        svg.innerHTML = '';
+
+        const cards = Array.from(document.querySelectorAll('.tip-card'));
+        let minNextTop = 80;
+
+        cards.forEach(function(card) {{
+            const targetId = card.getAttribute('data-target');
+            const target = document.getElementById(targetId);
+            if (!target) return;
+
+            const targetRect = target.getBoundingClientRect();
+            const desiredTop = targetRect.top + targetRect.height / 2 - wrapperRect.top - 20;
+            const actualTop = Math.max(desiredTop, minNextTop);
+            card.style.top = actualTop + 'px';
+
+            const cardHeight = card.getBoundingClientRect().height;
+            minNextTop = actualTop + cardHeight + 12;
+
+            const cardRect = card.getBoundingClientRect();
+            const x1 = cardRect.right - wrapperRect.left;
+            const y1 = cardRect.top + 20 - wrapperRect.top;
+            const x2 = targetRect.left - wrapperRect.left;
+            const y2 = targetRect.top + targetRect.height / 2 - wrapperRect.top;
+
+            const midX = (x1 + x2) / 2;
+            const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+            path.setAttribute('d', 'M ' + x1 + ' ' + y1 + ' C ' + midX + ' ' + y1 + ' ' + midX + ' ' + y2 + ' ' + x2 + ' ' + y2);
+            path.setAttribute('stroke', '#F9A825');
+            path.setAttribute('stroke-width', '2');
+            path.setAttribute('fill', 'none');
+            path.setAttribute('stroke-dasharray', '6,3');
+
+            const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+            circle.setAttribute('cx', x2);
+            circle.setAttribute('cy', y2);
+            circle.setAttribute('r', '4');
+            circle.setAttribute('fill', '#F9A825');
+
+            svg.appendChild(path);
+            svg.appendChild(circle);
+        }});
+
+        const lastCard = cards[cards.length - 1];
+        if (lastCard) {{
+            const lastBottom = parseFloat(lastCard.style.top) + lastCard.getBoundingClientRect().height + 20;
+            tipsCol.style.minHeight = lastBottom + 'px';
+        }}
+    }}
+
+    window.addEventListener('load', positionCardsAndDrawConnectors);
+    window.addEventListener('resize', positionCardsAndDrawConnectors);
+</script>
+</body>
+</html>"""
+
+    return result_html
+
+
+def run_improvement_tips_background(task_id):
+    """
+    Background thread entry point for generating improvement tips.
+    Loads the PendingImprovementTips task, generates annotated HTML, saves result.
+    """
+    from asgiref.sync import async_to_sync
+    from django.db import connection
+    from analytics.models import PendingImprovementTips, UsageAccount
+
+    try:
+        task = PendingImprovementTips.objects.get(task_id=task_id)
+        task.status = 'running'
+        task.save(update_fields=['status'])
+
+        post = task.post
+        user = task.user
+        publication = task.publication
+
+        try:
+            usage = UsageAccount.objects.get(user=user)
+            beehiiv_token = usage.beehiiv_token
+            beehiiv_pub_id = usage.beehiiv_pub_id
+        except UsageAccount.DoesNotExist:
+            raise RuntimeError("No API credentials configured")
+
+        result_html = async_to_sync(generate_improvement_tips_html)(
+            post, user, publication, beehiiv_token, beehiiv_pub_id
+        )
+
+        task.status = 'complete'
+        task.result_html = result_html
+        task.save(update_fields=['status', 'result_html'])
+
+    except Exception as e:
+        logger.exception("Improvement tips background task failed")
+        try:
+            task = PendingImprovementTips.objects.get(task_id=task_id)
+            task.status = 'error'
+            task.error_message = str(e)
+            task.save(update_fields=['status', 'error_message'])
+        except Exception:
+            logger.exception("Failed to save error status for improvement tips task")
+    finally:
+        connection.close()
