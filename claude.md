@@ -240,6 +240,7 @@ Tracks background content finder tasks:
 - `status`: "pending", "running", "complete", or "error"
 - `result_data`: JSON dict of `{section_name: [link dicts]}` (populated on completion)
 - `error_message`: Error details (populated on failure)
+- `dev_panel_data`: JSON dict of LLM call tracking data (local mode only)
 
 Created when a user runs Content Finder from the Write page. A background thread runs a per-section agentic LLM loop with Perplexity web search. The frontend polls `/insights/content-finder/status/<task_id>/` until complete, then renders results in an accordion.
 
@@ -252,6 +253,7 @@ Tracks background improvement tips generation tasks:
 - `status`: "pending", "running", "complete", or "error"
 - `result_html`: TextField — the generated annotated HTML (populated on completion)
 - `error_message`: Error details (populated on failure)
+- `dev_panel_data`: JSON dict of LLM call tracking data (local mode only)
 
 Created when a user runs "Get Improvement Tips" from the Write page. A background thread fetches post HTML, builds text/link context, calls LLM for tips, and generates a two-column annotated HTML. The frontend polls `/insights/improvement-tips/status/<task_id>/` until complete, then triggers a file download.
 
@@ -576,9 +578,24 @@ CONTENT_FINDER_MAX_URL_LEN = 75     # Truncate displayed URLs to this length
 IMPROVEMENT_TIPS_MODEL = "gpt-5.4-mini"
 IMPROVEMENT_TIPS_REASONING = "medium"
 
+# LLM Pricing (per million tokens) — local dev panel only
+LLM_PRICING = {
+    'gpt-5.4': { 'input_per_million': 2.50, 'cached_input_per_million': 0.25, 'output_per_million': 15.00 },
+    'gpt-5.4-mini': { 'input_per_million': 0.75, 'cached_input_per_million': 0.075, 'output_per_million': 4.50 },
+}
 ```
 
 Credits are charged at the view level before each AI operation runs.
+
+### LLM Dev Panel (local mode only)
+
+When `ENVIRONMENT == 'local'`, a floating dark-themed panel appears in the top-right corner after any LLM-powered workflow completes (Process Posts, Content Finder, Improvement Tips). It shows per-call details (model, prompts, runtime, token usage, costs) and aggregated totals. A "Download JSON" button exports the full report.
+
+**Architecture:**
+- `analytics/llm_tracker.py`: Thread-local accumulator. `start_tracking()` / `finish_tracking()` bracket a workflow; `llm_call()` in `utils.py` automatically records each call via `record_call()`. All functions are no-ops when `ENVIRONMENT != 'local'`.
+- **Data transport**: For sync workflows (Process Posts), dev panel data is included directly in the JSON response. For background-thread workflows (Content Finder, Improvement Tips), data is stored in the `dev_panel_data` JSONField on `PendingContentSearch` / `PendingImprovementTips` and returned via the polling endpoint.
+- `analytics/static/analytics/js/dev-panel.js`: Frontend component. `DevPanel.show(data, workflowName)` renders the panel. Loaded conditionally via `{% if is_local %}` in `base.html`.
+- `is_local` template variable provided by `analytics.context_processors.environment_context`.
 
 ### Link Matching
 - `match_links_with_clicks()`: Uses exact matching first, then Levenshtein distance (40% threshold) for fuzzy matching

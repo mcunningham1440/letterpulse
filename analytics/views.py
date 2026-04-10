@@ -626,20 +626,32 @@ def run_processing(request):
             publication = None
 
         # Run sequential section extraction (each post saves to DB before the next)
+        from analytics.llm_tracker import start_tracking, finish_tracking
+        if settings.ENVIRONMENT == 'local':
+            start_tracking()
+
         results_by_post = async_to_sync(process_posts_sections_sequential)(
             post_ids, request.user, beehiiv_token, beehiiv_pub_id, publication
         )
+
+        dev_panel_data = None
+        if settings.ENVIRONMENT == 'local':
+            dev_panel_data = finish_tracking()
 
         processed_post_ids = list(results_by_post.keys())
 
         usage = UsageAccount.objects.get(user=request.user)
 
-        return JsonResponse({
+        resp_data = {
             'success': True,
             'processed_post_ids': processed_post_ids,
             'credits_used': usage.used_this_period,
             'credits_quota': usage.monthly_quota
-        })
+        }
+        if dev_panel_data:
+            resp_data['dev_panel'] = dev_panel_data
+
+        return JsonResponse(resp_data)
 
     except NotEnoughCredits as e:
         return JsonResponse({'success': False, 'error': str(e)}, status=400)
@@ -1178,6 +1190,8 @@ def poll_content_finder(request, task_id):
 
     if task.status == 'complete':
         resp['result_data'] = task.result_data
+        if settings.ENVIRONMENT == 'local' and task.dev_panel_data:
+            resp['dev_panel'] = task.dev_panel_data
     elif task.status == 'error':
         resp['error_message'] = task.error_message
 
@@ -1298,6 +1312,8 @@ def poll_improvement_tips(request, task_id):
 
     if task.status == 'complete':
         resp['download_ready'] = True
+        if settings.ENVIRONMENT == 'local' and task.dev_panel_data:
+            resp['dev_panel'] = task.dev_panel_data
     elif task.status == 'error':
         resp['error_message'] = task.error_message
 

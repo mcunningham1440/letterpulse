@@ -92,6 +92,7 @@ TEMPLATES = [
                 'django.contrib.messages.context_processors.messages',
                 'analytics.context_processors.usage_context',
                 'analytics.context_processors.progress_context',
+                'analytics.context_processors.environment_context',
             ],
         },
     },
@@ -290,3 +291,19 @@ CONTENT_FINDER_MAX_URL_LEN = 75     # Truncate displayed URLs to this length
 # =============================================================================
 IMPROVEMENT_TIPS_MODEL = "gpt-5.4-mini"
 IMPROVEMENT_TIPS_REASONING = "medium"
+
+# =============================================================================
+# LLM Pricing (per million tokens) — local dev panel only
+# =============================================================================
+LLM_PRICING = {
+    'gpt-5.4': {
+        'input_per_million': 2.50,
+        'cached_input_per_million': 0.25,
+        'output_per_million': 15.00,
+    },
+    'gpt-5.4-mini': {
+        'input_per_million': 0.75,
+        'cached_input_per_million': 0.075,
+        'output_per_million': 4.50,
+    },
+}

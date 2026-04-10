@@ -690,6 +690,10 @@
                     }
 
                     renderContentFinderResults(data.result_data || {});
+
+                    if (typeof DevPanel !== 'undefined' && data.dev_panel) {
+                        DevPanel.show(data.dev_panel, 'Content Finder');
+                    }
                 } else if (data.status === 'error') {
                     clearInterval(cfPollTimer);
                     cfPollTimer = null;
@@ -883,6 +887,10 @@
                     document.body.appendChild(a);
                     a.click();
                     document.body.removeChild(a);
+
+                    if (typeof DevPanel !== 'undefined' && data.dev_panel) {
+                        DevPanel.show(data.dev_panel, 'Improvement Tips');
+                    }
                 } else if (data.status === 'error') {
                     clearInterval(itPollTimer);
                     itPollTimer = null;

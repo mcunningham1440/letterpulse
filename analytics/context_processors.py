@@ -38,3 +38,10 @@ def progress_context(request):
         'progress_durations': settings.PROGRESS_DURATIONS,
         'expected_times': settings.EXPECTED_TIMES,
     }
+
+
+def environment_context(request):
+    """
+    Expose whether the app is running in local mode to templates.
+    """
+    return {'is_local': settings.ENVIRONMENT == 'local'}

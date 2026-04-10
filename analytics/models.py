@@ -639,6 +639,7 @@ class PendingContentSearch(models.Model):
     )
     result_data = models.JSONField(default=dict, blank=True)
     error_message = models.TextField(blank=True)
+    dev_panel_data = models.JSONField(default=dict, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -671,6 +672,7 @@ class PendingImprovementTips(models.Model):
     )
     result_html = models.TextField(blank=True)
     error_message = models.TextField(blank=True)
+    dev_panel_data = models.JSONField(default=dict, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

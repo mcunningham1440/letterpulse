@@ -520,6 +520,11 @@
     <!-- Progress Bar -->
     <script src="{% static 'analytics/js/progress-bar.js' %}"></script>
 
+    {% if is_local %}
+    <!-- LLM Dev Panel (local mode only) -->
+    <script src="{% static 'analytics/js/dev-panel.js' %}"></script>
+    {% endif %}
+
     <!-- Sidebar Toggle -->
     <script>
         (function() {

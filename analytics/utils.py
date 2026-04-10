@@ -272,27 +272,10 @@ async def llm_call(function_name, messages, model, reasoning_level, response_for
         raise
     duration = time.time() - start_time
 
-    # Log the call
-    # log_file = settings.DATA_DIR / "llm_call_logs.csv"
-    # file_exists = os.path.exists(log_file)
-
-    # user_email = user.email if user and user.is_authenticated else "anonymous"
-
-    # with open(log_file, 'a', newline='', encoding='utf-8') as f:
-    #     writer = csv.writer(f)
-    #     if not file_exists:
-    #         writer.writerow(['function_name', 'run_datetime', 'run_time_s', 'model', 'input_tokens', 'cached_tokens', 'output_tokens', 'reasoning_tokens', 'user'])
-    #     writer.writerow([
-    #         function_name,
-    #         start_datetime,
-    #         f"{duration:.4f}",
-    #         model,
-    #         response.usage.input_tokens,
-    #         response.usage.input_tokens_details.cached_tokens,
-    #         response.usage.output_tokens,
-    #         response.usage.output_tokens_details.reasoning_tokens,
-    #         user_email
-    #     ])
+    # Record to dev panel tracker (no-op outside local mode)
+    from analytics.llm_tracker import is_tracking, record_call
+    if is_tracking():
+        record_call(function_name, model, messages, response, duration)
 
     return response
 
@@ -691,23 +674,6 @@ async def process_post_links(session, post_id, user, beehiiv_token, beehiiv_pub_
         for ls in chosen:
             selected_links.append((sec_name, ls))
 
-    #<TEMPORARY>
-    import json as _json
-    from django.conf import settings as _settings
-    _dump_dir = _settings.DATA_DIR
-    _dump_dir.mkdir(parents=True, exist_ok=True)
-    _link_stats = {}
-    for sec_name, stats in links_by_section.items():
-        n_selected = len(select_top_bottom(stats, allocation.get(sec_name, 0)))
-        _link_stats[sec_name] = {
-            "total_with_clicks": len(stats),
-            "selected": n_selected,
-            "allocation": allocation.get(sec_name, 0),
-        }
-    _dump_path = _dump_dir / f"link_selection_stats_{post_id}.json"
-    _dump_path.write_text(_json.dumps(_link_stats, indent=2))
-    #</TEMPORARY>
-
     if not selected_links:
         return []
 
@@ -751,21 +717,10 @@ Newsletter HTML:
 {tagged_html}"""}
     ]
 
-    #<TEMPORARY>
-    import time as _time
-    _t0 = _time.time()
-    _total_input_tokens = 0
-    _total_output_tokens = 0
-    #</TEMPORARY>
-
     max_retries = settings.LINK_PROCESS_MAX_RETRIES
     for attempt in range(1, max_retries + 2):
         response = await llm_call("process_post_links", messages, "gpt-5.4-mini", "low",
                                    response_format=AllLinkDescriptions, user=user)
-        #<TEMPORARY>
-        _total_input_tokens += response.usage.input_tokens
-        _total_output_tokens += response.usage.output_tokens
-        #</TEMPORARY>
         parsed = response.output[-1].content[0].parsed
         if len(parsed.links) == n_links:
             break
@@ -779,19 +734,6 @@ Newsletter HTML:
                 f"[{post.title}] Expected {n_links} descriptions, got {len(parsed.links)} "
                 f"after {max_retries} retries"
             )
-
-    #<TEMPORARY>
-    _elapsed = _time.time() - _t0
-    _stats_path = _dump_dir / f"link_selection_stats_{post_id}.json"
-    _existing = _json.loads(_stats_path.read_text())
-    _existing["_llm"] = {
-        "elapsed_seconds": round(_elapsed, 2),
-        "input_tokens": _total_input_tokens,
-        "output_tokens": _total_output_tokens,
-        "attempts": attempt,
-    }
-    _stats_path.write_text(_json.dumps(_existing, indent=2))
-    #</TEMPORARY>
 
     desc_by_tag = {ld.tag_id: ld.description for ld in parsed.links}
 
@@ -1157,6 +1099,10 @@ def run_content_finder_background(task_id):
         task.status = 'running'
         task.save(update_fields=['status'])
 
+        from analytics.llm_tracker import start_tracking, finish_tracking
+        if settings.ENVIRONMENT == 'local':
+            start_tracking()
+
         # Load sections for the post
         sections = Section.objects.filter(
             post=task.post,
@@ -1210,7 +1156,11 @@ def run_content_finder_background(task_id):
 
         task.status = 'complete'
         task.result_data = result_data
-        task.save(update_fields=['status', 'result_data'])
+        if settings.ENVIRONMENT == 'local':
+            task.dev_panel_data = finish_tracking() or {}
+            task.save(update_fields=['status', 'result_data', 'dev_panel_data'])
+        else:
+            task.save(update_fields=['status', 'result_data'])
 
     except Exception as e:
         logger.exception("Content finder background task failed")
@@ -1388,36 +1338,10 @@ async def auto_section(html, user, publication, post, n_examples=5, pretty_html=
         }
     ]
 
-    #<TEMPORARY>
-    import json as _json
-    from django.conf import settings as _settings
-    _dump_dir = _settings.DATA_DIR
-    _dump_dir.mkdir(parents=True, exist_ok=True)
-    _dump_path = _dump_dir / f"auto_section_input_{post.post_id}.json"
-    _dump_path.write_text(_json.dumps(input_messages, indent=2, ensure_ascii=True))
-    #</TEMPORARY>
-
-    #<TEMPORARY>
-    import time as _time
-    _t0 = _time.time()
-    #</TEMPORARY>
-
     response = await llm_call(
         "auto_section", input_messages, "gpt-5.4", "low",
         response_format=AllSections, user=user
     )
-
-    #<TEMPORARY>
-    _elapsed = _time.time() - _t0
-    _usage = response.usage
-    _log_path = _dump_dir / f"auto_section_stats_{post.post_id}.json"
-    _log_path.write_text(_json.dumps({
-        "post_id": post.post_id,
-        "elapsed_seconds": round(_elapsed, 2),
-        "input_tokens": _usage.input_tokens,
-        "output_tokens": _usage.output_tokens,
-    }, indent=2))
-    #</TEMPORARY>
 
     parsed = response.output_parsed
 
@@ -2569,6 +2493,10 @@ def run_improvement_tips_background(task_id):
         task.status = 'running'
         task.save(update_fields=['status'])
 
+        from analytics.llm_tracker import start_tracking, finish_tracking
+        if settings.ENVIRONMENT == 'local':
+            start_tracking()
+
         post = task.post
         user = task.user
         publication = task.publication
@@ -2586,7 +2514,11 @@ def run_improvement_tips_background(task_id):
 
         task.status = 'complete'
         task.result_html = result_html
-        task.save(update_fields=['status', 'result_html'])
+        if settings.ENVIRONMENT == 'local':
+            task.dev_panel_data = finish_tracking() or {}
+            task.save(update_fields=['status', 'result_html', 'dev_panel_data'])
+        else:
+            task.save(update_fields=['status', 'result_html'])
 
     except Exception as e:
         logger.exception("Improvement tips background task failed")

@@ -305,6 +305,10 @@
 
             showToast(data.processed_post_ids.length + ' post' + (data.processed_post_ids.length !== 1 ? 's' : '') + ' processed.', 'success');
 
+            if (typeof DevPanel !== 'undefined' && data.dev_panel) {
+                DevPanel.show(data.dev_panel, 'Process Posts');
+            }
+
         } catch (error) {
             console.error('Error:', error);
             ProgressBar.complete({ containerId: 'processPostsProgress', success: false, message: 'Error' });
