@@ -25,7 +25,6 @@ from django.db.models import F
 from Levenshtein import distance as levenshtein_distance
 from dotenv import load_dotenv
 from analytics.prompts import (
-    INSIGHTS_PROMPT,
     CONTENT_FINDER_SYSTEM_PROMPT,
     CONTENT_FINDER_FILTER_SECTIONS_INSTRUCTION,
     CONTENT_FINDER_SECTION_INCLUSION_CRITERIA,
@@ -1092,7 +1091,7 @@ def run_content_finder_background(task_id):
     import threading
     from asgiref.sync import async_to_sync
     from django.db import connection
-    from analytics.models import PendingContentSearch, Section
+    from analytics.models import PendingContentSearch, Section, LinkData
 
     try:
         task = PendingContentSearch.objects.get(task_id=task_id)
@@ -1543,90 +1542,6 @@ async def process_posts_sections_sequential(post_ids, user, beehiiv_token, beehi
                     logger.error(f"Error processing post in parallel: {e}", exc_info=True)
 
     return results_by_post
-
-
-async def generate_content_insights(items_display, user=None):
-    """
-    Generate AI insights from content items using OpenAI API.
-
-    Operates on a single section's items. When the item count exceeds
-    MAX_REPORT_ITEMS, the top and bottom half by CTR are included and
-    the middle is omitted (with a note to the LLM).
-
-    Args:
-        items_display: DataFrame with columns including 'text' and 'click_rate'
-        user: Django user object for credit charging (optional)
-
-    Returns:
-        OpenAI response object containing the generated report
-    """
-    from django.conf import settings as django_settings
-
-    max_items = django_settings.MAX_REPORT_ITEMS
-
-    items_display = items_display.copy()
-    items_display = items_display[items_display["click_rate"].apply(lambda x: len(x) > 0)]
-    items_display["max_click_rate"] = items_display["click_rate"].apply(max)
-    items_display["max_click_rate_percentile"] = items_display["max_click_rate"].rank(pct=True)
-
-    # Sort descending by CTR
-    items_display = (
-        items_display
-        .sort_values("max_click_rate", ascending=False)
-        .reset_index(drop=True)
-    )
-
-    count = len(items_display)
-
-    if max_items < count:
-        half = max_items // 2
-        n_omitted = count - max_items
-        items_display = pd.concat([items_display.head(half), items_display.tail(half)])
-        truncation_note = (
-            f"Note: {count} items exist but only the top {half} and bottom {half} "
-            f"by CTR are shown ({n_omitted} middle items omitted). "
-            f"The distribution is not bimodal — the omitted items fall between these two groups.\n\n"
-        )
-    else:
-        truncation_note = ""
-
-    newsletter_items = ""
-    newsletter_items += truncation_note
-    for i, row in items_display.iterrows():
-        newsletter_items += f"<item {i+1}>\n" + row["text"] + "\n"
-        newsletter_items += f"CTR: {round(row['max_click_rate'] * 100, 2)}% "
-        newsletter_items += f"(percentile {row['max_click_rate_percentile']:.0%})\n"
-        newsletter_items += f"</item {i+1}>\n\n"
-
-    messages = [
-        {"role": "user", "content": INSIGHTS_PROMPT},
-        {"role": "user", "content": newsletter_items}
-    ]
-
-    try:
-        response = await llm_call("generate_content_insights", messages, "gpt-5.4", "medium", user=user)
-    except BadRequestError as e:
-        if e.code != "context_length_exceeded":
-            raise
-
-        # Truncate each item's text to 2500 chars and retry
-        logger.warning("Context length exceeded — truncating item texts to 2500 chars and retrying")
-        newsletter_items = ""
-        newsletter_items += truncation_note
-        for i, row in items_display.iterrows():
-            newsletter_items += f"<item {i+1}>\n" + row["text"][:2500] + "\n"
-            newsletter_items += f"CTR: {round(row['max_click_rate'] * 100, 2)}% "
-            newsletter_items += f"(percentile {row['max_click_rate_percentile']:.0%})\n"
-            newsletter_items += f"</item {i+1}>\n\n"
-
-        messages = [
-            {"role": "user", "content": INSIGHTS_PROMPT},
-            {"role": "user", "content": newsletter_items}
-        ]
-
-        response = await llm_call("generate_content_insights", messages, "gpt-5.4", "medium", user=user)
-
-    return response
 
 
 def load_posts_from_db(publication_id=None, user=None):

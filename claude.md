@@ -32,20 +32,11 @@ Implementation checklist:
 
 A Django web application for analyzing newsletter engagement data from the Beehiiv platform. The app extracts content from newsletter posts, tracks click-through rates (CTR), generates AI-powered insights, and provides annotated HTML exports with improvement tips.
 
-## Project Overview
-
-This application helps newsletter creators understand which content resonates with their audience by:
-- Fetching post data and statistics from the Beehiiv API
-- Extracting specific content items (e.g., "quick links", "product releases") using AI
-- Matching links with click data using fuzzy matching (Levenshtein distance)
-- Generating AI-powered content performance reports
-- Annotating newsletter HTML with actionable improvement tips
-
 ## Tech Stack
 
-- **Backend**: Django 5.0+, Python
+- **Backend**: Django 5.0+, Python 3.11
 - **Database**: PostgreSQL on AWS RDS (Aurora)
-- **AI**: OpenAI API (GPT-5.1 with reasoning)
+- **AI**: OpenAI API (GPT-5.4 and GPT-5.4-mini)
 - **Authentication**: django-allauth (email-based auth)
 - **Frontend**: Bootstrap 5, DataTables, jQuery, Marked.js (markdown rendering), Chart.js (trend charts on Write page)
 - **Async**: aiohttp, asyncio for parallel API calls
@@ -58,584 +49,132 @@ app/
 ├── beehiiv_analytics/          # Django project settings
 │   ├── settings.py             # Main configuration (uses python-dotenv)
 │   ├── urls.py                 # Root URL routing
-│   ├── wsgi.py / asgi.py       # WSGI/ASGI entry points
-│   └── __init__.py
+│   └── wsgi.py / asgi.py       # WSGI/ASGI entry points
 ├── analytics/                  # Main Django app
-│   ├── models.py               # Post, ContentSet, Report, UsageAccount, ExecutionLog, SurveyResponse, ProcessedPost, LinkData, Section, ClickVizEmailLog, CronRunLog, PendingContentSearch models
+│   ├── models.py               # All database models
 │   ├── views.py                # All view logic (login-protected)
 │   ├── urls.py                 # App URL patterns (analytics namespace)
 │   ├── utils.py                # Core utility functions (API calls, AI extraction, credit charging)
+│   ├── llm_tracker.py          # Thread-local LLM call accumulator for dev panel
 │   ├── logsink.py              # Queue-based async logging system
 │   ├── logutils.py             # Logging middleware and decorators
-│   ├── forms.py                # Custom allauth signup form (first/last name, newsletter name)
-│   ├── admin.py                # Django admin configuration
+│   ├── forms.py                # Custom allauth signup form
+│   ├── adapters.py             # Custom allauth adapter
 │   ├── signals.py              # User signals (auto-create UsageAccount)
-│   ├── context_processors.py   # Usage stats for templates
-│   ├── templates/analytics/    # HTML templates
-│   │   ├── base.html           # Base template with Bootstrap/DataTables and user sidebar
-│   │   ├── account.html        # Account settings (usage, API credentials)
-│   │   ├── posts.html          # Posts selection and content extraction page
-│   │   └── insights.html       # Analysis and reporting page
-│   └── migrations/             # Database migrations
+│   ├── context_processors.py   # Usage stats and environment context for templates
+│   ├── templates/analytics/    # HTML templates (base, posts, insights, account, about, mobile)
+│   ├── static/analytics/js/    # JS including dev-panel.js (local mode only)
+│   └── migrations/
 ├── data/                       # Runtime data (LLM call logs)
-├── manage.py                   # Django management script
-├── requirements.txt            # Python dependencies
-├── Dockerfile                  # Docker image definition for AWS App Runner
-├── .dockerignore               # Files excluded from Docker builds
+├── manage.py
+├── requirements.txt
+├── Dockerfile
 ├── push_to_ecr.sh              # Deployment script (builds and pushes to ECR)
-└── .env / .env.example         # Environment variables (local mode)
+├── run_local.sh                # Local Docker development
+└── .env / .env.example
 ```
 
 ## Database Models
 
-### Publication
-Represents a Beehiiv publication (users may have access to multiple):
-- `pub_id`: Beehiiv publication ID (unique)
-- `name`: Publication name
-- `organization_name`: Organization the publication belongs to
+All models are in `analytics/models.py`. Key models and their relationships:
 
-### Post
-Stores newsletter post metadata and engagement stats from Beehiiv:
-- `post_id`: Beehiiv post ID (unique per user)
-- `user`: ForeignKey to User (owner of the post data)
-- `publication`: ForeignKey to Publication (nullable)
-- `title`, `subtitle`
-- `status`: "Draft", "Scheduled", or "Published"
-- `creation_date`: DateTime when post was created in Beehiiv (nullable, stored in UTC)
-- `publish_date`: DateTime when post was published (nullable for drafts, stored in UTC)
-- Engagement metrics: `recipients`, `delivered`, `email_opens`, `unique_email_opens`, `email_clicks`, `unique_email_clicks`, `unsubscribes`, `spam_reports`
-- Unique constraint: `(post_id, user)` - same post can exist for multiple users
-
-### ContentSet
-Named collections of extracted content items:
-- `name`: Identifier for the set (unique per publication and user)
-- `user`: ForeignKey to User (owner of the content set)
-- `publication`: ForeignKey to Publication (nullable)
-- `items_data`: JSON array of extracted items with text, links, clicks, and CTR
-- Unique constraint: `(name, publication, user)` - ensures users can have same-named sets for different publications
-
-### Report
-AI-generated content insights, scoped per section:
-- `name`: Report name (auto-generated as `"{section_name} insights"`)
-- `section_name`: The section this report covers (e.g., "Quick Bites")
-- `user`: ForeignKey to User (owner)
-- `publication`: ForeignKey to Publication (nullable)
-- `content_set`: ForeignKey to ContentSet (nullable, legacy — no longer required)
-- `report_text`: Markdown-formatted analysis
-- Unique constraint: `(section_name, user, publication)` — one report per section per user per publication
-
-### UsageAccount
-Tracks AI usage credits and API credentials per user:
-- `user`: OneToOneField to User
-- `monthly_quota`: Credits available per month (default from `settings.DEFAULT_MONTHLY_CREDITS`)
-- `used_this_period`: Credits consumed this period
-- `period_start`: Start of current billing period (resets on user's signup anniversary each month)
-- `beehiiv_token`: User's Beehiiv API key
-- `beehiiv_pub_id`: User's currently selected Beehiiv publication ID
-- `api_key_valid`: Boolean indicating if the API key has been validated
-- `available_publications`: JSON list of publications available to the user
-- `timezone`: User's preferred timezone for date display (IANA timezone string, default 'America/Chicago')
-- `survey_completed`: Boolean indicating if the user has completed the signup survey
-- `newsletter_name`: Name of the user's newsletter (collected at signup)
-- `auto_click_viz_email`: Boolean — whether to auto-email click visualizations after post publication (default False)
-- `auto_click_viz_enabled_at`: DateTimeField (nullable) — when the user enabled the feature; prevents old posts from triggering emails
-
-Billing cycle: Credits reset on the same day of the month as the user's signup date (e.g., signup on the 15th means credits renew on the 15th of each month). For months with fewer days, renewal occurs on the last day of the month.
-
-API key validation: When a user enters their API key, it is immediately validated against the Beehiiv `/publications` endpoint. If valid, the list of available publications is cached and the user can select which publication to work with.
-
-### ExecutionLog
-Low-overhead execution logging for HTTP requests and function calls:
-- `ts_start`, `ts_end`: Start and end timestamps
-- `duration_ms`: Execution duration in milliseconds
-- `kind`: "request" (HTTP) or "function" (decorated functions)
-- `name`: View name or module.function
-- `success`: Boolean indicating success/failure
-- `error_type`, `error_message`, `traceback`: Error details if failed
-- `user`: ForeignKey to User (nullable)
-- `request_id`: UUID for request correlation
-- `parent_id`: Optional BigIntegerField for nesting
-- `inputs`, `outputs`, `meta`: JSONField placeholders (currently empty)
-- Indexes on: `created_at`, `(kind, name)`, `request_id`, `success`
-
-Uses queue-based async logging via `logsink.py` with a background worker thread for batch inserts.
-
-### SurveyResponse
-Stores user responses to the signup survey (displayed on first login):
-- `user`: OneToOneField to User
-- `beehiiv_analytics_inadequate`: Boolean (nullable) - whether user feels Beehiiv analytics are inadequate
-- `missing_features`: Text field for features the user feels are missing from Beehiiv
-- `other_tools`: Text field for other third-party tools the user uses for newsletter analytics
-
-The survey modal appears automatically on first login and is dismissed once submitted. Survey completion is tracked via `UsageAccount.survey_completed`.
-
-### Feedback
-Captures user feedback on features and product direction:
-- `user`: ForeignKey to User
-- `feature`: CharField — feature area identifier (e.g. "write_post")
-- `response`: CharField — the option the user selected
-- `created_at`: DateTimeField (auto_now_add)
-- Unique constraint: `(user, feature)` — one response per feature per user (update_or_create on resubmit)
-
-### ProcessedPost
-Lightweight marker indicating a post has been processed for section data:
-- `post`: ForeignKey to Post (the source post)
-- `user`: ForeignKey to User (owner)
-- `publication`: ForeignKey to Publication (nullable)
-- Unique constraint: `(post, user)` - one marker per post per user
-
-Created automatically when "Process Selected Posts" runs. The actual section data is stored in the `Section` model.
-
-### Section
-Stores section data extracted from a processed post via an agentic GPT loop:
-- `post`: ForeignKey to Post (the source post)
-- `user`: ForeignKey to User (owner)
-- `publication`: ForeignKey to Publication (nullable)
-- `section_name`: Snake-case identifier for the section (e.g., "tech_news", "quick_links")
-- `section_title`: Display title as it appears in the newsletter (nullable, None for untitled sections)
-- `start_line`: 1-based starting line number in the post HTML
-- `end_line`: 1-based ending line number in the post HTML
-- `post_html_length`: Total line count of the post HTML
-- `section_html`: The raw HTML content of the section
-- Unique constraint: `(post, user, section_name)`
-
-Created via the "Process Selected Posts" workflow. Each row represents one structural section identified in the post HTML. Posts are processed sequentially so each post's sections enrich the context for subsequent posts.
-
-### LinkData
-Stores described link data extracted from a processed post, grouped by section:
-- `post`: ForeignKey to Post
-- `user`: ForeignKey to User
-- `publication`: ForeignKey to Publication (nullable)
-- `raw_url`: The link URL (tracking params stripped)
-- `description`: AI-generated description of the link destination
-- `section_name`: Which section this link belongs to (matches `Section.section_name`)
-- `rank_in_post`: Global rank among all selected links in the post (by CTR descending)
-- `rank_in_section`: Rank among ALL links in the section (by CTR descending, computed before filtering)
-- `mean_ctr`: Mean CTR as percentage
-- `mean_clicks`: Mean unique clicks
-- Unique constraint: `(post, user, raw_url, section_name)`
-
-Created atomically alongside Section rows during "Process Selected Posts". Links are allocated across sections using `LINK_PROCESS_TOP_N`; if a section has more links than its allocation, the top and bottom by CTR are selected.
-
-### PendingReport
-Tracks background report generation tasks:
-- `task_id`: UUID (unique, auto-generated)
-- `user`: ForeignKey to User
-- `publication`: ForeignKey to Publication (nullable)
-- `section_name`: The section being generated for
-- `status`: "pending", "complete", or "error"
-- `result_text`: The generated report markdown (populated on completion)
-- `error_message`: Error details (populated on failure)
-
-Created when a user initiates section-level report generation. One PendingReport is created per section. The LLM call runs in a background thread per section. The frontend polls `/insights/report-status/<task_id>/` for each task until all complete, then shows a review overlay.
-
-### PendingContentSearch
-Tracks background content finder tasks:
-- `task_id`: UUID (unique, auto-generated)
-- `user`: ForeignKey to User
-- `publication`: ForeignKey to Publication (nullable)
-- `post`: ForeignKey to Post (template post)
-- `mode`: "auto" or "manual"
-- `selected_sections`: JSON list of section names (manual mode only)
-- `status`: "pending", "running", "complete", or "error"
-- `result_data`: JSON dict of `{section_name: [link dicts]}` (populated on completion)
-- `error_message`: Error details (populated on failure)
-- `dev_panel_data`: JSON dict of LLM call tracking data (local mode only)
-
-Created when a user runs Content Finder from the Write page. A background thread runs a per-section agentic LLM loop with Perplexity web search. The frontend polls `/insights/content-finder/status/<task_id>/` until complete, then renders results in an accordion.
-
-### PendingImprovementTips
-Tracks background improvement tips generation tasks:
-- `task_id`: UUID (unique, auto-generated)
-- `user`: ForeignKey to User
-- `publication`: ForeignKey to Publication (nullable)
-- `post`: ForeignKey to Post
-- `status`: "pending", "running", "complete", or "error"
-- `result_html`: TextField — the generated annotated HTML (populated on completion)
-- `error_message`: Error details (populated on failure)
-- `dev_panel_data`: JSON dict of LLM call tracking data (local mode only)
-
-Created when a user runs "Get Improvement Tips" from the Write page. A background thread fetches post HTML, builds text/link context, calls LLM for tips, and generates a two-column annotated HTML. The frontend polls `/insights/improvement-tips/status/<task_id>/` until complete, then triggers a file download.
+- **Publication**: Beehiiv publication (users may have multiple)
+- **Post**: Newsletter post metadata + engagement stats from Beehiiv. Scoped to `(post_id, user)`
+- **ContentSet**: Named collections of extracted content items (legacy). Scoped to `(name, publication, user)`
+- **Report**: AI-generated insights per section. Has legacy nullable `content_set` FK. Scoped to `(section_name, user, publication)`
+- **UsageAccount**: Per-user credits, API credentials, preferences. OneToOneField to User. Billing resets on signup anniversary each month
+- **ProcessedPost**: Marker that a post has been processed. Scoped to `(post, user)`
+- **Section**: Structural section extracted from a post's HTML (name, title, line range, HTML content). Scoped to `(post, user, section_name)`
+- **LinkData**: Described links with CTR data, grouped by section. Scoped to `(post, user, raw_url, section_name)`
+- **PendingContentSearch**: Background content finder task tracker. Has `dev_panel_data` JSONField for local dev panel
+- **PendingImprovementTips**: Background improvement tips task tracker. Has `dev_panel_data` JSONField for local dev panel
+- **ExecutionLog**: Low-overhead request/function logging with queue-based async writes via `logsink.py`
+- **Feedback**: Per-user feature feedback. Scoped to `(user, feature)`
+- **SurveyResponse**: Signup survey answers (survey currently disabled via `SIGNUP_SURVEY_ENABLED = False`)
+- **ClickVizEmailLog**: Log of auto-emailed click visualizations. Scoped to `(user, post_id)`
+- **CronRunLog**: Management command execution log
 
 ## Authentication
 
-Uses django-allauth for email-based authentication:
-- Email as primary identifier; usernames are auto-generated from the email local part (e.g. `user@example.com` → `user`), with progressive integers appended if taken (`user1`, `user2`, etc.)
-- Signup collects first name, last name, newsletter name, email, and password (custom form in `analytics/forms.py`, adapter in `analytics/adapters.py`)
-- Password-based login at `/accounts/login/`
-- Registration at `/accounts/signup/`
-- Password reset via email
-- All views are protected with `@login_required` except the public about page
-- UsageAccount is auto-created for new users via signals; a signup notification email is sent in a background thread to `SIGNUP_NOTIFICATION_EMAIL` (if configured)
-- "Successfully signed in as" message is suppressed via custom adapter
-- After login, users without API credentials are redirected to Account page (not Posts); users with credentials go to Posts
-- The "Please configure your Beehiiv API credentials" message only appears when navigating to Posts/Write without credentials, not immediately after login
+- Email as primary identifier; usernames auto-generated from email local part with progressive integers if taken
+- Signup collects first name, last name, newsletter name, email, password
+- All views `@login_required` except the public about page at `/`
+- UsageAccount auto-created for new users via signals
+- After login: users without API credentials → Account page; users with credentials → Posts page
+- "Please configure your Beehiiv API credentials" message only appears when navigating to Posts/Write without credentials, not immediately after login
 
-### Public Pages
-- `/` - About page (unauthenticated users see landing page; authenticated users redirect to posts)
+**Important:** `SECRET_KEY` derives the encryption key for user beehiiv tokens (via `EncryptedCharField`). Changing it makes existing encrypted tokens unreadable.
 
 ## Key Features & Workflows
 
 ### 1. Posts Page (`/posts/`)
 - **Refresh Posts**: Fetches all posts from Beehiiv API with pagination
-- **Select Posts**: DataTable with sorting by date, opens, clicks
-- **Process Selected Posts**: Runs immediately when clicked (no modal). For each post, fetches HTML from Beehiiv, runs `auto_section` to identify structural sections, then runs `process_post_links` to extract/describe/score links within each section. Both operations must succeed atomically — if either fails, nothing is saved for that post. Section and LinkData rows plus the `ProcessedPost` marker are saved in a single DB transaction. Shows progress bar during extraction. If any selected posts already have processed data, shows an overwrite warning. First 2 posts are processed sequentially to seed section context; remaining posts run in parallel.
-- **Processed Column**: Shows a green checkmark for posts that have been processed. Trash icon to clear processed data (deletes `ProcessedPost`, `Section`, and `LinkData` records).
+- **Process Selected Posts**: Runs immediately (no modal). For each post: fetches HTML, runs `auto_section` → `process_post_links`. Both must succeed atomically — if either fails, nothing is saved. Section + LinkData + ProcessedPost marker saved in a single DB transaction. First 2 posts run sequentially to seed section context; remaining posts run in parallel
+- **Processed Column**: Green checkmark for processed posts; trash icon to clear (deletes ProcessedPost, Section, LinkData)
 - **Download Click Visualization**: ZIP of HTML files with click counts overlaid on links
 
 ### 2. Write Page (`/insights/`)
-- **1. Find content (Content Finder)**: Agentic content recommendation tool. User selects a processed post as a template, optionally toggles manual section selection, and clicks "Run Content Search". A per-section agentic LLM loop uses Perplexity web search to find new content matching historical click patterns. Results display in a Bootstrap accordion grouped by section. Each link shows title, source, URL, date, description, and audience relevance. Costs `CREDITS_PER_CONTENT_SEARCH` credits per run. Background task with polling (3s interval). Always visible; errors at runtime if Perplexity API key is not configured.
-- **Section Data Table**: DataTable showing all Sections for the current publication — Post Title, Post Date, Section Name, Description, Start Line, End Line. Sortable and scrollable. Download CSV button (client-side). Hidden by default.
-- **Link Data Table**: DataTable showing all LinkData for the current publication — Post Title, Post Date, Section, URL, Description, Rank in Section, Mean CTR (%), Mean Clicks. Sortable and scrollable. Download CSV button (client-side). Hidden by default.
-- **2. Write your post**: Feedback card asking users whether an AI writing feature would be valuable. Three options: write drafts, outlines only, or no thanks. Response saved to `Feedback` model (feature="write_post"). Shows "Thanks for your feedback!" after submission.
-- **4. Improve your post**: User selects any post (published or draft, with status shown) from a dropdown, then clicks "Get Improvement Tips". Runs a background task that fetches post HTML, builds numbered text with HTML line mapping, gathers link history context for all sections, calls LLM with structured output for tips, and generates a two-column annotated HTML with tip cards and SVG connectors. The annotated HTML is downloaded as a file. Costs `CREDITS_PER_IMPROVEMENT_TIPS` credits per run. Background task with polling (3s interval). Uses `PendingImprovementTips` model for task tracking.
+- **Content Finder**: User selects a processed post as template. Per-section agentic LLM loop uses Perplexity web search to find new content matching historical click patterns. Background task with polling (3s interval). Results in Bootstrap accordion grouped by section
+- **Section/Link Data Tables**: Hidden by default, show all Sections and LinkData for current publication with CSV download
+- **Improvement Tips**: User selects any post (published or draft). Background task builds numbered text with HTML line mapping, gathers link history, calls LLM with structured output, generates two-column annotated HTML with tip cards and SVG connectors. Downloaded as file
 
 ### 3. Account Page (`/account/`)
-- **Usage Stats**: View AI credits used and remaining
-- **API Credentials**: Configure Beehiiv API key (validated on save)
-- **Publication Selector**: Dropdown to switch between available publications (populated from API)
-- **Account Info**: View email and change password
+- Usage stats, API credentials (validated on save), publication selector, account info
 
-**Publication Switching**: Each publication has its own posts, content sets, and reports. Switching publications changes the active data context throughout the app.
-
-**User Scoping**: Posts and ContentSets are scoped to both publication AND user. This means two different users can use the same publication without seeing each other's data.
-
-### 4. Signup Survey
-A modal survey appears on first login for new users, collecting feedback about:
-1. Whether they feel Beehiiv's existing analytics tools are inadequate (yes/no)
-2. What analytics features they feel are missing from Beehiiv (freeform text)
-3. What other third-party tools they use for newsletter analytics (freeform text)
-
-The survey is required (modal blocks interaction until submitted) and responses are stored in the `SurveyResponse` model. Once submitted, `UsageAccount.survey_completed` is set to `True` and the survey won't appear again.
-
-### ClickVizEmailLog
-Log of click visualization emails sent to users:
-- `user`: ForeignKey to User
-- `publication`: ForeignKey to Publication (nullable)
-- `post_id`: CharField — Beehiiv post ID (not FK to Post, since the Post record may not exist in DB)
-- `post_title`: CharField (blank)
-- `sent_at`: DateTimeField (auto_now_add)
-- `success`: BooleanField (default True)
-- `error_message`: TextField (blank)
-- Unique constraint: `(user, post_id)` — prevents duplicate emails
-
-### CronRunLog
-Log of each management command invocation for monitoring:
-- `command`: CharField — management command name (e.g. `send_click_viz_emails`)
-- `started_at`: DateTimeField
-- `finished_at`: DateTimeField (nullable)
-- `duration_ms`: PositiveIntegerField (nullable)
-- `users_processed`: PositiveIntegerField
-- `emails_sent`: PositiveIntegerField
-- `errors`: PositiveIntegerField
-- `output`: TextField — captured stdout from the command
-- `success`: BooleanField
-- `triggered_by`: CharField — `cron`, `manual`, etc.
+**User Scoping**: Posts, ContentSets, Sections, and LinkData are all scoped to both publication AND user.
 
 ## API Endpoints
 
-All routes use the `analytics:` namespace.
+All routes use the `analytics:` namespace. See `analytics/urls.py` for the full list. Key groups:
 
-### Posts Routes
-- `GET /posts/` - Main posts page
-- `POST /posts/run/` - Run AI content extraction (legacy single-description flow)
-- `POST /posts/process/` - Run section-level extraction on selected posts, stores results in Section (AJAX)
-- `POST /posts/save/` - Save extracted items as ContentSet
-- `POST /posts/delete-items/` - Remove items from session
-- `POST /posts/refresh-posts/` - Fetch latest posts from Beehiiv
-- `POST /posts/download-click-viz/` - Generate click visualization ZIP
-- `POST /posts/clear-processed/` - Delete ProcessedPost, Section, and LinkData records for selected posts (AJAX)
+- **Posts**: `/posts/`, `/posts/process/`, `/posts/refresh-posts/`, `/posts/clear-processed/`
+- **Insights**: `/insights/`, `/insights/load-processed-data/`, `/insights/load-link-data/`
+- **Content Finder**: `/insights/content-finder/posts/`, `/insights/content-finder/sections/`, `/insights/content-finder/run/`, `/insights/content-finder/status/<uuid>/`
+- **Improvement Tips**: `/insights/improvement-tips/posts/`, `/insights/improvement-tips/run/`, `/insights/improvement-tips/status/<uuid>/`, `/insights/improvement-tips/download/<uuid>/`
+- **Account**: `/account/`
+- **Feedback/Survey**: `/feedback/submit/`, `/survey/submit/`
+- **Cron**: `/cron/click-viz-status/`
 
-### Insights Routes
-- `GET /insights/` - Write page (section and link data tables, content finder, improvement tips)
-- `GET /insights/load-processed-data/` - Load all Section items as JSON for the current user/publication
-- `GET /insights/load-link-data/` - Load all LinkData items as JSON for the current user/publication
-- `GET /insights/content-finder/posts/` - List processed posts for content finder dropdown
-- `GET /insights/content-finder/sections/?post_id=` - List section names for a given post
-- `POST /insights/content-finder/run/` - Start content finder background task (JSON body: post_id, mode, selected_sections)
-- `GET /insights/content-finder/status/<uuid>/` - Poll content finder task status and results
-- `GET /insights/improvement-tips/posts/` - List all posts (published + drafts) for improvement tips dropdown
-- `POST /insights/improvement-tips/run/` - Start improvement tips background task (JSON body: post_id)
-- `GET /insights/improvement-tips/status/<uuid>/` - Poll improvement tips task status
-- `GET /insights/improvement-tips/download/<uuid>/` - Download annotated HTML for completed task
+## Deployment
 
-### Account Routes
-- `GET /account/` - Account settings page
-- `POST /account/` - Update API credentials, toggle click viz email
-
-### Feedback Routes
-- `POST /feedback/submit/` - Submit user feedback (JSON body: feature, response)
-
-### Survey Routes
-- `POST /survey/submit/` - Submit signup survey response
-
-### Cron Routes
-- `GET /cron/click-viz-status/` - JSON status page showing recent cron runs, email logs, and eligible users (login required; non-superusers see only their own email logs)
-
-## Deployment Modes
-
-The app can run in two modes: **local** and **cloud**. Both modes connect to the same AWS RDS database.
+The app runs in **local** or **cloud** mode. Both connect to the same AWS RDS database.
 
 ### Local Mode
-
-For local development, the app reads environment variables from the `.env` file (via `python-dotenv`).
-
-Required in `.env`:
-```
-# Django
-SECRET_KEY=your-secret-key-here
-
-# Database credentials as JSON (matches AWS Secrets Manager format)
-DATABASE_SECRET={"username":"your_db_user","password":"your_db_password"}
-
-# API Keys
-OPENAI_API_KEY=your-openai-api-key
-
-# Email (Gmail SMTP for signup notifications)
-EMAIL_HOST_USER=yourgmail@gmail.com
-EMAIL_HOST_PASSWORD=xxxx-xxxx-xxxx-xxxx
-SIGNUP_NOTIFICATION_EMAIL=yourgmail@gmail.com
-```
-
-**Important:** `SECRET_KEY` is used to derive the encryption key for user beehiiv tokens (via `EncryptedCharField`). Changing the SECRET_KEY will make existing encrypted tokens unreadable. Always backup the SECRET_KEY alongside database backups.
-
-A Python 3.11 virtual environment exists at `.venv/`. The system default `python` is Python 3.8 (Anaconda) and does **not** have project dependencies installed. When running Python commands locally, use the venv explicitly:
+Reads environment variables from `.env` (via python-dotenv). A Python 3.11 venv exists at `.venv/`. The system default `python` is Python 3.8 (Anaconda) and does **not** have project dependencies. Use:
 
 ```bash
 source .venv/bin/activate && python manage.py runserver
 ```
 
-Or directly:
-
-```bash
-.venv/bin/python manage.py check
-```
-
-Or run locally with Docker (mirrors production environment):
-```bash
-./run_local.sh
-```
-
-**`run_local.sh`** builds and runs the app in a Docker container:
-1. Stops and removes any existing `letterpulse_local` container
-2. Builds the Docker image for ARM64 (Apple Silicon)
-3. Runs the container on port 8000 with environment variables from `.env`
-
-The app will be available at `http://localhost:8000`. The script uses relative paths so it can be run from any directory.
+Or run via Docker: `./run_local.sh` (builds ARM64 image, runs on port 8000).
 
 ### Cloud Mode (AWS App Runner via ECR)
-
-For production, the app runs on AWS App Runner using a Docker image stored in ECR. Secrets are configured in the App Runner service settings to pull from AWS Secrets Manager.
-
-**Dockerfile** builds a `python:3.11-slim` image that:
-1. Installs system dependencies (`gcc`, `python3-dev`)
-2. Installs Python dependencies from `requirements.txt`
-3. On startup: runs `migrate`, `collectstatic`, then starts gunicorn (1 worker, 4 threads, 120s timeout)
-
-**Deployment** via `push_to_ecr.sh`:
 ```bash
 ./push_to_ecr.sh dev    # Pushes to letterpulse:dev-latest
 ./push_to_ecr.sh prod   # Pushes to letterpulse:prod-latest
-./push_to_ecr.sh both   # Pushes to both dev and prod
+./push_to_ecr.sh both   # Pushes to both
 ```
 
-The script:
-1. Logs into ECR
-2. Builds the image for `linux/amd64` (required for App Runner)
-3. Tags and pushes to ECR
-4. App Runner auto-deploys when a new image is pushed
+Dockerfile: `python:3.11-slim`, runs migrate → collectstatic → gunicorn (1 worker, 4 threads, 120s timeout).
 
-### Environment Variable Format
+Beehiiv API credentials are per-user (configured in Account page), not environment variables.
 
-**DATABASE_SECRET**: JSON string with database credentials. AWS RDS Secrets Manager automatically generates this format:
-```json
-{"username": "db_user", "password": "db_password"}
-```
+## Key Architecture Notes
 
-The `settings.py` parses this JSON to configure the Django database connection:
-```python
-db = json.loads(os.environ["DATABASE_SECRET"])
-DATABASES = {
-    'default': {
-        'USER': db['username'],
-        'PASSWORD': db['password'],
-        'HOST': 'letterpulse-dev.cluster-....us-east-1.rds.amazonaws.com',
-        ...
-    }
-}
-```
-
-**OPENAI_API_KEY**: Standard OpenAI API key string.
-
-**Note:** Beehiiv API credentials (token and publication ID) are configured per-user in the Account settings page, not via environment variables.
-
-## Key Utility Functions (analytics/utils.py)
-
-### API Functions
-All Beehiiv API functions require `beehiiv_token` and `beehiiv_pub_id` parameters (obtained from user's UsageAccount):
-- `validate_beehiiv_api_key(beehiiv_token)`: Validate API key and return list of available publications
-- `fetch_post_html(session, post_id, semaphore, beehiiv_token, beehiiv_pub_id)`: Fetch individual post HTML
-- `fetch_post_clicks(session, post_id, semaphore, beehiiv_token, beehiiv_pub_id)`: Fetch individual post clicks
-- `fetch_posts_html_and_clicks_parallel(post_ids, beehiiv_token, beehiiv_pub_id)`: Batch fetch with semaphore (5 concurrent)
-- `fetch_all_posts(beehiiv_token, beehiiv_pub_id)`: Paginated fetch of all posts (includes drafts, confirmed, and archived via `status=all`)
-- `refresh_posts_data(beehiiv_token, beehiiv_pub_id)`: Full refresh from Beehiiv API
-- `process_posts_data()`: Converts raw API data to DataFrame. All dates are stored in UTC. Drafts have null `publish_date`
-
-Views use `get_user_api_credentials(user)` helper to retrieve credentials and redirect to Account page if not configured.
-
-### Database Functions
-- `load_posts_from_db(publication_id=None, user=None)`: Load posts from database filtered by publication and user
-
-### AI Functions
-- `llm_call(user=None)`: Wrapper for OpenAI API with logging to CSV
-- `charge_credits(user, credits)`: Atomically charge credits against user quota
-- `NotEnoughCredits`: Exception raised when quota exceeded
-- `extract_items()`: AI-powered content extraction from HTML (single-description, legacy)
-- `allocate_links_to_sections(section_link_counts, top_n)`: Divide `top_n` link slots fairly across sections; sections with fewer links than their share get capped and surplus is redistributed
-- `select_top_bottom(link_stats, n)`: Select top `ceil(n/2)` and bottom `floor(n/2)` links by CTR from a sorted list
-- `process_post_links(session, post_id, user, beehiiv_token, beehiiv_pub_id, sections, pretty_html)`: Section-aware link extraction. Matches clicks at post level, assigns links to sections by line position, allocates via `LINK_PROCESS_TOP_N`, selects top/bottom per section, uses GPT-5.4-mini for descriptions. Returns list of link row dicts with `section_name` and `rank_in_section`.
-- `build_sections_desc(user, publication, post, n_examples=5)`: Build context prompt from existing sections of nearby posts for the agentic loop
-- `auto_section(html, user, publication, post, n_examples=5, pretty_html=None)`: Single structured-output LLM call (returns `AllSections` Pydantic model) to identify structural sections in newsletter HTML. Accepts optional pre-prettified HTML to avoid double-prettifying.
-- `process_post_full(session, post_id, user, beehiiv_token, beehiiv_pub_id, publication)`: Fetch HTML, run `auto_section` then `process_post_links` using the same prettified HTML. If either fails, the exception propagates and nothing is saved.
-- `_save_post_full(post_id, sections, link_rows, user, publication)`: Save Section rows, LinkData rows, and ProcessedPost marker in a single atomic transaction.
-- `process_posts_sections_sequential(post_ids, user, beehiiv_token, beehiiv_pub_id, publication)`: Process multiple posts with hybrid sequential/parallel strategy. Uses `process_post_full` + `_save_post_full` per post.
-- `generate_content_insights()`: Generate performance analysis report for a single section. When item count exceeds `MAX_REPORT_ITEMS`, top and bottom performers by CTR are kept and middle items are omitted (with a note to the LLM).
-- `fetch_recent_published_posts(beehiiv_token, beehiiv_pub_id, max_pages=3)`: Async — fetch recently published posts ordered by publish_date desc; stops early if oldest post on page is >24h old
-- `build_click_viz_email_html(viz_html, post_title, site_url)`: Wrap click viz HTML with branded header banner and footer for email delivery
-
-### Content Finder Functions
-- `truncate_url(url, max_len)`: Shorten a URL to max_len characters
-- `format_link_history(section, max_links, max_url_len)`: Build formatted historical link performance string for a section. Returns (formatted_string, link_count)
-- `perplexity_search(queries, max_results, domains, max_days_ago)`: Call Perplexity search API, return formatted results string
-- `build_content_finder_user_prompt(section, link_history_str, link_count, max_url_len)`: Build per-section user prompt with content and historical link data
-- `run_content_finder_agent(messages, allow_exclusion, model, reasoning, max_rounds)`: Async per-section agentic loop. Uses web_search and dismiss_section tools. Returns (response_or_None, all_responses, all_results)
-- `process_content_finder_section(section, allow_exclusion, ...)`: Orchestrate content finding for one section. Returns (section_name, links_or_None)
-- `run_content_finder_background(task_id)`: Background thread entry point. Loads PendingContentSearch, runs all sections in parallel, saves results
-
-### Improvement Tips Functions
-- `generate_improvement_tips_html(post, user, publication, beehiiv_token, beehiiv_pub_id)`: Async — fetches post HTML, builds numbered text with HTML line mapping (BeautifulSoup sourceline tracking through `<a>` replacement), gathers link history for all sections with sample titles, calls LLM with structured output (`AllImprovementTips` Pydantic model), and renders a two-column annotated HTML with tip cards and SVG Bezier connectors. Returns HTML string.
-- `run_improvement_tips_background(task_id)`: Background thread entry point. Loads PendingImprovementTips, calls `generate_improvement_tips_html`, saves result_html or error.
-
-## Management Commands
-
-### `send_click_viz_emails`
-Sends click visualization emails for posts published more than 24 hours ago.
-
-```bash
-python manage.py send_click_viz_emails [--dry-run] [--user-email=<email>]
-```
-
-**Flow per user** (only users with `auto_click_viz_email=True` and `api_key_valid=True`):
-1. Calls `fetch_recent_published_posts()` to get recent published posts from Beehiiv API
-2. Filters to posts where: `publish_date` > `auto_click_viz_enabled_at`, `publish_date` < `now - 24h`, and no successful `ClickVizEmailLog` exists for the user+post_id
-3. Generates click visualization HTML and emails it via Django's `EmailMessage`
-4. Creates `ClickVizEmailLog` entry (success or failure)
-
-Runs automatically every 30 minutes via a background daemon thread started in `AnalyticsConfig.ready()` (gunicorn and runserver only — does not start during migrations or other management commands). Can also be run manually via `python manage.py send_click_viz_emails`.
-
-## Credit System Configuration
-
-Credit costs are configured in `settings.py`:
-
-```python
-# Default monthly credits for new users
-DEFAULT_MONTHLY_CREDITS = 150
-
-# Credit costs per operation
-CREDITS_PER_EXTRACTION = 1      # Per post extracted from
-CREDITS_PER_REPORT = 1          # Flat cost for generating insights
-CREDITS_PER_IMPROVEMENT_TIPS = 1  # Per post improvement tips generation
-
-# Section processing configuration
-SECTION_N_EXAMPLES = 5              # Number of nearby-post examples per section for context
-
-# Link processing configuration
-LINK_PROCESS_TOP_N = 60             # Total links to select across all sections
-LINK_PROCESS_MAX_RETRIES = 2        # Max LLM retries for link description count mismatch
-
-# Maximum items sent to the LLM for report generation
-MAX_REPORT_ITEMS = 150
-
-# Whether to show the signup survey modal to new users
-SIGNUP_SURVEY_ENABLED = False
-
-# Maximum new user signups allowed per rolling 24-hour window (None = unlimited)
-DAILY_SIGNUP_CAP = 5
-
-# Auto click viz email settings
-SITE_URL = 'https://letterpulse.com'  # Base URL for links in emails (env: SITE_URL)
-
-# Content Finder configuration
-PERPLEXITY_API_KEY = ''              # Perplexity search API key (env: PERPLEXITY_API_KEY)
-CREDITS_PER_CONTENT_SEARCH = 1      # Per content finder run
-CONTENT_FINDER_MODEL = "gpt-5.4-mini"
-CONTENT_FINDER_REASONING = "medium"
-CONTENT_FINDER_MAX_ROUNDS = 3       # Max search round-trips per section
-CONTENT_FINDER_MAX_LINKS = 60       # Max historical links per section for context
-CONTENT_FINDER_MAX_URL_LEN = 75     # Truncate displayed URLs to this length
-
-# Improvement Tips configuration
-IMPROVEMENT_TIPS_MODEL = "gpt-5.4-mini"
-IMPROVEMENT_TIPS_REASONING = "medium"
-
-# LLM Pricing (per million tokens) — local dev panel only
-LLM_PRICING = {
-    'gpt-5.4': { 'input_per_million': 2.50, 'cached_input_per_million': 0.25, 'output_per_million': 15.00 },
-    'gpt-5.4-mini': { 'input_per_million': 0.75, 'cached_input_per_million': 0.075, 'output_per_million': 4.50 },
-}
-```
-
-Credits are charged at the view level before each AI operation runs.
+### Credit System
+Credit costs and configuration constants are in `settings.py` (search for `CREDITS_PER_*`, `DEFAULT_MONTHLY_CREDITS`). Credits charged at the view level before each AI operation. Billing resets on user's signup anniversary each month.
 
 ### LLM Dev Panel (local mode only)
+When `ENVIRONMENT == 'local'`, a floating panel appears after LLM-powered workflows showing per-call details (model, prompts, runtime, tokens, costs). Architecture:
+- `llm_tracker.py`: Context-variable-based accumulator. `start_tracking()` / `finish_tracking()` bracket workflows; `llm_call()` in utils.py records each call. No-ops when not local
+- **Data transport**: Sync workflows (Process Posts) include data in JSON response. Background workflows (Content Finder, Improvement Tips) store data in `dev_panel_data` JSONField on their Pending* models, returned via polling endpoint
+- `static/analytics/js/dev-panel.js`: Frontend renderer, loaded conditionally via `{% if is_local %}`
 
-When `ENVIRONMENT == 'local'`, a floating dark-themed panel appears in the top-right corner after any LLM-powered workflow completes (Process Posts, Content Finder, Improvement Tips). It shows per-call details (model, prompts, runtime, token usage, costs) and aggregated totals. A "Download JSON" button exports the full report.
+### Background Task Pattern
+Content Finder, Improvement Tips, and Report generation all use the same pattern: create a Pending* model row → spawn a background thread → frontend polls a status endpoint at 3s intervals → result stored on the model row.
 
-**Architecture:**
-- `analytics/llm_tracker.py`: Thread-local accumulator. `start_tracking()` / `finish_tracking()` bracket a workflow; `llm_call()` in `utils.py` automatically records each call via `record_call()`. All functions are no-ops when `ENVIRONMENT != 'local'`.
-- **Data transport**: For sync workflows (Process Posts), dev panel data is included directly in the JSON response. For background-thread workflows (Content Finder, Improvement Tips), data is stored in the `dev_panel_data` JSONField on `PendingContentSearch` / `PendingImprovementTips` and returned via the polling endpoint.
-- `analytics/static/analytics/js/dev-panel.js`: Frontend component. `DevPanel.show(data, workflowName)` renders the panel. Loaded conditionally via `{% if is_local %}` in `base.html`.
-- `is_local` template variable provided by `analytics.context_processors.environment_context`.
-
-### Link Matching
-- `match_links_with_clicks()`: Uses exact matching first, then Levenshtein distance (40% threshold) for fuzzy matching
-
-## Execution Logging System
-
-Queue-based async logging for HTTP requests and function calls with minimal overhead:
-
-### Architecture
-- `ExecutionLoggingMiddleware` in `logutils.py` logs all HTTP requests automatically
-- `@log_function()` decorator for logging specific function executions
-- `LogSink` in `logsink.py` manages a Queue + background worker thread
-- Batch inserts via `bulk_create()` every 50 entries or 1 second
-- Each Gunicorn worker process has its own queue and worker thread
-
-### Configuration (settings.py)
-```python
-EXECUTION_LOG_QUEUE_MAXSIZE = 2000   # Max entries in queue before overflow
-EXECUTION_LOG_BATCH_SIZE = 50        # Entries per bulk_create
-EXECUTION_LOG_FLUSH_INTERVAL = 1.0   # Seconds between flushes
-EXECUTION_LOG_ON_FULL = 'drop'       # 'drop' or 'sync' when queue is full
-```
-
-### Usage
-```python
-from analytics.logutils import log_function
-
-@log_function()
-async def my_function():
-    ...
-
-@log_function(name="custom.name")
-def another_function():
-    ...
-```
-
-### Resilience
-- Queue full → logs dropped silently (or sync-write if `EXECUTION_LOG_ON_FULL='sync'`)
-- Database errors caught and never propagated to the application
-- Worker thread is a daemon thread (won't block app shutdown)
+### Management Commands
+- `send_click_viz_emails [--dry-run] [--user-email=<email>]`: Emails click visualizations for posts published >24h ago. Runs automatically every 30 minutes via a daemon thread in `AnalyticsConfig.ready()` (gunicorn/runserver only)
 
 ## Testing Notes
 

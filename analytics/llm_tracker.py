@@ -1,9 +1,14 @@
 """
-Thread-local LLM call tracker for the local dev panel.
+Context-variable LLM call tracker for the local dev panel.
 
 Collects detailed data (prompts, token usage, costs, timing) from every
 llm_call invocation during a workflow.  All public functions are no-ops
 when ENVIRONMENT != 'local', so there is zero overhead in production.
+
+Uses contextvars.ContextVar instead of threading.local so that the
+tracker state is properly propagated across the async_to_sync boundary
+(asgiref copies the current context into the thread it spawns for the
+event loop).
 
 Usage::
 
@@ -14,12 +19,13 @@ Usage::
     data = finish_tracking()   # dict ready for JSON serialization
 """
 
-import threading
+import contextvars
 import time
 
 from django.conf import settings
 
-_local = threading.local()
+_tracker_calls = contextvars.ContextVar('_tracker_calls', default=None)
+_tracker_start = contextvars.ContextVar('_tracker_start', default=None)
 
 
 # ---------------------------------------------------------------------------
@@ -27,23 +33,24 @@ _local = threading.local()
 # ---------------------------------------------------------------------------
 
 def start_tracking():
-    """Begin collecting LLM call data on the current thread."""
+    """Begin collecting LLM call data in the current context."""
     if settings.ENVIRONMENT != 'local':
         return
-    _local.calls = []
-    _local.start_time = time.time()
+    _tracker_calls.set([])
+    _tracker_start.set(time.time())
 
 
 def is_tracking():
-    """Return True if tracking is active on this thread."""
+    """Return True if tracking is active in the current context."""
     if settings.ENVIRONMENT != 'local':
         return False
-    return hasattr(_local, 'calls')
+    return _tracker_calls.get() is not None
 
 
 def record_call(function_name, model, messages, response, duration):
     """Append one LLM call record.  Called automatically by llm_call()."""
-    if not is_tracking():
+    calls = _tracker_calls.get()
+    if calls is None:
         return
 
     system_prompt = _extract_by_role(messages, 'system')
@@ -62,7 +69,7 @@ def record_call(function_name, model, messages, response, duration):
     cached_cost = _token_cost(cached_tokens, pricing.get('cached_input_per_million', 0))
     output_cost = _token_cost(output_tokens, pricing.get('output_per_million', 0))
 
-    _local.calls.append({
+    calls.append({
         'function_name': function_name,
         'model': model,
         'system_prompt': system_prompt,
@@ -88,14 +95,15 @@ def record_call(function_name, model, messages, response, duration):
 def finish_tracking():
     """
     Finalize tracking, compute totals, and return the full data dict.
-    Clears thread-local state so a new tracking session can begin.
+    Clears context state so a new tracking session can begin.
     Returns None if tracking was never started.
     """
-    if not is_tracking():
+    calls = _tracker_calls.get()
+    start_time = _tracker_start.get()
+    if calls is None or start_time is None:
         return None
 
-    wall_clock = round(time.time() - _local.start_time, 3)
-    calls = _local.calls
+    wall_clock = round(time.time() - start_time, 3)
 
     # Aggregate totals
     tot_new_input = sum(c['input_usage']['new_tokens'] for c in calls)
@@ -131,8 +139,8 @@ def finish_tracking():
     }
 
     # Clear state
-    del _local.calls
-    del _local.start_time
+    _tracker_calls.set(None)
+    _tracker_start.set(None)
 
     return data
 
@@ -174,7 +182,7 @@ def _extract_output(response):
     parts = []
     for item in getattr(response, 'output', []):
         # Text output items
-        if hasattr(item, 'content'):
+        if hasattr(item, 'content') and item.content:
             for content_piece in item.content:
                 if hasattr(content_piece, 'text'):
                     parts.append(content_piece.text)

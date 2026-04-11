@@ -242,10 +242,6 @@ class Post(models.Model):
     def __str__(self):
         return f"{self.title} ({self.publish_date})"
     
-    @property
-    def html_filename(self):
-        """Return the expected HTML filename for this post"""
-        return f"{self.post_id}.html"
 
 
 class ContentSet(models.Model):
@@ -279,75 +275,6 @@ class ContentSet(models.Model):
     def __str__(self):
         return self.name
 
-    def get_items_count(self):
-        """Return the number of items in this content set"""
-        if isinstance(self.items_data, list):
-            return len(self.items_data)
-        return 0
-
-    def get_items_data(self):
-        """
-        Get items_data as a list of dicts.
-        Converts post_date strings to datetime.date objects if present.
-        """
-        from datetime import datetime
-
-        if not isinstance(self.items_data, list) or len(self.items_data) == 0:
-            return []
-
-        items = []
-        for item in self.items_data:
-            item_copy = dict(item)
-            # Convert post_date string to date object if present
-            if 'post_date' in item_copy and item_copy['post_date']:
-                try:
-                    if isinstance(item_copy['post_date'], str):
-                        item_copy['post_date'] = datetime.strptime(
-                            item_copy['post_date'], '%Y-%m-%d'
-                        ).date()
-                except (ValueError, TypeError):
-                    pass  # Keep as-is if parsing fails
-            items.append(item_copy)
-        return items
-
-    @classmethod
-    def from_items_data(cls, name, items_data, description=""):
-        """
-        Create a ContentSet from a list of dicts.
-        Converts datetime.date objects to strings for JSON storage.
-        """
-        processed_items = []
-        for item in items_data:
-            item_copy = dict(item)
-            if 'post_date' in item_copy and item_copy['post_date'] is not None:
-                item_copy['post_date'] = str(item_copy['post_date'])
-            processed_items.append(item_copy)
-
-        return cls(
-            name=name,
-            description=description,
-            items_data=processed_items
-        )
-
-    def to_dataframe(self):
-        """
-        Convert items_data to a pandas DataFrame.
-        """
-        import pandas as pd
-        items = self.get_items_data()
-        if items:
-            return pd.DataFrame(items)
-        return pd.DataFrame()
-
-    @classmethod
-    def from_dataframe(cls, name, df, description=""):
-        """
-        Create a ContentSet from a pandas DataFrame.
-        Converts the DataFrame to a list of dicts for JSON storage.
-        """
-        # Convert DataFrame to list of dicts
-        items_data = df.to_dict('records')
-        return cls.from_items_data(name, items_data, description)
 
 
 class Report(models.Model):
@@ -579,39 +506,6 @@ class Section(models.Model):
 
     def __str__(self):
         return f"{self.post.title} - {self.section_name}"
-
-
-class PendingReport(models.Model):
-    """Tracks background report generation tasks"""
-
-    task_id = models.UUIDField(default=uuid.uuid4, unique=True)
-    user = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
-        on_delete=models.CASCADE,
-        related_name='pending_reports'
-    )
-    publication = models.ForeignKey(
-        Publication,
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name='pending_reports'
-    )
-    section_name = models.CharField(max_length=255, blank=True, default='')
-    status = models.CharField(
-        max_length=20,
-        default='pending',
-        help_text="pending, complete, or error"
-    )
-    result_text = models.TextField(blank=True)
-    error_message = models.TextField(blank=True)
-    created_at = models.DateTimeField(auto_now_add=True)
-
-    class Meta:
-        ordering = ['-created_at']
-
-    def __str__(self):
-        return f"PendingReport {self.task_id} ({self.status})"
 
 
 class PendingContentSearch(models.Model):

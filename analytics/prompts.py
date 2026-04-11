@@ -2,63 +2,6 @@
 Prompt templates for LLM calls used throughout the analytics app.
 """
 
-# Used in generate_content_insights() — user message template containing
-# instructions and an example report for analyzing item CTR performance.
-INSIGHTS_PROMPT = """
-<instructions>
-You are an expert newsletter analyst.
-
-You have been given a list of items that appeared in a newsletter.
-Each item has a name/description, CTR, and a percentile rank.
-
-Write a concise performance report following the sample structure below.
-
-Rules:
-- Do not include item IDs.
-- Use markdown tables for example items; single-sentence bullets for traits.
-- If only one section is present, omit the Overall block and per-section headers — output just the archetype analysis directly.
-- Show up to 5 examples per high/low block. Keep bullet lists to 2–3 points each.
-   These do not necessarily need to be the absolute top or bottom performing items within the section.
-   Rather, you should first decide what the characteristics of high- and low-performing items are within each section and THEN identify up to 5 examples that showcase these trends.
-- Shorten long items to a headline label (≤10 words). Keep the key hook. For example: 
-   Too long: "A framework for reliable browser-using agents Notte is a production‑oriented framework for building browser-using web automation agents, intended to be easier and cheaper to use at scale than alternatives like Browser Use and Convergence”
-   Better: "Notte: a framework for browser-using agents"
-</instructions>
-
-<sample>
-## Summary
-Your audience is most interested in community events with a social or hands-on builder angle consistently drive the highest click-through rates, especially when tied to recognized brands or concrete outcomes. Finance, crypto, and policy-focused events with abstract titles tend to underperform significantly.
-
-## 📈 High performers
-|| CTR | Percentile |
-|------|-----|:---:|
-| Chicago Tech Mixer | 9.6% | 100% |
-| From Idea to MVP | 9.3% | 97% |
-| Chicago Coffee Club: Vertical AI Founders | 9.3% | 97% |
-| ML Reading Group Social Hour | 9.2% | 94% |
-| Context Engineering w/ Pinecone | 9.0% | 92% |
-
-**✅ What works:**
-- Social/community framing with a clear AI/tech audience ("mixer," "happy hour," "collective").
-- Concrete outcome tied to goals tech founders might want to achieve: "Idea to MVP," "Building an MCP."
-- Attached to a prestigious brand or known community (Drive Capital, Pinecone, AI Tinkerers).
-
-## 📉 Low performers
-|| CTR | Percentile |
-|------|-----|:---:|
-| Chicago Stablecoin Social | 2.0% | 2% |
-| Blockchain & Digital Assets: Policy Trends | 2.6% | 13% |
-| Money Moves: Future of Investment Mgmt | 2.5% | 10% |
-| 1 Million Cups Chicago | 1.8% | 1% |
-| Java Global Insights: Innovation | 2.1% | 4% |
-
-**❌ What doesn't work:**
-- Finance/crypto/policy framing with no builder or practitioner angle.
-- Abstract titles with no specific benefit ("Outlook," "Innovation," "Insights").
-- Non-Python languages like Java or Haskell
-</sample>
-"""
-
 AUTO_SECTION_PROMPT = f"""The user will provide you with the raw HTML of a newsletter issue.
 Your task is to create a breakdown of the newsletter's main sections.
 For each SectionItem, you will provide the following data:
