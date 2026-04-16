@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Post, ContentSet, Report, UsageAccount, Publication, ExecutionLog, SurveyResponse, ProcessedPost, LinkData, Section, ClickVizEmailLog, CronRunLog, PendingContentSearch
+from .models import Post, ContentSet, Report, UsageAccount, Publication, ExecutionLog, SurveyResponse, ProcessedPost, LinkData, Section, ClickVizEmailLog, CronRunLog, PendingContentSearch, ContentSearchFeedback
 
 
 @admin.register(UsageAccount)
@@ -161,3 +161,11 @@ class CronRunLogAdmin(admin.ModelAdmin):
         'users_processed', 'emails_sent', 'errors', 'output',
         'success', 'triggered_by',
     )
+
+
+@admin.register(ContentSearchFeedback)
+class ContentSearchFeedbackAdmin(admin.ModelAdmin):
+    list_display = ('user', 'publication', 'title', 'feedback', 'created_at')
+    list_filter = ('feedback', 'created_at')
+    search_fields = ('title', 'url', 'source')
+    ordering = ('-created_at',)

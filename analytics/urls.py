@@ -18,6 +18,7 @@ urlpatterns = [
     path('insights/content-finder/sections/', views.content_finder_sections, name='content_finder_sections'),
     path('insights/content-finder/run/', views.run_content_finder, name='run_content_finder'),
     path('insights/content-finder/status/<uuid:task_id>/', views.poll_content_finder, name='poll_content_finder'),
+    path('insights/content-finder/feedback/', views.submit_content_search_feedback, name='submit_content_search_feedback'),
     path('insights/improvement-tips/posts/', views.improvement_tips_posts, name='improvement_tips_posts'),
     path('insights/improvement-tips/run/', views.run_improvement_tips, name='run_improvement_tips'),
     path('insights/improvement-tips/status/<uuid:task_id>/', views.poll_improvement_tips, name='poll_improvement_tips'),

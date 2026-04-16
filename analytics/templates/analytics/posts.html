@@ -11,11 +11,12 @@
         text-align: left;
     }
     @keyframes coach-mark-pulse {
-        0%, 100% { opacity: 1; }
-        50% { opacity: 0.5; }
+        0%, 100% { box-shadow: 0 0 8px 4px rgba(25, 135, 84, 0.6); opacity: 1; }
+        50% { box-shadow: 0 0 20px 10px rgba(25, 135, 84, 0.3); opacity: 0.5; }
     }
     .coach-mark-flash {
         animation: coach-mark-pulse 1.2s ease-in-out infinite;
+        border-radius: 0.375rem;
     }
     .extract-tooltip {
         z-index: 10001 !important;
@@ -50,9 +51,27 @@
 <div class="confirm-overlay" id="processPostsOverlay" style="display: flex;">
     <div class="confirm-modal">
         <h5 class="mb-3">Process Your Posts</h5>
-        <p class="mb-4">Select a few of your most recent posts (try 3) and click <b>Process Selected Posts</b>.</p>
-        <div class="d-flex justify-content-end">
-            <button type="button" class="btn btn-primary" id="processPostsDismissBtn">Got it</button>
+        <p>LetterPulse will scan your latest posts to learn what your audience likes.</p>
+        <p class="mb-4"><b>Try processing your last 10 published posts.</b></p>
+        <div class="d-flex justify-content-end gap-2">
+            <button type="button" class="btn btn-primary" id="processRecentBtn">Process Last 10 Published</button>
+            <button type="button" class="btn btn-secondary" id="processPostsDismissBtn">Manually Select Posts</button>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+{% if not has_used_write %}
+<!-- Coach mark: processing complete, direct to Write tab -->
+<div class="confirm-overlay" id="processedGoWriteOverlay" style="display: none;">
+    <div class="confirm-modal">
+        <h5 class="mb-3">Posts Processed</h5>
+        <p>Your posts have been processed, allowing LetterPulse to understand what kind of content resonates with your audience!</p>
+        <p>Return to this tab later to process the rest of your published posts. <b>The more you process, the smarter the recommendations LetterPulse will give.</b></p>
+        <p class="mb-4">For now, head to Write to start putting these insights to work on your next newsletter.</p>
+        <div class="d-flex justify-content-end gap-2">
+            <a href="{% url 'analytics:insights' %}" class="btn btn-success">Go to Write</a>
+            <button type="button" class="btn btn-secondary" id="processedStayBtn">Stay on Posts</button>
         </div>
     </div>
 </div>
@@ -83,10 +102,11 @@
                                 <th style="width: 40px;">
                                     <input type="checkbox" id="selectAll" class="form-check-input">
                                 </th>
-                                <th data-bs-toggle="tooltip" title="When the post was created in Beehiiv (in your timezone)">Created</th>
-                                <th data-bs-toggle="tooltip" title="Draft, Scheduled, or Published">Status</th>
+                                {# <th data-bs-toggle="tooltip" title="When the post was created in Beehiiv (in your timezone)">Created</th> #}
+                                {# <th data-bs-toggle="tooltip" title="Draft, Scheduled, or Published">Status</th> #}
                                 <th data-bs-toggle="tooltip" title="When the post was or will be sent to subscribers (in your timezone)">Publish Date</th>
                                 <th data-bs-toggle="tooltip" title="Title of the post">Title</th>
+                                <th data-bs-toggle="tooltip" title="Total recipients for this send">Recipients</th>
                                 <th class="text-center" data-bs-toggle="tooltip" title="Saved data from this post">Processed</th>
                             </tr>
                         </thead>
@@ -99,7 +119,8 @@
                                            data-post-id="{{ post.id }}"
                                            data-processed="{% if post.id in processed_post_ids %}true{% else %}false{% endif %}">
                                 </td>
-                                <td data-order="{{ post.creation_date_sortable }}">{{ post.creation_date_display }}</td>
+                                {# <td data-order="{{ post.creation_date_sortable }}">{{ post.creation_date_display }}</td> #}
+                                {% comment %}
                                 <td>
                                     {% if post.status == "Draft" %}
                                         <span class="badge bg-warning text-dark">Draft</span>
@@ -109,8 +130,15 @@
                                         <span class="badge bg-success">Published</span>
                                     {% endif %}
                                 </td>
+                                {% endcomment %}
                                 <td data-order="{{ post.publish_date_sortable }}">{{ post.publish_date_display }}</td>
                                 <td>{{ post.title }}</td>
+                                <td data-order="{{ post.recipients }}">
+                                    <div style="position: relative; background: #e9ecef; border-radius: 4px; height: 24px; min-width: 80px;">
+                                        <div style="height: 100%; width: {{ post.recipients_pct }}%; background: #0d6efd33; border-radius: 4px;"></div>
+                                        <span style="position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 0.8rem;">{{ post.recipients_display }}</span>
+                                    </div>
+                                </td>
                                 <td class="text-center">
                                     {% if post.id in processed_post_ids %}
                                         <i class="bi bi-check-circle-fill processed-check"></i><i class="bi bi-trash-fill processed-trash" data-post-id="{{ post.id }}" title="Clear processed data"></i>
@@ -169,12 +197,36 @@
         });
     })();
     {% elif not processed_post_ids %}
-    // Coach mark: dismiss process posts overlay
+    // Coach mark: process posts overlay buttons
     (function() {
         document.getElementById('processPostsDismissBtn').addEventListener('click', function() {
             document.getElementById('processPostsOverlay').style.display = 'none';
         });
+        document.getElementById('processRecentBtn').addEventListener('click', function() {
+            document.getElementById('processPostsOverlay').style.display = 'none';
+            // Select the 10 most recent unprocessed posts by publish date (DataTable sorted desc)
+            var table = $('#postsTable').DataTable();
+            var rows = table.rows({ order: 'current' }).nodes();
+            var selected = 0;
+            for (var i = 0; i < rows.length && selected < 10; i++) {
+                var cb = rows[i].querySelector('.post-checkbox');
+                if (cb && cb.dataset.processed !== 'true') {
+                    cb.checked = true;
+                    selected++;
+                }
+            }
+            // Trigger the process button
+            if (selected > 0) {
+                document.getElementById('processPostsBtn').click();
+            }
+        });
     })();
+    {% endif %}
+
+    {% if not has_used_write %}
+    document.getElementById('processedStayBtn').addEventListener('click', function() {
+        document.getElementById('processedGoWriteOverlay').style.display = 'none';
+    });
     {% endif %}
 
     // Initialize DataTables for posts table
@@ -186,7 +238,7 @@
             scrollCollapse: true,
             columnDefs: [
                 { orderable: false, targets: 0 },
-                { orderable: false, targets: 5 }
+                { orderable: false, targets: 4 }
             ]
         });
     });
@@ -226,7 +278,7 @@
             return;
         }
 
-        const selectedIndices = Array.from(selectedPosts).map(cb => cb.value);
+        const selectedPostIds = Array.from(selectedPosts).map(cb => cb.dataset.postId);
 
         // Check how many selected posts are already processed
         const processedCount = Array.from(selectedPosts).filter(cb => cb.dataset.processed === 'true').length;
@@ -241,7 +293,7 @@
         btn.disabled = true;
         btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Processing...';
 
-        const numPosts = selectedIndices.length;
+        const numPosts = selectedPostIds.length;
 
         // Estimate wall-clock time: sequential posts run one-at-a-time,
         // then remaining posts run in parallel batches of 3, ~12s per iteration.
@@ -258,7 +310,7 @@
         });
 
         try {
-            const data = await postJSON("{% url 'analytics:run_processing' %}", { selected_posts: selectedIndices });
+            const data = await postJSON("{% url 'analytics:run_processing' %}", { selected_post_ids: selectedPostIds });
 
             if (!data.success) {
                 ProgressBar.complete({ containerId: 'processPostsProgress', success: false, message: data.error || 'Error' });
@@ -283,6 +335,11 @@
             });
 
             showToast(data.processed_post_ids.length + ' post' + (data.processed_post_ids.length !== 1 ? 's' : '') + ' processed.', 'success');
+
+            {% if not has_used_write %}
+            // Show coach mark directing user to Write tab
+            document.getElementById('processedGoWriteOverlay').style.display = 'flex';
+            {% endif %}
 
             if (typeof DevPanel !== 'undefined' && data.dev_panel) {
                 DevPanel.show(data.dev_panel, 'Process Posts');

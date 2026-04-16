@@ -13,11 +13,11 @@
 {% endblock %}
 
 {% block content %}
-<!-- Coach mark for validated key with no posts -->
+<!-- Coach mark for validated key with no processed posts -->
 <div class="confirm-overlay" id="postsSetupOverlay" style="display: none;">
     <div class="confirm-modal" id="postsSetupModal">
-        <h5 class="mb-3">API Key Validated!</h5>
-        <p class="mb-4">Your API key is all set. Head to the <b>Posts</b> tab to fetch your newsletter data and get started.</p>
+        <h5 class="mb-3">No Posts Processed Yet</h5>
+        <p class="mb-4">Head to the Posts tab to process your latest posts and start using LetterPulse.</p>
         <div class="d-flex justify-content-end gap-2">
             <a href="{% url 'analytics:posts' %}" class="btn btn-primary">Go to Posts</a>
             <button type="button" class="btn btn-secondary" id="postsSetupStayBtn">Stay on Account</button>
@@ -44,7 +44,7 @@
                 <h5 class="mb-3">Welcome to LetterPulse!</h5>
             </div>
             <p>Enter your Beehiiv API key to get started.</p>
-            <p class="mb-4">You can find it in your <a href="https://app.beehiiv.com/" target="_blank"><b>Beehiiv dashboard</b></a> under <b>Settings &rarr; API</b>.</p>
+            <p class="mb-4">You can find it in your <a href="https://app.beehiiv.com/" target="_blank"><b>Beehiiv dashboard</b></a> under <b>Settings &rarr; API &rarr; Create New API Key</b>.</p>
             <div class="d-flex justify-content-end">
                 <button type="button" class="btn btn-primary apiSetupDismissBtn">Got it</button>
             </div>
@@ -206,31 +206,7 @@
         </div>
         {% endif %}
 
-        {% if usage.api_key_valid %}
-        <!-- Click Viz Email Card -->
-        <div class="card">
-            <div class="card-header">
-                <i class="bi bi-envelope me-2"></i>Click Visualization Reports
-            </div>
-            <div class="card-body">
-                <form method="post" action="{% url 'analytics:account' %}" id="clickVizToggleForm">
-                    {% csrf_token %}
-                    <input type="hidden" name="action" value="toggle_click_viz_email">
-                    <div class="form-check form-switch mb-2">
-                        <input class="form-check-input" type="checkbox" role="switch"
-                               id="autoClickVizEmail" name="auto_click_viz_email"
-                               {% if usage.auto_click_viz_email %}checked{% endif %}>
-                        <label class="form-check-label" for="autoClickVizEmail">
-                            Email me a click visualization for my new posts
-                        </label>
-                    </div>
-                </form>
-                <div class="form-text mb-3">
-                    Emails are sent 24 hours after publication. Check your spam folder if you do not receive them.
-                </div>
-            </div>
-        </div>
-        {% endif %}
+        {% comment %}Click Viz Email Card – hidden for now{% endcomment %}
     </div>
 </div>
 {% endblock %}
@@ -320,8 +296,8 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
 
-    // Show coach mark to direct user to Posts tab after API key validation
-    {% if usage.api_key_valid and not has_posts %}
+    // Show coach mark to direct user to Posts tab when no posts are processed
+    {% if usage.api_key_valid and not has_processed_data %}
     if (!setupParam) {
         var postsOverlay = document.getElementById('postsSetupOverlay');
         var postsLink = document.getElementById('navPostsLink');

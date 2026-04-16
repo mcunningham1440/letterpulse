@@ -36,6 +36,48 @@
 </div>
 {% endif %}
 
+{% if has_processed_data and not has_used_content_finder %}
+<!-- Coach mark 1: Get Content to Write About -->
+<div class="confirm-overlay" id="getContentOverlay" style="display: flex;">
+    <div class="confirm-modal">
+        <h5 class="mb-3">Get Content to Write About</h5>
+        <p>We're now ready to help you start writing a post. First, we need to find content to write about.</p>
+        <p><b>Select a recent issue you want to use as a template for your new post.</b></p>
+        <p class="mb-4">For example, if you're about to write your Monday issue and you have a standard format for Mondays, select your most recent Monday issue.</p>
+        <div class="d-flex justify-content-end">
+            <button type="button" class="btn btn-primary" id="selectTemplateBtn">Select a template</button>
+        </div>
+    </div>
+</div>
+
+<!-- Coach mark 2: Run Content Search (shown after post selected) -->
+<div class="confirm-overlay" id="runSearchOverlay" style="display: none;">
+    <div class="confirm-modal">
+        <h5 class="mb-3">Run Content Search</h5>
+        <p>Let's find stories to write about for your new issue.</p>
+        <p>LetterPulse can automatically detect which sections in your newsletter need new content, or you can select them yourself. For now, we'll detect them automatically.</p>
+        <p class="mb-4"><b>Close this window and select <i class="bi bi-search"></i> Run Content Search</b></p>
+        <div class="d-flex justify-content-end">
+            <button type="button" class="btn btn-primary" id="closeSearchCoachBtn">Close</button>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+{% if has_processed_data and not has_used_write_post_poll %}
+<!-- Coach mark 3: Content Found (shown after content fetch completes) -->
+<div class="confirm-overlay" id="contentFoundOverlay" style="display: none;">
+    <div class="confirm-modal">
+        <h5 class="mb-3">Content Found</h5>
+        <p class="mb-4">The links we fetched were specifically tailored to be similar to <b>content your users have consistently clicked on the most.</b></p>
+        <p class="mb-4"><i>Check them out, then, when you're done, click <b>Proceed to the next feature.</i></b></p>
+        <div class="d-flex justify-content-end">
+            <button type="button" class="btn btn-primary" id="checkThemOutBtn">Check them out</button>
+        </div>
+    </div>
+</div>
+{% endif %}
+
 <div class="row">
     <div class="col-12">
         {% if has_processed_data %}
@@ -162,8 +204,8 @@
                 <h5 class="mb-0">2. Write your post</h5>
             </div>
             <div class="card-body">
-                <p class="mb-1"><strong>LetterPulse doesn't do this for you...yet</strong></p>
-                <p class="mb-3">Would a feature that drafts content for your newsletter be valuable to you?</p>
+                <p class="mb-1"><strong>LetterPulse doesn't do this for you...yet.</strong></p>
+                <p class="mb-3">Would a feature that drafts new issues for your newsletter be valuable to you?</p>
                 <div class="d-flex gap-2" id="writePostFeedbackBtns">
                     <button class="btn btn-outline-primary flex-fill write-post-feedback-btn" style="flex-basis:0; font-size:0.875rem;" data-response="write_drafts">Yes, I want LetterPulse to write drafts of new content</button>
                     <button class="btn btn-outline-primary flex-fill write-post-feedback-btn" style="flex-basis:0; font-size:0.875rem;" data-response="outlines_only">Yes, but just make them outlines. I want to write the actual text myself</button>
@@ -221,6 +263,39 @@
     // =========================================================================
     let allItems = [];
     let allLinkItems = [];
+
+    // =========================================================================
+    // Coach marks
+    // =========================================================================
+    {% if has_processed_data and not has_used_content_finder %}
+    // Coach mark 1: "Select a template" → dismiss overlay and focus dropdown
+    document.getElementById('selectTemplateBtn').addEventListener('click', function() {
+        document.getElementById('getContentOverlay').style.display = 'none';
+        var select = document.getElementById('cfPostSelect');
+        select.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        select.focus();
+    });
+
+    // Show coach mark 2 after user selects a template post (one-time)
+    document.getElementById('cfPostSelect').addEventListener('change', function showRunCoach() {
+        if (this.value) {
+            document.getElementById('runSearchOverlay').style.display = 'flex';
+            this.removeEventListener('change', showRunCoach);
+        }
+    });
+
+    // Coach mark 2: "Close" dismiss
+    document.getElementById('closeSearchCoachBtn').addEventListener('click', function() {
+        document.getElementById('runSearchOverlay').style.display = 'none';
+    });
+    {% endif %}
+
+    {% if has_processed_data and not has_used_write_post_poll %}
+    // Coach mark 3: "Check them out" dismiss
+    document.getElementById('checkThemOutBtn').addEventListener('click', function() {
+        document.getElementById('contentFoundOverlay').style.display = 'none';
+    });
+    {% endif %}
 
     // =========================================================================
     // Write Post Feedback
@@ -630,7 +705,14 @@
                 progressContainerId: 'cfProgressContainer',
                 runBtnId: 'cfRunBtn',
                 devPanelName: 'Content Finder',
-                onComplete: (data) => renderContentFinderResults(data.result_data || {}),
+                onComplete: (data) => {
+                    renderContentFinderResults(data.result_data || {});
+                    {% if not has_used_write_post_poll %}
+                    // Show "Content Found" coach mark
+                    var contentFoundOverlay = document.getElementById('contentFoundOverlay');
+                    if (contentFoundOverlay) contentFoundOverlay.style.display = 'flex';
+                    {% endif %}
+                },
             });
         } catch (err) {
             console.error('Error starting content finder:', err);
@@ -663,13 +745,27 @@
                     : escapeHtml(link.url);
 
                 linksHtml += `
-                    <div class="mb-3 pb-3 border-bottom">
-                        <div class="fw-semibold">
-                            <a href="${escapeHtml(link.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(link.title)}</a>
+                    <div class="mb-3 pb-3 border-bottom d-flex align-items-center">
+                        <div class="flex-grow-1">
+                            <div class="fw-semibold">
+                                <a href="${escapeHtml(link.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(link.title)}</a>
+                            </div>
+                            <div class="text-muted small">${escapeHtml(link.source)} &middot; ${escapeHtml(link.date)}</div>
+                            <div class="mt-1">${escapeHtml(link.description)}</div>
+                            <div class="mt-1 fst-italic text-muted small">${escapeHtml(link.relevance)}</div>
                         </div>
-                        <div class="text-muted small">${escapeHtml(link.source)} &middot; ${escapeHtml(link.date)}</div>
-                        <div class="mt-1">${escapeHtml(link.description)}</div>
-                        <div class="mt-1 fst-italic text-muted small">${escapeHtml(link.relevance)}</div>
+                        <div class="d-flex flex-column align-items-center ms-3" style="min-width:32px; gap:0.5rem;">
+                            <button class="btn btn-sm p-0 cf-fb-btn" data-fb="up" data-url="${escapeHtml(link.url)}"
+                                    data-title="${escapeHtml(link.title)}" data-source="${escapeHtml(link.source)}"
+                                    data-date="${escapeHtml(link.date)}" data-desc="${escapeHtml(link.description)}"
+                                    data-relevance="${escapeHtml(link.relevance)}"
+                                    title="Thumbs up" style="color:#198754;"><span class="material-symbols-outlined" style="font-size:1.4rem;">thumb_up</span></button>
+                            <button class="btn btn-sm p-0 cf-fb-btn" data-fb="down" data-url="${escapeHtml(link.url)}"
+                                    data-title="${escapeHtml(link.title)}" data-source="${escapeHtml(link.source)}"
+                                    data-date="${escapeHtml(link.date)}" data-desc="${escapeHtml(link.description)}"
+                                    data-relevance="${escapeHtml(link.relevance)}"
+                                    title="Thumbs down" style="color:#dc3545;"><span class="material-symbols-outlined" style="font-size:1.4rem;">thumb_down</span></button>
+                        </div>
                     </div>
                 `;
             });
@@ -694,6 +790,48 @@
         });
 
         document.getElementById('cfResults').style.display = 'block';
+
+        // Attach feedback button handlers
+        document.querySelectorAll('.cf-fb-btn').forEach(btn => {
+            btn.addEventListener('click', async function() {
+                const fb = this.dataset.fb;
+                const url = this.dataset.url;
+                const row = this.closest('.d-flex.align-items-start');
+                const siblingBtn = row.querySelector(`.cf-fb-btn[data-fb="${fb === 'up' ? 'down' : 'up'}"]`);
+
+                // Determine if toggling off (clicking already-active button)
+                const alreadyActive = this.classList.contains('cf-fb-active');
+
+                try {
+                    // If toggling off, we still send the opposite isn't great —
+                    // we just re-send the same value (the server does update_or_create).
+                    // But there's no "remove" action, so clicking the active one
+                    // is a no-op visually; the DB keeps the last vote.
+                    if (alreadyActive) return;
+
+                    const resp = await postJSON("{% url 'analytics:submit_content_search_feedback' %}", {
+                        url: url,
+                        feedback: fb,
+                        title: this.dataset.title,
+                        source: this.dataset.source,
+                        date: this.dataset.date,
+                        description: this.dataset.desc,
+                        relevance: this.dataset.relevance,
+                    });
+
+                    if (resp.success) {
+                        this.classList.add('cf-fb-active');
+                        this.style.opacity = '1';
+                        siblingBtn.classList.remove('cf-fb-active');
+                        siblingBtn.style.opacity = '0.4';
+                    } else {
+                        showToast(GENERIC_ERROR_TOAST, 'danger');
+                    }
+                } catch {
+                    showToast(GENERIC_ERROR_TOAST, 'danger');
+                }
+            });
+        });
     }
 
     // =========================================================================

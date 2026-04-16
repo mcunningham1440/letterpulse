@@ -866,7 +866,7 @@ def perplexity_search(queries, max_results=10, domains=None, max_days_ago=None, 
     if historical_urls:
         results = [
             r for r in results
-            if not r.url or not any(r.url in h_url for h_url in historical_urls)
+            if not r.url or not any(r.url.rstrip('/') in h_url for h_url in historical_urls)
         ]
         if not results:
             return "No results found."
@@ -1126,13 +1126,25 @@ def run_content_finder_background(task_id):
         max_links = settings.CONTENT_FINDER_MAX_LINKS
         max_url_len = settings.CONTENT_FINDER_MAX_URL_LEN
 
-        # Load all historical URLs for this user/publication once
+        # Load all historical URLs for this user/publication once (strip trailing /)
         historical_urls = set(
+            url.rstrip('/') for url in
             LinkData.objects.filter(
                 user=task.user,
                 publication=task.publication,
             ).values_list('raw_url', flat=True)
         )
+
+        # Also exclude URLs the user has already reviewed via content search feedback
+        from analytics.models import ContentSearchFeedback
+        feedback_urls = set(
+            url.rstrip('/') for url in
+            ContentSearchFeedback.objects.filter(
+                user=task.user,
+                publication=task.publication,
+            ).values_list('url', flat=True)
+        )
+        historical_urls |= feedback_urls
 
         async def run_all():
             tasks = [
@@ -1160,6 +1172,13 @@ def run_content_finder_background(task_id):
             task.save(update_fields=['status', 'result_data', 'dev_panel_data'])
         else:
             task.save(update_fields=['status', 'result_data'])
+
+        # Mark that the user has used content finder
+        from analytics.models import Feedback
+        Feedback.objects.get_or_create(
+            user=task.user, feature='used_content_finder',
+            defaults={'response': 'completed'}
+        )
 
     except Exception as e:
         logger.exception("Content finder background task failed")
@@ -2434,6 +2453,13 @@ def run_improvement_tips_background(task_id):
             task.save(update_fields=['status', 'result_html', 'dev_panel_data'])
         else:
             task.save(update_fields=['status', 'result_html'])
+
+        # Mark that the user has used post improvement
+        from analytics.models import Feedback
+        Feedback.objects.get_or_create(
+            user=task.user, feature='used_post_improvement',
+            defaults={'response': 'completed'}
+        )
 
     except Exception as e:
         logger.exception("Improvement tips background task failed")

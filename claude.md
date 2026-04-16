@@ -2,6 +2,10 @@
 
 Any time you make a change to the code, determine whether it makes any information in this file obsolete. If so, update it; otherwise, state that no update to claude.md was necessary. This should ALWAYS be the last thing you do when editing the code.
 
+### Django admin
+
+- **Always register new models in `analytics/admin.py`** with an `@admin.register` decorator and a `ModelAdmin` class that includes sensible `list_display`, `list_filter`, and `ordering` fields.
+
 ### Frontend error handling rules
 
 - **Never use `alert()`** in JavaScript. Use `showToast()` instead (defined in base.html, available globally).
@@ -92,6 +96,7 @@ All models are in `analytics/models.py`. Key models and their relationships:
 - **Feedback**: Per-user feature feedback. Scoped to `(user, feature)`
 - **SurveyResponse**: Signup survey answers (survey currently disabled via `SIGNUP_SURVEY_ENABLED = False`)
 - **ClickVizEmailLog**: Log of auto-emailed click visualizations. Scoped to `(user, post_id)`
+- **ContentSearchFeedback**: Thumbs-up/down feedback on content finder results. Scoped to `(user, publication, url)`. Reviewed URLs are excluded from future content searches
 - **CronRunLog**: Management command execution log
 
 ## Authentication
@@ -129,7 +134,7 @@ All routes use the `analytics:` namespace. See `analytics/urls.py` for the full 
 
 - **Posts**: `/posts/`, `/posts/process/`, `/posts/refresh-posts/`, `/posts/clear-processed/`
 - **Insights**: `/insights/`, `/insights/load-processed-data/`, `/insights/load-link-data/`
-- **Content Finder**: `/insights/content-finder/posts/`, `/insights/content-finder/sections/`, `/insights/content-finder/run/`, `/insights/content-finder/status/<uuid>/`
+- **Content Finder**: `/insights/content-finder/posts/`, `/insights/content-finder/sections/`, `/insights/content-finder/run/`, `/insights/content-finder/status/<uuid>/`, `/insights/content-finder/feedback/`
 - **Improvement Tips**: `/insights/improvement-tips/posts/`, `/insights/improvement-tips/run/`, `/insights/improvement-tips/status/<uuid>/`, `/insights/improvement-tips/download/<uuid>/`
 - **Account**: `/account/`
 - **Feedback/Survey**: `/feedback/submit/`, `/survey/submit/`

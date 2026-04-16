@@ -685,3 +685,44 @@ class ClickVizEmailLog(models.Model):
     def __str__(self):
         status = "OK" if self.success else "FAIL"
         return f"{self.user.email} - {self.post_id} ({status})"
+
+
+class ContentSearchFeedback(models.Model):
+    """Stores user thumbs-up / thumbs-down feedback on content finder results."""
+
+    THUMBS_UP = 'up'
+    THUMBS_DOWN = 'down'
+    FEEDBACK_CHOICES = [
+        (THUMBS_UP, 'Thumbs Up'),
+        (THUMBS_DOWN, 'Thumbs Down'),
+    ]
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='content_search_feedback',
+    )
+    publication = models.ForeignKey(
+        Publication,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='content_search_feedback',
+    )
+    title = models.CharField(max_length=500)
+    url = models.URLField(max_length=2000)
+    source = models.CharField(max_length=255)
+    pub_date = models.CharField(max_length=100, blank=True, default='')
+    description = models.TextField(blank=True, default='')
+    relevance = models.TextField(blank=True, default='')
+    feedback = models.CharField(max_length=4, choices=FEEDBACK_CHOICES)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ('user', 'publication', 'url')
+        ordering = ['-created_at']
+        verbose_name = "Content Search Feedback"
+        verbose_name_plural = "Content Search Feedback"
+
+    def __str__(self):
+        return f"{self.user} — {self.feedback} — {self.title[:50]}"

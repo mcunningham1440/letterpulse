@@ -16,7 +16,7 @@ import pandas as pd
 import json
 from asgiref.sync import async_to_sync
 
-from .models import Post, ContentSet, Report, UsageAccount, SurveyResponse, ProcessedPost, LinkData, Section, PendingContentSearch
+from .models import Post, ContentSet, Report, UsageAccount, SurveyResponse, ProcessedPost, LinkData, Section, PendingContentSearch, PendingImprovementTips, ContentSearchFeedback
 
 logger = logging.getLogger(__name__)
 
@@ -325,10 +325,22 @@ def account_view(request):
 
     from .utils import TIMEZONE_CHOICES
     has_posts = Post.objects.filter(user=request.user).exists() if usage.api_key_valid else False
+    if has_posts and usage.api_key_valid:
+        _, beehiiv_pub_id, _ = get_user_api_credentials(request.user)
+        try:
+            publication = Publication.objects.get(pub_id=beehiiv_pub_id)
+            has_processed_data = Section.objects.filter(
+                user=request.user, publication=publication
+            ).exists()
+        except Publication.DoesNotExist:
+            has_processed_data = False
+    else:
+        has_processed_data = False
     context = {
         'usage': usage,
         'timezone_choices': TIMEZONE_CHOICES,
         'has_posts': has_posts,
+        'has_processed_data': has_processed_data,
     }
 
     return render(request, 'analytics/account.html', context)
@@ -402,6 +414,9 @@ def posts_view(request):
     ###
 
 
+    # Show only published posts
+    posts_df = posts_df[posts_df['status'] == 'Published'].reset_index(drop=True)
+
     # Convert to list of dicts for template
     posts_data = posts_df.to_dict('records')
 
@@ -442,11 +457,26 @@ def posts_view(request):
         .distinct()
     )
 
+    # Compute recipients percentage relative to max for bar visualization
+    max_recipients = max((p.get('recipients') or 0 for p in posts_data), default=0)
+    for post in posts_data:
+        r = post.get('recipients') or 0
+        post['recipients_pct'] = round(r / max_recipients * 100) if max_recipients else 0
+        post['recipients_display'] = f"{r:,}"
+
+    # Check if user has ever used any Write tab feature
+    from .models import Feedback
+    has_used_write = Feedback.objects.filter(
+        user=request.user,
+        feature__in=['used_content_finder', 'used_write_post_poll', 'used_post_improvement']
+    ).exists()
+
     context = {
         'posts': posts_data,
         'all_content_sets': all_content_sets,
         'all_reports': all_reports,
         'processed_post_ids': processed_post_ids,
+        'has_used_write': has_used_write,
     }
 
     return render(request, 'analytics/posts.html', context)
@@ -469,19 +499,10 @@ def run_processing(request):
             return JsonResponse({'success': False, 'error': 'Please configure valid API credentials in Account settings.'}, status=400)
 
         body = json.loads(request.body)
-        selected_indices = body.get('selected_posts', [])
+        post_ids = body.get('selected_post_ids', [])
 
-        if not selected_indices:
+        if not post_ids:
             return JsonResponse({'success': False, 'error': 'Please select at least one post.'}, status=400)
-
-        selected_indices = [int(idx) for idx in selected_indices]
-
-        # Load posts from database
-        posts_df = load_posts_from_db(publication_id=beehiiv_pub_id, user=request.user)
-        posts_df = posts_df.iloc[::-1].reset_index(drop=True)
-
-        posts_of_interest = posts_df.iloc[selected_indices]
-        post_ids = posts_of_interest['id'].tolist()
 
         # Charge credits (1 per post)
         credits_needed = len(post_ids) * settings.CREDITS_PER_EXTRACTION
@@ -556,12 +577,23 @@ def insights_view(request):
         user=request.user, feature='write_post'
     ).first()
 
+    # Per-feature usage tracking for coach marks
+    used_features = set(
+        Feedback.objects.filter(
+            user=request.user,
+            feature__in=['used_content_finder', 'used_write_post_poll', 'used_post_improvement']
+        ).values_list('feature', flat=True)
+    )
+
     context = {
         'has_posts': has_posts,
         'has_processed_data': has_processed_data,
         'credits_per_search': settings.CREDITS_PER_CONTENT_SEARCH,
         'credits_per_improvement_tips': settings.CREDITS_PER_IMPROVEMENT_TIPS,
         'write_post_feedback_response': write_post_feedback.response if write_post_feedback else '',
+        'has_used_content_finder': 'used_content_finder' in used_features,
+        'has_used_write_post_poll': 'used_write_post_poll' in used_features,
+        'has_used_post_improvement': 'used_post_improvement' in used_features,
     }
 
     return render(request, 'analytics/insights.html', context)
@@ -841,6 +873,45 @@ def poll_content_finder(request, task_id):
 
 
 @login_required
+@require_POST
+def submit_content_search_feedback(request):
+    """Save thumbs-up / thumbs-down feedback on a content finder link."""
+    try:
+        data = json.loads(request.body)
+    except json.JSONDecodeError:
+        return JsonResponse({'success': False, 'error': 'Invalid JSON'}, status=400)
+
+    url = data.get('url', '').strip()
+    feedback_val = data.get('feedback', '').strip()
+
+    if not url or feedback_val not in ('up', 'down'):
+        return JsonResponse({'success': False, 'error': 'url and feedback (up/down) required'}, status=400)
+
+    _, beehiiv_pub_id, _ = get_user_api_credentials(request.user)
+    from .models import Publication
+    try:
+        publication = Publication.objects.get(pub_id=beehiiv_pub_id)
+    except Publication.DoesNotExist:
+        publication = None
+
+    ContentSearchFeedback.objects.update_or_create(
+        user=request.user,
+        publication=publication,
+        url=url,
+        defaults={
+            'title': data.get('title', '')[:500],
+            'source': data.get('source', '')[:255],
+            'pub_date': data.get('date', '')[:100],
+            'description': data.get('description', ''),
+            'relevance': data.get('relevance', ''),
+            'feedback': feedback_val,
+        },
+    )
+
+    return JsonResponse({'success': True})
+
+
+@login_required
 @require_GET
 @require_valid_api_credentials
 def improvement_tips_posts(request):
@@ -1076,6 +1147,12 @@ def submit_feedback(request):
             feature=feature,
             defaults={'response': response},
         )
+        # Track write post poll usage for coach marks
+        if feature == 'write_post':
+            Feedback.objects.get_or_create(
+                user=request.user, feature='used_write_post_poll',
+                defaults={'response': 'completed'}
+            )
         return JsonResponse({'success': True})
     except Exception:
         return JsonResponse({'success': False}, status=500)
