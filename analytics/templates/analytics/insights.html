@@ -295,6 +295,12 @@
                         <small class="text-muted">Uses <strong>{{ credits_per_improvement_tips }}</strong> credit</small>
                     </div>
                 </div>
+                <div id="itDownloadSection" class="mt-3 pt-3 border-top" style="display:none;">
+                    <div class="mb-2">Improvement tips generated for <strong id="itDownloadPostName"></strong></div>
+                    <a id="itDownloadBtn" class="btn btn-primary" download>
+                        <i class="bi bi-download"></i> Download
+                    </a>
+                </div>
                 <div id="itProgressContainer" class="mt-2"></div>
             </div>
         </div>
@@ -982,18 +988,29 @@
         const postId = this.value;
         const runBtn = document.getElementById('itRunBtn');
         const postOptions = document.getElementById('itPostOptions');
+        const downloadSection = document.getElementById('itDownloadSection');
+        const downloadBtn = document.getElementById('itDownloadBtn');
 
         runBtn.disabled = !postId;
         postOptions.style.display = postId ? 'block' : 'none';
+        downloadSection.style.display = 'none';
+        downloadBtn.removeAttribute('href');
     });
 
     // Run button
     document.getElementById('itRunBtn').addEventListener('click', async function() {
-        const postId = document.getElementById('itPostSelect').value;
+        const postSelect = document.getElementById('itPostSelect');
+        const postId = postSelect.value;
         if (!postId) return;
 
+        const postObj = itAllPosts.find(p => p.post_id === postId);
+        const postName = postObj ? postObj.title : postSelect.options[postSelect.selectedIndex].text;
         const runBtn = this;
         runBtn.disabled = true;
+        const downloadSection = document.getElementById('itDownloadSection');
+        const downloadBtn = document.getElementById('itDownloadBtn');
+        downloadSection.style.display = 'none';
+        downloadBtn.removeAttribute('href');
 
         try {
             const data = await postJSON('/insights/improvement-tips/run/', { post_id: postId });
@@ -1016,12 +1033,9 @@
                 runBtnId: 'itRunBtn',
                 devPanelName: 'Improvement Tips',
                 onComplete: (data, taskId) => {
-                    const a = document.createElement('a');
-                    a.href = `/insights/improvement-tips/download/${taskId}/`;
-                    a.download = '';
-                    document.body.appendChild(a);
-                    a.click();
-                    document.body.removeChild(a);
+                    downloadBtn.href = `/insights/improvement-tips/download/${taskId}/`;
+                    document.getElementById('itDownloadPostName').textContent = postName;
+                    downloadSection.style.display = '';
                 },
             });
         } catch (err) {
