@@ -1119,6 +1119,42 @@ def run_content_finder_background(task_id):
             task.save(update_fields=['status', 'result_data'])
             return
 
+        #<TEMPORARY>
+        # Dev shortcut: return dummy results to speed up onboarding testing
+        if settings.ENVIRONMENT == 'local':
+            import time
+            time.sleep(2)  # simulate brief delay
+            result_data = {}
+            for section in sections:
+                result_data[section.section_name] = [
+                    {
+                        'title': f'Sample Article for {section.section_name}',
+                        'url': 'https://example.com/sample-article',
+                        'source': 'Example News',
+                        'date': '2026-04-15',
+                        'description': 'A sample article that matches your audience preferences.',
+                        'relevance': 'This content aligns with topics your readers frequently click on.',
+                    },
+                    {
+                        'title': f'Another Story for {section.section_name}',
+                        'url': 'https://example.com/another-story',
+                        'source': 'Demo Source',
+                        'date': '2026-04-14',
+                        'description': 'Another sample link for testing the onboarding flow.',
+                        'relevance': 'High engagement potential based on historical click patterns.',
+                    },
+                ]
+            task.status = 'complete'
+            task.result_data = result_data
+            task.save(update_fields=['status', 'result_data'])
+            from analytics.models import Feedback
+            Feedback.objects.get_or_create(
+                user=task.user, feature='used_content_finder',
+                defaults={'response': 'completed'}
+            )
+            return
+        #</TEMPORARY>
+
         allow_exclusion = (task.mode == 'auto')
         model = settings.CONTENT_FINDER_MODEL
         reasoning = settings.CONTENT_FINDER_REASONING
@@ -2220,6 +2256,10 @@ async def generate_improvement_tips_html(post, user, publication, beehiiv_token,
         "content": "\U0001f4f0 Content Tip",
         "proofreading": "\u270d\ufe0f Proofreading",
     }
+    tip_type_to_header_color = {
+        "content": "#E65100",
+        "proofreading": "#0D47A1",
+    }
 
     valid_tips = [t for t in tips.tips if text_to_html_line.get(t.line_number)]
     sorted_tips_asc = sorted(valid_tips, key=lambda t: text_to_html_line[t.line_number])
@@ -2229,7 +2269,7 @@ async def generate_improvement_tips_html(post, user, publication, beehiiv_token,
     for i, tip in enumerate(reversed(sorted_tips_asc)):
         marker_id = f"tip-target-{len(sorted_tips_asc) - 1 - i}"
         html_line_num = text_to_html_line[tip.line_number]
-        anchor = f'<span id="{marker_id}" data-tip-anchor="true"></span>'
+        anchor = f'<span id="{marker_id}" data-tip-anchor="true" data-tip-type="{tip.tip_type}"></span>'
         annotated_lines.insert(html_line_num - 1, anchor)
 
     newsletter_html = '\n'.join(annotated_lines)
@@ -2238,17 +2278,18 @@ async def generate_improvement_tips_html(post, user, publication, beehiiv_token,
     tip_cards = []
     for i, tip in enumerate(sorted_tips_asc):
         header = tip_type_to_header[tip.tip_type]
+        header_color = tip_type_to_header_color[tip.tip_type]
         safe_text = html_module.escape(tip.tip_text)
         has_why = tip.why and tip.why.lower() not in ('none', '')
         why_block = ""
         if has_why:
             safe_why = html_module.escape(tip.why)
             why_block = f"""
-        <div style="font-weight: bold; margin-bottom: 4px; margin-top: 10px; color: #E65100;">Why?</div>
+        <div style="font-weight: bold; margin-bottom: 4px; margin-top: 10px; color: {header_color};">Why?</div>
         <div>{safe_why}</div>"""
         tip_cards.append(f"""
-    <div class="tip-card" id="tip-card-{i}" data-target="tip-target-{i}">
-        <div style="font-weight: bold; margin-bottom: 4px; color: #E65100;">{header}</div>
+    <div class="tip-card {tip.tip_type}" id="tip-card-{i}" data-target="tip-target-{i}" data-tip-type="{tip.tip_type}">
+        <div style="font-weight: bold; margin-bottom: 4px; color: {header_color};">{header}</div>
         <div style="margin-bottom: 10px;">{safe_text}</div>{why_block}
     </div>""")
 
@@ -2298,6 +2339,10 @@ async def generate_improvement_tips_html(post, user, publication, beehiiv_token,
         box-shadow: 0 1px 3px rgba(0,0,0,0.1);
         transition: box-shadow 0.2s;
     }}
+    .tip-card.proofreading {{
+        background-color: #E3F2FD;
+        border-right-color: #1976D2;
+    }}
     .tip-card:hover {{
         box-shadow: 0 2px 8px rgba(0,0,0,0.2);
     }}
@@ -2315,6 +2360,10 @@ async def generate_improvement_tips_html(post, user, publication, beehiiv_token,
         outline: 2px solid #F9A825;
         outline-offset: 2px;
         border-radius: 2px;
+    }}
+    [data-tip-anchor][data-tip-type="proofreading"] {{
+        background-color: #BBDEFB;
+        outline-color: #1976D2;
     }}
     .top-banner {{
         position: absolute;
@@ -2380,9 +2429,10 @@ async def generate_improvement_tips_html(post, user, publication, beehiiv_token,
             const y2 = targetRect.top + targetRect.height / 2 - wrapperRect.top;
 
             const midX = (x1 + x2) / 2;
+            const connectorColor = card.classList.contains('proofreading') ? '#1976D2' : '#F9A825';
             const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
             path.setAttribute('d', 'M ' + x1 + ' ' + y1 + ' C ' + midX + ' ' + y1 + ' ' + midX + ' ' + y2 + ' ' + x2 + ' ' + y2);
-            path.setAttribute('stroke', '#F9A825');
+            path.setAttribute('stroke', connectorColor);
             path.setAttribute('stroke-width', '2');
             path.setAttribute('fill', 'none');
             path.setAttribute('stroke-dasharray', '6,3');
@@ -2391,7 +2441,7 @@ async def generate_improvement_tips_html(post, user, publication, beehiiv_token,
             circle.setAttribute('cx', x2);
             circle.setAttribute('cy', y2);
             circle.setAttribute('r', '4');
-            circle.setAttribute('fill', '#F9A825');
+            circle.setAttribute('fill', connectorColor);
 
             svg.appendChild(path);
             svg.appendChild(circle);

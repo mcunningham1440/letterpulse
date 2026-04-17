@@ -72,7 +72,48 @@
         <p class="mb-4">The links we fetched were specifically tailored to be similar to <b>content your users have consistently clicked on the most.</b></p>
         <p class="mb-4"><i>Check them out, then, when you're done, click <b>Proceed to the next feature.</i></b></p>
         <div class="d-flex justify-content-end">
-            <button type="button" class="btn btn-primary" id="checkThemOutBtn">Check them out</button>
+            <button type="button" class="btn btn-primary" id="checkThemOutBtn">See my links</button>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+{% if has_processed_data and not has_used_write_post_poll %}
+<!-- Coach mark: Future Feature (shown when "Next feature" is clicked) -->
+<div class="confirm-overlay" id="futureFeatureOverlay" style="display: none;">
+    <div class="confirm-modal">
+        <h5 class="mb-3">Future Feature</h5>
+        <p>LetterPulse currently helps you find content for your newsletter and review your writing, but it doesn't write your posts itself.</p>
+        <p class="mb-3"><i>Do you want it to?</i></p>
+        <div class="d-flex flex-column gap-2" id="coachPollBtns">
+            <button class="btn btn-outline-primary coach-poll-btn" style="font-size:0.875rem;" data-response="write_drafts">Yes, I want LetterPulse to write drafts of new content</button>
+            <button class="btn btn-outline-primary coach-poll-btn" style="font-size:0.875rem;" data-response="outlines_only">Yes, but just make them outlines. I want to write the actual text myself</button>
+            <button class="btn btn-outline-primary coach-poll-btn" style="font-size:0.875rem;" data-response="no_thanks">No, I prefer to write all my own content</button>
+        </div>
+    </div>
+</div>
+
+<!-- Coach mark: Thank You (shown after poll response, before Review Your Draft) -->
+<div class="confirm-overlay" id="thankYouOverlay" style="display: none;">
+    <div class="confirm-modal">
+        <h5 class="mb-3">Thank You!</h5>
+        <p class="mb-4">Your feedback will help us make LetterPulse more useful for you.</p>
+        <div class="d-flex justify-content-end">
+            <button type="button" class="btn btn-primary" id="thankYouNextBtn">Next feature</button>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+{% if has_processed_data and not has_used_post_improvement %}
+<!-- Coach mark: Review Your Draft (shown after poll is answered, or on visit if poll done but no improvement run yet) -->
+<div class="confirm-overlay" id="reviewDraftOverlay" style="{% if has_used_write_post_poll %}display: flex;{% else %}display: none;{% endif %}">
+    <div class="confirm-modal">
+        <h5 class="mb-3">Review Your Draft</h5>
+        <p>Once you've written a post, LetterPulse can help you improve it to better engage your audience.</p>
+        <p class="mb-4">Under <b>3. Improve your post</b>, select one of your drafts or published issues and click <b>Get Improvement Tips</b>.</p>
+        <div class="d-flex justify-content-end">
+            <button type="button" class="btn btn-primary" id="reviewDraftContinueBtn">Continue</button>
         </div>
     </div>
 </div>
@@ -129,6 +170,11 @@
                 <h6 class="mb-3">Results</h6>
                 <div class="accordion" id="cfResultsAccordion">
                 </div>
+                {% if not has_used_write_post_poll %}
+                <div id="nextFeatureContainer" class="mt-3" style="display:none;">
+                    <button type="button" class="btn btn-success" id="nextFeatureBtn">Next feature <i class="bi bi-arrow-right"></i></button>
+                </div>
+                {% endif %}
             </div>
         </div>
 
@@ -198,6 +244,9 @@
             </div>
         </div>
 
+        <!-- Sections 2 & 3: hidden until user has answered the write post poll -->
+        <div id="writeAndImproveContainer" style="{% if not has_used_write_post_poll %}display:none;{% endif %}">
+
         <!-- Write your post Card (feedback) -->
         <div class="card mb-3 mt-3" id="writePostCard">
             <div class="card-header">
@@ -250,6 +299,8 @@
             </div>
         </div>
 
+        </div><!-- /writeAndImproveContainer -->
+
         {% endif %}
     </div>
 </div>
@@ -294,6 +345,46 @@
     // Coach mark 3: "Check them out" dismiss
     document.getElementById('checkThemOutBtn').addEventListener('click', function() {
         document.getElementById('contentFoundOverlay').style.display = 'none';
+    });
+
+    // "Next feature" button → show Future Feature coach with poll
+    document.getElementById('nextFeatureBtn').addEventListener('click', function() {
+        document.getElementById('futureFeatureOverlay').style.display = 'flex';
+    });
+
+    // Future Feature coach poll buttons → submit feedback, close coach, show Thank You
+    document.querySelectorAll('.coach-poll-btn').forEach(function(btn) {
+        btn.addEventListener('click', async function() {
+            var response = this.dataset.response;
+            try {
+                await postJSON("{% url 'analytics:submit_feedback' %}", { feature: 'write_post', response: response });
+            } catch (err) {
+                // Continue even if save fails
+            }
+            // Close the Future Feature overlay
+            document.getElementById('futureFeatureOverlay').style.display = 'none';
+            // Also highlight the matching button in the actual card
+            highlightFeedbackBtn(response);
+            // Show Thank You coach
+            document.getElementById('thankYouOverlay').style.display = 'flex';
+        });
+    });
+
+    // Thank You "Next feature" → reveal sections 2 & 3, show Review Your Draft
+    document.getElementById('thankYouNextBtn').addEventListener('click', function() {
+        document.getElementById('thankYouOverlay').style.display = 'none';
+        // Reveal sections 2 & 3
+        document.getElementById('writeAndImproveContainer').style.display = '';
+        // Show Review Your Draft coach
+        var reviewOverlay = document.getElementById('reviewDraftOverlay');
+        if (reviewOverlay) reviewOverlay.style.display = 'flex';
+    });
+    {% endif %}
+
+    {% if has_processed_data and not has_used_post_improvement %}
+    // Review Your Draft: "Continue" dismiss
+    document.getElementById('reviewDraftContinueBtn').addEventListener('click', function() {
+        document.getElementById('reviewDraftOverlay').style.display = 'none';
     });
     {% endif %}
 
@@ -711,6 +802,9 @@
                     // Show "Content Found" coach mark
                     var contentFoundOverlay = document.getElementById('contentFoundOverlay');
                     if (contentFoundOverlay) contentFoundOverlay.style.display = 'flex';
+                    // Show "Next feature" button
+                    var nextBtn = document.getElementById('nextFeatureContainer');
+                    if (nextBtn) nextBtn.style.display = '';
                     {% endif %}
                 },
             });
