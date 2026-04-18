@@ -38,7 +38,7 @@
 {% endblock %}
 
 {% block content %}
-{% if not posts %}
+{% if not initial_fetch_complete and not posts %}
 <!-- Coach mark: no posts loaded -->
 <div class="confirm-overlay" id="refreshPostsOverlay" style="display: flex;">
     <div class="confirm-modal">
@@ -84,12 +84,19 @@
             <div class="card-header d-flex justify-content-between align-items-center">
                 <h5 class="mb-0">Select Posts</h5>
                 <div>
+                    {% if not initial_fetch_complete %}
                     <form method="post" action="{% url 'analytics:refresh_posts' %}" style="display: inline;">
                         {% csrf_token %}
                         <button type="submit" class="btn btn-success btn-sm" id="refreshPostsBtn">
                             <i class="bi bi-arrow-clockwise"></i> Refresh Posts
                         </button>
                     </form>
+                    {% else %}
+                    <span id="incrementalRefreshStatus" class="text-muted small" style="display: none;">
+                        <span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>
+                        Checking for new posts...
+                    </span>
+                    {% endif %}
                 </div>
             </div>
             <div id="refreshPostsProgress" class="px-3"></div>
@@ -179,8 +186,8 @@
 
 {% block extra_js %}
 <script>
-    // Coach mark: spotlight Refresh Posts button when no posts
-    {% if not posts %}
+    // Coach mark: spotlight Refresh Posts button when no posts (only before initial fetch)
+    {% if not initial_fetch_complete and not posts %}
     (function() {
         var overlay = document.getElementById('refreshPostsOverlay');
         var btn = document.getElementById('refreshPostsBtn');
@@ -381,6 +388,31 @@
             });
         });
     }
+
+    // =========================================================================
+    // Automatic incremental refresh (runs once per page load after initial fetch)
+    // =========================================================================
+    {% if initial_fetch_complete %}
+    (function() {
+        const statusEl = document.getElementById('incrementalRefreshStatus');
+        if (statusEl) statusEl.style.display = 'inline-block';
+
+        postJSON("{% url 'analytics:incremental_refresh_posts' %}", {})
+            .then(function(data) {
+                if (statusEl) statusEl.style.display = 'none';
+                if (!data || !data.success) return;
+                const created = data.created_count || 0;
+                const updated = data.updated_count || 0;
+                if (created > 0 || updated > 0) {
+                    // Reload so the table reflects the newly fetched posts.
+                    window.location.reload();
+                }
+            })
+            .catch(function() {
+                if (statusEl) statusEl.style.display = 'none';
+            });
+    })();
+    {% endif %}
 
     // =========================================================================
     // Clear single post processed data (trash icon)

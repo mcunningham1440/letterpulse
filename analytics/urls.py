@@ -9,6 +9,7 @@ urlpatterns = [
     path('account/', views.account_view, name='account'),
     path('posts/', views.posts_view, name='posts'),
     path('posts/refresh-posts/', views.refresh_posts, name='refresh_posts'),
+    path('posts/incremental-refresh/', views.incremental_refresh_posts, name='incremental_refresh_posts'),
     path('posts/process/', views.run_processing, name='run_processing'),
     path('posts/clear-processed/', views.clear_processed_posts, name='clear_processed_posts'),
     path('insights/', views.insights_view, name='insights'),

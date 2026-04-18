@@ -63,6 +63,7 @@ from .utils import (
     fetch_posts_html_and_clicks_parallel,
     process_posts_sections_sequential,
     refresh_posts_data,
+    incremental_refresh_posts_data,
     NotEnoughCredits,
     charge_credits,
     validate_beehiiv_api_key,
@@ -471,12 +472,15 @@ def posts_view(request):
         feature__in=['used_content_finder', 'used_write_post_poll', 'used_post_improvement']
     ).exists()
 
+    initial_fetch_complete = beehiiv_pub_id in (usage.initial_fetched_pub_ids or [])
+
     context = {
         'posts': posts_data,
         'all_content_sets': all_content_sets,
         'all_reports': all_reports,
         'processed_post_ids': processed_post_ids,
         'has_used_write': has_used_write,
+        'initial_fetch_complete': initial_fetch_complete,
     }
 
     return render(request, 'analytics/posts.html', context)
@@ -1121,13 +1125,115 @@ def refresh_posts(request):
                 created_count += 1
             else:
                 updated_count += 1
-        
+
+        # Mark this publication as having completed its initial full fetch so
+        # future page loads use the incremental update path instead.
+        if beehiiv_pub_id and beehiiv_pub_id not in (usage.initial_fetched_pub_ids or []):
+            usage.initial_fetched_pub_ids = list(usage.initial_fetched_pub_ids or []) + [beehiiv_pub_id]
+            usage.save(update_fields=['initial_fetched_pub_ids'])
+
         messages.success(request, "Updated posts")
-        
+
     except Exception as e:
         messages.error(request, f"Error refreshing posts: {str(e)}")
-    
+
     return redirect('analytics:posts')
+
+
+@login_required
+@require_POST
+@require_valid_api_credentials
+def incremental_refresh_posts(request):
+    """
+    Run an incremental two-track fetch (by publish_date and by created)
+    against the Beehiiv API and upsert any new/updated posts. Designed to be
+    called automatically on every posts page load after the user's initial
+    full fetch. Returns JSON.
+    """
+    from .models import Publication
+
+    try:
+        beehiiv_token, beehiiv_pub_id, _ = get_user_api_credentials(request.user)
+
+        usage = UsageAccount.objects.get(user=request.user)
+
+        # Only run incremental updates after the initial full fetch is done
+        # for this publication. The frontend gates on the same flag, but guard
+        # the endpoint in case it's called directly.
+        if beehiiv_pub_id not in (usage.initial_fetched_pub_ids or []):
+            return JsonResponse({
+                'success': False,
+                'error': 'Initial fetch not yet completed for this publication.'
+            }, status=400)
+
+        pub_data = next(
+            (p for p in usage.available_publications if p["id"] == beehiiv_pub_id),
+            None,
+        )
+        publication, _ = Publication.objects.get_or_create(
+            pub_id=beehiiv_pub_id,
+            defaults={
+                'name': pub_data.get('name', 'Unknown') if pub_data else 'Unknown',
+                'organization_name': pub_data.get('organization_name', '') if pub_data else '',
+            },
+        )
+
+        existing_post_ids = list(
+            Post.objects.filter(user=request.user, publication=publication)
+            .values_list('post_id', flat=True)
+        )
+
+        posts_df, result_message = async_to_sync(incremental_refresh_posts_data)(
+            beehiiv_token, beehiiv_pub_id, existing_post_ids,
+        )
+
+        if posts_df is None:
+            return JsonResponse({'success': False, 'error': result_message}, status=500)
+
+        created_count = 0
+        updated_count = 0
+
+        for _, row in posts_df.iterrows():
+            publish_date = row['publish_date']
+            if pd.isna(publish_date):
+                publish_date = None
+
+            _, created = Post.objects.update_or_create(
+                post_id=row['id'],
+                user=request.user,
+                defaults={
+                    'publication': publication,
+                    'title': row['title'],
+                    'subtitle': row.get('subtitle', ''),
+                    'status': row.get('status', 'Published'),
+                    'creation_date': row.get('creation_date'),
+                    'publish_date': publish_date,
+                    'recipients': row.get('recipients', 0),
+                    'delivered': row.get('delivered', 0),
+                    'email_opens': row.get('email_opens', 0),
+                    'unique_email_opens': row.get('unique_email_opens', 0),
+                    'email_clicks': row.get('email_clicks', 0),
+                    'unique_email_clicks': row.get('unique_email_clicks', 0),
+                    'unsubscribes': row.get('unsubscribes', 0),
+                    'spam_reports': row.get('spam_reports', 0),
+                },
+            )
+
+            if created:
+                created_count += 1
+            else:
+                updated_count += 1
+
+        return JsonResponse({
+            'success': True,
+            'created_count': created_count,
+            'updated_count': updated_count,
+            'message': result_message,
+        })
+
+    except Exception as e:
+        logger.exception("incremental_refresh_posts failed")
+        return JsonResponse({'success': False, 'error': str(e)}, status=500)
 
 
 @login_required

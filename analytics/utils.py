@@ -1817,6 +1817,135 @@ async def refresh_posts_data(beehiiv_token, beehiiv_pub_id):
         return None, f"Error refreshing posts: {str(e)}"
 
 
+INCREMENTAL_FETCH_PAGE_SIZE = 5
+INCREMENTAL_FETCH_PUBLISH_AGE_SECONDS = 72 * 3600
+
+
+async def _fetch_incremental_track(
+    session,
+    beehiiv_token,
+    beehiiv_pub_id,
+    existing_post_ids,
+    order_by,
+    apply_publish_age_check,
+):
+    """
+    Paginate posts from Beehiiv newest -> oldest for a single sort order.
+
+    Stops when the current batch contains a post we already have locally.
+    If apply_publish_age_check is True (Track A), additionally requires the
+    oldest post in the batch to be at least 72h old before stopping.
+    """
+    from datetime import timezone as dt_timezone
+
+    fetched = []
+    page = 1
+
+    while True:
+        url = (
+            f"https://api.beehiiv.com/v2/publications/{beehiiv_pub_id}/posts"
+            f"?expand=stats&status=all&order_by={order_by}&direction=desc"
+            f"&limit={INCREMENTAL_FETCH_PAGE_SIZE}&page={page}"
+        )
+        headers = {"Authorization": beehiiv_token}
+
+        async with session.get(url, headers=headers) as response:
+            if response.status != 200:
+                logger.error(
+                    f"_fetch_incremental_track ({order_by}) page {page} status: {response.status}"
+                )
+                break
+            data = await response.json()
+            page_posts = data.get('data', [])
+
+        if not page_posts:
+            break
+
+        fetched.extend(page_posts)
+
+        any_known = any(p.get('id') in existing_post_ids for p in page_posts)
+        if any_known:
+            if not apply_publish_age_check:
+                break
+
+            publish_timestamps = [
+                p.get('publish_date') for p in page_posts if p.get('publish_date')
+            ]
+            if publish_timestamps:
+                oldest_ts = min(publish_timestamps)
+                oldest_dt = datetime.fromtimestamp(oldest_ts, tz=dt_timezone.utc)
+                age_seconds = (datetime.now(tz=dt_timezone.utc) - oldest_dt).total_seconds()
+                if age_seconds >= INCREMENTAL_FETCH_PUBLISH_AGE_SECONDS:
+                    break
+            else:
+                # No publish_date on any post in batch (all drafts) — treat as old enough
+                break
+
+        if len(page_posts) < INCREMENTAL_FETCH_PAGE_SIZE:
+            break
+
+        page += 1
+
+    return fetched
+
+
+async def incremental_fetch_posts(beehiiv_token, beehiiv_pub_id, existing_post_ids):
+    """
+    Run two parallel fetch tracks against Beehiiv to pick up recent changes:
+      - Track A: ordered by publish_date desc, stops once any batch item is
+                 already known AND its oldest post is >= 72h old.
+      - Track B: ordered by created (creation_date) desc, stops once any
+                 batch item is already known.
+
+    Both tracks share a single aiohttp session so requests are pooled. Results
+    are deduplicated by post id before being returned.
+    """
+    existing_post_ids = set(existing_post_ids or [])
+
+    timeout = aiohttp.ClientTimeout(total=120)
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        track_a, track_b = await asyncio.gather(
+            _fetch_incremental_track(
+                session, beehiiv_token, beehiiv_pub_id, existing_post_ids,
+                order_by='publish_date', apply_publish_age_check=True,
+            ),
+            _fetch_incremental_track(
+                session, beehiiv_token, beehiiv_pub_id, existing_post_ids,
+                order_by='created', apply_publish_age_check=False,
+            ),
+        )
+
+    by_id = {}
+    for post in track_a + track_b:
+        pid = post.get('id')
+        if pid:
+            by_id[pid] = post
+    return list(by_id.values())
+
+
+async def incremental_refresh_posts_data(beehiiv_token, beehiiv_pub_id, existing_post_ids):
+    """
+    Run the incremental two-track fetch and process results into a DataFrame.
+
+    Returns (posts_df, message). posts_df may be empty if no posts were
+    fetched. Returns (None, error_message) on failure.
+    """
+    try:
+        posts_list = await incremental_fetch_posts(
+            beehiiv_token, beehiiv_pub_id, existing_post_ids
+        )
+
+        if not posts_list:
+            return pd.DataFrame(), "No new posts found."
+
+        posts_df = process_posts_data(posts_list)
+        return posts_df, f"Fetched {len(posts_df)} post(s) for incremental update."
+
+    except Exception as e:
+        logger.exception("incremental_refresh_posts_data failed")
+        return None, f"Error refreshing posts: {str(e)}"
+
+
 def generate_click_visualization_html(post_html, clicks_dict, unique_email_opens):
     """
     Generate HTML with click counts and CTR displayed next to each link.

@@ -79,6 +79,11 @@ class UsageAccount(models.Model):
         blank=True,
         help_text="When the user enabled auto click viz emails; prevents old posts from triggering"
     )
+    initial_fetched_pub_ids = models.JSONField(
+        default=list,
+        blank=True,
+        help_text="Beehiiv pub_ids for which the user has completed the initial full post fetch"
+    )
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
