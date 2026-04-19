@@ -8,6 +8,14 @@
         max-width: 350px;
         text-align: left;
     }
+    @keyframes coach-mark-pulse {
+        0%, 100% { box-shadow: 0 0 8px 4px rgba(25, 135, 84, 0.6); opacity: 1; }
+        50% { box-shadow: 0 0 20px 10px rgba(25, 135, 84, 0.3); opacity: 0.5; }
+    }
+    .coach-mark-flash {
+        animation: coach-mark-pulse 1.2s ease-in-out infinite;
+        border-radius: 0.375rem;
+    }
 </style>
 {% endblock %}
 
@@ -114,6 +122,19 @@
         <p class="mb-4">Under <b>3. Improve your post</b>, select one of your drafts or published issues and click <b>Get Improvement Tips</b>.</p>
         <div class="d-flex justify-content-end">
             <button type="button" class="btn btn-primary" id="reviewDraftContinueBtn">Continue</button>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+{% if has_processed_data and not has_used_post_improvement %}
+<!-- Coach mark: Review Improvement Tips (shown after first improvement tips run completes) -->
+<div class="confirm-overlay" id="reviewTipsOverlay" style="display: none;">
+    <div class="confirm-modal">
+        <h5 class="mb-3">Review Improvement Tips</h5>
+        <p class="mb-4">Click <b>Download</b> to see recommended changes and fixes for your issue.</p>
+        <div class="d-flex justify-content-end">
+            <button type="button" class="btn btn-primary" id="reviewTipsDismissBtn">Got it</button>
         </div>
     </div>
 </div>
@@ -391,6 +412,14 @@
     // Review Your Draft: "Continue" dismiss
     document.getElementById('reviewDraftContinueBtn').addEventListener('click', function() {
         document.getElementById('reviewDraftOverlay').style.display = 'none';
+    });
+
+    // Review Improvement Tips: dismiss coach and stop flash on download click
+    document.getElementById('reviewTipsDismissBtn').addEventListener('click', function() {
+        document.getElementById('reviewTipsOverlay').style.display = 'none';
+    });
+    document.getElementById('itDownloadBtn').addEventListener('click', function() {
+        this.classList.remove('coach-mark-flash');
     });
     {% endif %}
 
@@ -1036,6 +1065,11 @@
                     downloadBtn.href = `/insights/improvement-tips/download/${taskId}/`;
                     document.getElementById('itDownloadPostName').textContent = postName;
                     downloadSection.style.display = '';
+                    {% if not has_used_post_improvement %}
+                    // Show coach and flash the download button
+                    document.getElementById('reviewTipsOverlay').style.display = 'flex';
+                    downloadBtn.classList.add('coach-mark-flash');
+                    {% endif %}
                 },
             });
         } catch (err) {
