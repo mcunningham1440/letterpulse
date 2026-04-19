@@ -4,11 +4,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>LetterPulse - Newsletter Analytics That Drive Growth</title>
+    <title>LetterPulse - Write better newsletters and get paid</title>
 
     <!-- Open Graph -->
-    <meta property="og:title" content="LetterPulse - Newsletter Analytics That Drive Growth">
-    <meta property="og:description" content="AI-powered insights that turn your Beehiiv click data into actionable recommendations.">
+    <meta property="og:title" content="LetterPulse - Write better newsletters and get paid">
+    <meta property="og:description" content="LetterPulse helps Beehiiv creators find fresh content, improve their posts, and connect with the right sponsors &mdash; all powered by insights directly from your audience's real click data.">
     <meta property="og:image" content="https://letterpulse.com{% static 'analytics/images/logo_no_text.png' %}">
     <meta property="og:type" content="website">
 
@@ -76,6 +76,24 @@
 
         .hero-description strong {
             color: #212529;
+        }
+
+        .hero-callout {
+            max-width: 640px;
+            margin: 0 auto 2rem;
+            font-size: 1.5rem;
+            font-weight: 600;
+            line-height: 1.35;
+        }
+
+        .hero-callout .callout-muted {
+            display: block;
+            color: #adb5bd;
+        }
+
+        .hero-callout .callout-accent {
+            display: block;
+            color: var(--primary-green);
         }
 
         .beta-banner {
@@ -269,11 +287,16 @@
             </span>
         </div>
 
-        <h1 class="hero-tagline">Newsletter Analytics That Drive Growth</h1>
+        <h1 class="hero-tagline">Write better newsletters and get paid</h1>
 
         <p class="hero-description">
-            LetterPulse helps Beehiiv creators <strong>understand what content resonates</strong> with their audience. Unlock AI-powered insights that turn your click data into <strong>actionable recommendations.</strong>
+            LetterPulse helps Beehiiv creators <strong>find fresh content, improve their posts, and connect with the right sponsors</strong> &mdash; all powered by insights directly from your audience's <strong>real click data.</strong>
         </p>
+
+        <div class="hero-callout">
+            <span class="callout-muted">ChatGPT doesn't know your readers.</span>
+            <span class="callout-accent">LetterPulse does.</span>
+        </div>
 
         <div class="beta-banner">
             <i class="bi bi-megaphone-fill"></i>
@@ -292,14 +315,14 @@
         <!-- Feature 1: image left, text right -->
         <div class="feature-block">
             <div class="feature-img">
-                <img src="{% static 'analytics/images/section_perf_trends.png' %}" alt="Click-through rate tracking example">
+                <img src="{% static 'analytics/images/section_perf_trends.png' %}" alt="Content finder example">
             </div>
             <div class="feature-text">
-                <h3>Track click-through rates for every section of your newsletter</h3>
-                <p>Define the recurring sections in your newsletter and LetterPulse extracts performance data for each one, post by post.</p>
+                <h3>Find fresh content your readers will love</h3>
+                <p>LetterPulse learns what your audience engages with most, then searches the web for stories and links that match.</p>
                 <ul>
-                    <li><i class="bi bi-check-circle-fill"></i> AI-powered section recognition</li>
-                    <li><i class="bi bi-check-circle-fill"></i> Visualize each section's performance over time</li>
+                    <li><i class="bi bi-check-circle-fill"></i> AI-powered search grounded in your subscribers' click patterns</li>
+                    <li><i class="bi bi-check-circle-fill"></i> Dynamically updated recommendations that learn from your feedback</li>
                 </ul>
             </div>
         </div>
@@ -307,14 +330,14 @@
         <!-- Feature 2: text left, image right -->
         <div class="feature-block reverse">
             <div class="feature-img">
-                <img src="{% static 'analytics/images/perf_report.png' %}" alt="AI-generated report example">
+                <img src="{% static 'analytics/images/perf_report.png' %}" alt="Proofreading tips example">
             </div>
             <div class="feature-text">
-                <h3>Generate reports identifying top-performing content patterns</h3>
-                <p>AI analyzes your click data across posts and sections to surface what's working and what to improve.</p>
+                <h3>Match your writing to your readers</h3>
+                <p>Proofread your drafts with the push of a button, and get tips on maximizing engagement with your particular audience.</p>
                 <ul>
-                    <li><i class="bi bi-check-circle-fill"></i> Insights generated from your actual engagement data</li>
-                    <li><i class="bi bi-check-circle-fill"></i> Actionable recommendations, not just numbers</li>
+                    <li><i class="bi bi-check-circle-fill"></i> Catch spelling, grammar, and style errors</li>
+                    <li><i class="bi bi-check-circle-fill"></i> Tailor your wording to your subscribers' interests</li>
                 </ul>
             </div>
         </div>
@@ -322,13 +345,14 @@
         <!-- Feature 3: image left, text right -->
         <div class="feature-block">
             <div class="feature-img">
-                <img src="{% static 'analytics/images/click_vis.png' %}" alt="Click visualization example">
+                <img src="{% static 'analytics/images/click_vis.png' %}" alt="Sponsor matching example">
             </div>
             <div class="feature-text">
-                <h3>Instantly visualize where your audience is clicking</h3>
-                <p>See click counts overlaid directly on your newsletter HTML, so you know exactly which links grab attention.</p>
+                <h3>Match with sponsors, no work required</h3>
+                <p>LetterPulse sends customized cold outreach emails to brands whose products align with what your readers click on most.</p>
                 <ul>
-                    <li><i class="bi bi-check-circle-fill"></i> Click counts displayed inline on every link</li>
+                    <li><i class="bi bi-check-circle-fill"></i> Sponsor matches grounded in your audience's click history</li>
+                    <li><i class="bi bi-check-circle-fill"></i> Outreach pitches customized to your newsletter</li>
                 </ul>
             </div>
         </div>
@@ -337,7 +361,7 @@
 
     <!-- Bottom CTA -->
     <section class="bottom-cta">
-        <h2>Ready to understand what resonates?</h2>
+        <h2>Ready to take your newsletter to the next level?</h2>
         <div class="cta-buttons">
             <a href="{% url 'account_signup' %}" class="btn btn-primary">Sign up for the free Beta</a>
             <a href="{% url 'account_login' %}" class="btn btn-outline-secondary">Log In</a>
