@@ -45,3 +45,38 @@ def environment_context(request):
     Expose whether the app is running in local mode to templates.
     """
     return {'is_local': settings.ENVIRONMENT == 'local'}
+
+
+def limited_data_context(request):
+    """
+    Flag the "Limited Data Available" coach when an authenticated user with
+    valid Beehiiv credentials has fewer than 5 eligible (Published, email /
+    both platform) posts for their currently-selected publication. Shown on
+    every page load when active.
+    """
+    from .models import Post, Publication
+
+    if not request.user.is_authenticated:
+        return {'show_limited_data_coach': False}
+
+    try:
+        usage = UsageAccount.objects.get(user=request.user)
+    except UsageAccount.DoesNotExist:
+        return {'show_limited_data_coach': False}
+
+    if not usage.api_key_valid or not usage.beehiiv_pub_id:
+        return {'show_limited_data_coach': False}
+
+    try:
+        publication = Publication.objects.get(pub_id=usage.beehiiv_pub_id)
+    except Publication.DoesNotExist:
+        return {'show_limited_data_coach': False}
+
+    eligible_count = Post.objects.filter(
+        user=request.user,
+        publication=publication,
+        status='Published',
+        platform__in=('email', 'both'),
+    ).count()
+
+    return {'show_limited_data_coach': eligible_count < 5}

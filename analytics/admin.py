@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Post, ContentSet, Report, UsageAccount, Publication, ExecutionLog, SurveyResponse, ProcessedPost, LinkData, Section, ClickVizEmailLog, CronRunLog, PendingContentSearch, ContentSearchFeedback
+from .models import Post, ContentSet, Report, UsageAccount, Publication, ExecutionLog, SurveyResponse, ProcessedPost, LinkData, Section, ClickVizEmailLog, CronRunLog, PendingContentSearch, ContentSearchFeedback, PendingLearningTask
 
 
 @admin.register(UsageAccount)
@@ -116,6 +116,17 @@ class PendingContentSearchAdmin(admin.ModelAdmin):
     search_fields = ('user__email', 'post__title')
     ordering = ('-created_at',)
     readonly_fields = ('task_id', 'created_at')
+
+
+@admin.register(PendingLearningTask)
+class PendingLearningTaskAdmin(admin.ModelAdmin):
+    list_display = ('task_id', 'user', 'publication', 'kind', 'phase', 'status',
+                    'target_process_count', 'posts_processed_count', 'abandoned',
+                    'last_heartbeat', 'created_at')
+    list_filter = ('kind', 'phase', 'status', 'abandoned', 'created_at')
+    search_fields = ('user__email', 'publication__name')
+    ordering = ('-created_at',)
+    readonly_fields = ('task_id', 'created_at', 'updated_at', 'last_heartbeat')
 
 
 @admin.register(SurveyResponse)

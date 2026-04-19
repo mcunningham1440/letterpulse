@@ -93,6 +93,7 @@ TEMPLATES = [
                 'analytics.context_processors.usage_context',
                 'analytics.context_processors.progress_context',
                 'analytics.context_processors.environment_context',
+                'analytics.context_processors.limited_data_context',
             ],
         },
     },
@@ -179,7 +180,7 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 DATA_DIR = BASE_DIR / 'data'
 
 # django-allauth settings
-LOGIN_REDIRECT_URL = 'analytics:posts'
+LOGIN_REDIRECT_URL = 'analytics:insights'
 LOGOUT_REDIRECT_URL = 'account_login'
 ACCOUNT_LOGIN_METHODS = {'email'}
 ACCOUNT_SIGNUP_FIELDS = ['email*', 'password1*', 'password2*']
@@ -221,9 +222,11 @@ MESSAGE_TAGS = {
 DEFAULT_MONTHLY_CREDITS = 150
 
 # Credit costs per operation
-CREDITS_PER_EXTRACTION = 1      # Per post extracted from
 CREDITS_PER_REPORT = 1          # Flat cost for generating insights
 CREDITS_PER_IMPROVEMENT_TIPS = 1  # Per post improvement tips generation
+
+# Silent cap on post processing per billing period (no credit charge).
+MAX_POSTS_PROCESSED_PER_PERIOD = 45
 
 # Section processing configuration
 SECTION_N_EXAMPLES = 5              # Number of nearby-post examples per section for context
@@ -254,7 +257,12 @@ PROGRESS_DURATIONS = {
     'generate_report': 35,      # empirical
     'process_posts': 20,        # empirical
     'content_search': 45,       # empirical
+    'learning_fetch': 30,       # full Beehiiv fetch during initial learning
 }
+
+# Stale-task sweep: if a running PendingLearningTask's last_heartbeat is older
+# than this, treat it as abandoned (backup for the pagehide beacon).
+LEARNING_TASK_STALE_SECONDS = 15
 
 # User-facing time warnings (minutes)
 EXPECTED_TIMES = {

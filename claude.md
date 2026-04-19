@@ -83,7 +83,7 @@ app/
 All models are in `analytics/models.py`. Key models and their relationships:
 
 - **Publication**: Beehiiv publication (users may have multiple)
-- **Post**: Newsletter post metadata + engagement stats from Beehiiv. Scoped to `(post_id, user)`
+- **Post**: Newsletter post metadata + engagement stats from Beehiiv, including `platform` ('email', 'web', or 'both') used to filter for processing eligibility. Scoped to `(post_id, user)`
 - **ContentSet**: Named collections of extracted content items (legacy). Scoped to `(name, publication, user)`
 - **Report**: AI-generated insights per section. Has legacy nullable `content_set` FK. Scoped to `(section_name, user, publication)`
 - **UsageAccount**: Per-user credits, API credentials, preferences. OneToOneField to User. Billing resets on signup anniversary each month
@@ -92,6 +92,7 @@ All models are in `analytics/models.py`. Key models and their relationships:
 - **LinkData**: Described links with CTR data, grouped by section. Scoped to `(post, user, raw_url, section_name)`
 - **PendingContentSearch**: Background content finder task tracker. Has `dev_panel_data` JSONField for local dev panel
 - **PendingImprovementTips**: Background improvement tips task tracker. Has `dev_panel_data` JSONField for local dev panel
+- **PendingLearningTask**: Tracks the onboarding "Learning Your Audience" flow (`kind='initial'`) and the per-page-load "Updating Your Posts" flow (`kind='update'`). Fields include `phase` (fetch/process), `status` (pending/running/complete/error/abandoned), `target_process_count`, `posts_processed_count`, `last_heartbeat` (used by stale-task sweep). A runner thread checks the `abandoned` flag between steps; for `kind='initial'` abandonment triggers `wipe_user_publication_data`
 - **ExecutionLog**: Low-overhead request/function logging with queue-based async writes via `logsink.py`
 - **Feedback**: Per-user feature feedback. Scoped to `(user, feature)`
 - **SurveyResponse**: Signup survey answers (survey currently disabled via `SIGNUP_SURVEY_ENABLED = False`)
@@ -105,26 +106,23 @@ All models are in `analytics/models.py`. Key models and their relationships:
 - Signup collects first name, last name, newsletter name, email, password
 - All views `@login_required` except the public about page at `/`
 - UsageAccount auto-created for new users via signals
-- After login: users without API credentials → Account page; users with credentials → Posts page
-- "Please configure your Beehiiv API credentials" message only appears when navigating to Posts/Write without credentials, not immediately after login
+- After login: users without API credentials → Account page; users with credentials → Write page
+- "Please configure your Beehiiv API credentials" message only appears when navigating to Write without credentials, not immediately after login
 
 **Important:** `SECRET_KEY` derives the encryption key for user beehiiv tokens (via `EncryptedCharField`). Changing it makes existing encrypted tokens unreadable.
 
 ## Key Features & Workflows
 
-### 1. Posts Page (`/posts/`)
-- **Refresh Posts**: Fetches all posts from Beehiiv API with pagination
-- **Process Selected Posts**: Runs immediately (no modal). For each post: fetches HTML, runs `auto_section` → `process_post_links`. Both must succeed atomically — if either fails, nothing is saved. Section + LinkData + ProcessedPost marker saved in a single DB transaction. First 2 posts run sequentially to seed section context; remaining posts run in parallel
-- **Processed Column**: Green checkmark for processed posts; trash icon to clear (deletes ProcessedPost, Section, LinkData)
-- **Download Click Visualization**: ZIP of HTML files with click counts overlaid on links
-
-### 2. Write Page (`/insights/`)
+### 1. Write Page (`/insights/`) — also the onboarding entrypoint
+- **Learning Your Audience (initial onboarding)**: After a user first saves valid Beehiiv credentials, the Write page shows a blocking "Learning Your Audience" coach. Clicking **Scan** starts a background `PendingLearningTask` (kind='initial'): full Beehiiv post fetch, then process the top-k most recent eligible posts (published ≥48h ago with `platform ∈ {'email','both'}`). `k` is chosen so the sum of the posts' `recipients` is ≥ `subscribers × 15` (subscribers fetched from `GET /v2/publications/{id}?expand=stats`). Post processing is free (no credit charge) but silently capped at `MAX_POSTS_PROCESSED_PER_PERIOD` (45) per billing period — over-cap posts are truncated from the selection and become eligible again next period via the update flow. The modal is **non-dismissible** — if the user reloads, navigates away, or closes the tab before completion, `navigator.sendBeacon` fires `abandon_learning_task/`, which sets `status='abandoned'` and wipes all Posts/ProcessedPost/Section/LinkData for the (user, pub) and removes `pub_id` from `UsageAccount.initial_fetched_pub_ids`. A stale-task sweep (15s `last_heartbeat` threshold) backs up the beacon.
+- **Updating Your Posts (auto-refresh)**: On every Write page load, if initial learning has finished and no task is running, JS checks a 60s TTL (`localStorage` keyed as `incrementalRefreshLastRun:{pub_id}`) and, if expired, kicks off a `PendingLearningTask` (kind='update'): incremental fetch (speculative-prefetch window size 1) + process any newly-eligible posts. Auto-closes silently if nothing to do.
 - **Content Finder**: User selects a processed post as template. Per-section agentic LLM loop uses Perplexity web search to find new content matching historical click patterns. Background task with polling (3s interval). Results in Bootstrap accordion grouped by section
 - **Section/Link Data Tables**: Hidden by default, show all Sections and LinkData for current publication with CSV download
 - **Improvement Tips**: User selects any post (published or draft). Background task builds numbered text with HTML line mapping, gathers link history, calls LLM with structured output, generates two-column annotated HTML with tip cards and SVG connectors. Downloaded as file
 
-### 3. Account Page (`/account/`)
-- Usage stats, API credentials (validated on save), publication selector, account info
+### 2. Account Page (`/account/`)
+- Two tabs: **Account** (usage stats, API credentials, publication selector, timezone, password) and **Post fetching** (last-fetch datetime, most-recent-published post, and — dev only — most-recent-processed post).
+- No manual "Refresh Posts" or "Process Posts" controls exist anywhere; fetching and processing are fully automatic via the Learning/Update flows.
 
 **User Scoping**: Posts, ContentSets, Sections, and LinkData are all scoped to both publication AND user.
 
@@ -132,8 +130,8 @@ All models are in `analytics/models.py`. Key models and their relationships:
 
 All routes use the `analytics:` namespace. See `analytics/urls.py` for the full list. Key groups:
 
-- **Posts**: `/posts/`, `/posts/process/`, `/posts/refresh-posts/`, `/posts/clear-processed/`
 - **Insights**: `/insights/`, `/insights/load-processed-data/`, `/insights/load-link-data/`
+- **Learning / Update flow**: `/insights/learning/start/`, `/insights/learning/update/`, `/insights/learning/status/<uuid>/`, `/insights/learning/abandon/<uuid>/`
 - **Content Finder**: `/insights/content-finder/posts/`, `/insights/content-finder/sections/`, `/insights/content-finder/run/`, `/insights/content-finder/status/<uuid>/`, `/insights/content-finder/feedback/`
 - **Improvement Tips**: `/insights/improvement-tips/posts/`, `/insights/improvement-tips/run/`, `/insights/improvement-tips/status/<uuid>/`, `/insights/improvement-tips/download/<uuid>/`
 - **Account**: `/account/`

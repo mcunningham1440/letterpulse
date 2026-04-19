@@ -20,25 +20,49 @@
 {% endblock %}
 
 {% block content %}
-{% if not has_posts %}
-<!-- Coach mark: no posts loaded -->
-<div class="confirm-overlay" id="noPostsOverlay" style="display: flex;">
+{% if show_learning_coach %}
+<!-- Coach mark: first-time Learning Your Audience -->
+<div class="confirm-overlay" id="learningCoachOverlay" style="display: flex;">
     <div class="confirm-modal">
-        <h5 class="mb-3">No Posts Loaded</h5>
-        <p class="mb-4">Fetch your newsletter's posts on the Posts page before using Write.</p>
+        <h5 class="mb-3">Learning Your Audience</h5>
+        <p>Before LetterPulse can help you write, it needs to study your past posts to learn what your audience clicks on.</p>
+        <p class="mb-4">This one-time scan fetches your recent posts and analyzes them. It usually takes a couple of minutes — please don't close or reload the window while it's running.</p>
         <div class="d-flex justify-content-end">
-            <a href="{% url 'analytics:posts' %}" class="btn btn-primary">Go to Posts</a>
+            <button type="button" class="btn btn-primary" id="startLearningBtn">Scan</button>
         </div>
     </div>
 </div>
-{% elif not has_processed_data %}
-<!-- Coach mark: posts exist but none processed -->
+{% endif %}
+
+<!-- Non-dismissible modal for a running Learning / Updating task -->
+<div class="confirm-overlay" id="learningRunOverlay" style="display: none;">
+    <div class="confirm-modal" style="max-width: 520px;">
+        <h5 class="mb-3" id="learningRunTitle">Learning Your Audience</h5>
+        <p class="mb-3" id="learningRunSubtext">Fetching your posts&hellip;</p>
+        <p class="text-danger small mb-3"><b>Do not close or reload the window.</b></p>
+        <div id="learningRunProgressContainer"></div>
+    </div>
+</div>
+
+<!-- Coach mark: initial learning just finished -->
+<div class="confirm-overlay" id="learningDoneOverlay" style="display: none;">
+    <div class="confirm-modal">
+        <h5 class="mb-3">You're All Set</h5>
+        <p class="mb-4">LetterPulse has learned what kind of content resonates with your audience. You're ready to start writing &mdash; use the Content Finder below to find stories for your next issue.</p>
+        <div class="d-flex justify-content-end">
+            <button type="button" class="btn btn-primary" id="closeLearningDoneBtn">Got it</button>
+        </div>
+    </div>
+</div>
+
+{% if not has_processed_data and not show_learning_coach and not show_learning_modal %}
+<!-- Fallback: processing didn't produce data; point user to Account to re-check credentials -->
 <div class="confirm-overlay" id="noProcessedOverlay" style="display: flex;">
     <div class="confirm-modal">
-        <h5 class="mb-3">No Processed Posts Yet</h5>
-        <p class="mb-4">Process some posts on the Posts page first to see section data here.</p>
+        <h5 class="mb-3">No Data Yet</h5>
+        <p class="mb-4">We couldn't find any recent eligible posts to learn from. Once you publish a post by email, reload this page and LetterPulse will process it automatically.</p>
         <div class="d-flex justify-content-end">
-            <a href="{% url 'analytics:posts' %}" class="btn btn-primary">Go to Posts</a>
+            <a href="{% url 'analytics:account' %}" class="btn btn-primary">Account</a>
         </div>
     </div>
 </div>
@@ -336,6 +360,206 @@
 
 {% block extra_js %}
 <script>
+    // =========================================================================
+    // Learning / Updating flow
+    // =========================================================================
+    (function () {
+        const LEARNING_FETCH_DURATION = {{ progress_durations.learning_fetch|default:30 }};
+        const UPDATE_FETCH_DURATION = {{ progress_durations.refresh_posts|default:10 }};
+        const PROCESS_PER_POST_SECONDS = 12;  // empirical per-post estimate
+        const UPDATE_TTL_MS = 60 * 1000;
+        const PUB_ID = "{{ beehiiv_pub_id|default_if_none:'' }}";
+        const TTL_KEY = "incrementalRefreshLastRun:" + PUB_ID;
+        const PROGRESS_CONTAINER_ID = 'learningRunProgressContainer';
+        const overlay = document.getElementById('learningRunOverlay');
+        const titleEl = document.getElementById('learningRunTitle');
+        const subtextEl = document.getElementById('learningRunSubtext');
+        let activeTaskId = null;
+        let activeKind = null;
+        let lastPhase = null;
+        let pollTimer = null;
+
+        function estimateProcessDuration(count) {
+            if (!count) return PROCESS_PER_POST_SECONDS;
+            const seqSlots = Math.min(count, 2);
+            const parallelSlots = Math.max(count - 2, 0);
+            // First 2 posts sequential, remainder in parallel groups of 3.
+            return seqSlots * PROCESS_PER_POST_SECONDS
+                + Math.ceil(parallelSlots / 3) * PROCESS_PER_POST_SECONDS;
+        }
+
+        function setCopy(kind, phase, targetCount) {
+            if (kind === 'initial') {
+                titleEl.textContent = 'Learning Your Audience';
+                subtextEl.textContent = phase === 'fetch'
+                    ? 'Fetching your posts\u2026'
+                    : 'Learning from your posts\u2026';
+            } else {
+                titleEl.textContent = 'Updating Your Posts';
+                subtextEl.textContent = phase === 'fetch'
+                    ? 'Fetching new posts\u2026'
+                    : 'Learning from new posts\u2026';
+            }
+        }
+
+        function openModal() {
+            overlay.style.display = 'flex';
+        }
+
+        function closeModal() {
+            overlay.style.display = 'none';
+            ProgressBar.forceClose({ containerId: PROGRESS_CONTAINER_ID });
+        }
+
+        function startPhase(kind, phase, targetCount) {
+            setCopy(kind, phase, targetCount);
+            ProgressBar.forceClose({ containerId: PROGRESS_CONTAINER_ID });
+            let duration;
+            if (phase === 'fetch') {
+                duration = kind === 'initial' ? LEARNING_FETCH_DURATION : UPDATE_FETCH_DURATION;
+            } else {
+                duration = estimateProcessDuration(targetCount);
+            }
+            ProgressBar.start({
+                containerId: PROGRESS_CONTAINER_ID,
+                expectedDuration: duration,
+                subtext: '',
+            });
+        }
+
+        function handleTaskFinished(data) {
+            clearInterval(pollTimer);
+            pollTimer = null;
+            const kind = activeKind;
+            activeTaskId = null;
+            activeKind = null;
+            lastPhase = null;
+
+            if (kind === 'update') {
+                try { localStorage.setItem(TTL_KEY, String(Date.now())); } catch (e) {}
+            }
+
+            if (data.status === 'error') {
+                ProgressBar.complete({ containerId: PROGRESS_CONTAINER_ID, success: false, message: 'Error' });
+                setTimeout(closeModal, 1200);
+                showToast(GENERIC_ERROR_TOAST, 'danger');
+                return;
+            }
+
+            if (data.status === 'abandoned') {
+                // Another tab / pagehide aborted this run — reload so the
+                // Learning coach can re-fire if appropriate.
+                closeModal();
+                if (kind === 'initial') {
+                    setTimeout(function () { window.location.reload(); }, 400);
+                }
+                return;
+            }
+
+            ProgressBar.complete({ containerId: PROGRESS_CONTAINER_ID, success: true, message: 'Done!' });
+            setTimeout(function () {
+                closeModal();
+                if (kind === 'initial' && data.status === 'complete') {
+                    const doneOverlay = document.getElementById('learningDoneOverlay');
+                    if (doneOverlay) doneOverlay.style.display = 'flex';
+                    // Reload so insights_view recomputes has_processed_data etc.
+                    setTimeout(function () { window.location.reload(); }, 1500);
+                }
+            }, 1000);
+        }
+
+        function pollActiveTask() {
+            pollTimer = setInterval(async function () {
+                if (!activeTaskId) return;
+                try {
+                    const resp = await fetch(`/insights/learning/status/${activeTaskId}/`);
+                    const data = await resp.json();
+                    if (!data.success) return;
+
+                    if (data.phase && data.phase !== lastPhase) {
+                        lastPhase = data.phase;
+                        startPhase(data.kind, data.phase, data.target_process_count);
+                    }
+
+                    if (data.status === 'complete' || data.status === 'error' || data.status === 'abandoned') {
+                        handleTaskFinished(data);
+                    }
+                } catch (err) {
+                    console.error('Learning poll failed', err);
+                }
+            }, 3000);
+        }
+
+        async function startTask(kind) {
+            const url = kind === 'initial'
+                ? "{% url 'analytics:start_learning_task' %}"
+                : "{% url 'analytics:start_update_task' %}";
+            try {
+                const data = await postJSON(url, {});
+                if (!data.success || !data.task_id) {
+                    showToast(GENERIC_ERROR_TOAST, 'danger');
+                    return;
+                }
+                activeTaskId = data.task_id;
+                activeKind = kind;
+                lastPhase = 'fetch';
+                openModal();
+                startPhase(kind, 'fetch', 0);
+                pollActiveTask();
+            } catch (err) {
+                showToast(GENERIC_ERROR_TOAST, 'danger');
+            }
+        }
+
+        // Attach Learning coach button
+        const startBtn = document.getElementById('startLearningBtn');
+        if (startBtn) {
+            startBtn.addEventListener('click', function () {
+                const coach = document.getElementById('learningCoachOverlay');
+                if (coach) coach.style.display = 'none';
+                startTask('initial');
+            });
+        }
+
+        // If an initial task is already running on page load, resume the modal
+        {% if show_learning_modal and active_learning_task_id %}
+        activeTaskId = "{{ active_learning_task_id }}";
+        activeKind = 'initial';
+        lastPhase = 'fetch';
+        openModal();
+        startPhase('initial', 'fetch', 0);
+        pollActiveTask();
+        {% endif %}
+
+        // Auto-fire update task on eligible page loads, subject to 60s TTL
+        {% if show_update_modal %}
+        (function () {
+            let lastRun = 0;
+            try { lastRun = parseInt(localStorage.getItem(TTL_KEY) || '0', 10); } catch (e) {}
+            if (Date.now() - lastRun < UPDATE_TTL_MS) return;
+            startTask('update');
+        })();
+        {% endif %}
+
+        // Pagehide beacon — abandon active kind='initial' tasks only
+        window.addEventListener('pagehide', function () {
+            if (activeTaskId && activeKind === 'initial') {
+                try {
+                    navigator.sendBeacon(`/insights/learning/abandon/${activeTaskId}/`);
+                } catch (e) {}
+            }
+        });
+
+        // Dismiss the post-learning coach
+        const doneBtn = document.getElementById('closeLearningDoneBtn');
+        if (doneBtn) {
+            doneBtn.addEventListener('click', function () {
+                const doneOverlay = document.getElementById('learningDoneOverlay');
+                if (doneOverlay) doneOverlay.style.display = 'none';
+            });
+        }
+    })();
+
     // =========================================================================
     // Global state
     // =========================================================================

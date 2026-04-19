@@ -207,6 +207,165 @@ async def validate_beehiiv_api_key(beehiiv_token: str) -> tuple[bool, list | str
             return (False, f"Unexpected error: {str(e)}")
 
 
+async def fetch_subscriber_count(beehiiv_token: str, beehiiv_pub_id: str) -> int:
+    """
+    Fetch the active subscriber count for a Beehiiv publication.
+
+    Uses GET /v2/publications/{id}?expand=stats, which returns
+    data.stats.active_subscriptions. Returns 0 if the field is missing
+    or the request fails (callers should treat 0 as "unknown — don't
+    gate processing on recipient totals").
+    """
+    url = f"https://api.beehiiv.com/v2/publications/{beehiiv_pub_id}?expand=stats"
+    headers = {"Authorization": beehiiv_token}
+
+    timeout = aiohttp.ClientTimeout(total=30)
+    try:
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.get(url, headers=headers) as response:
+                if response.status != 200:
+                    logger.error(f"fetch_subscriber_count status: {response.status}")
+                    return 0
+                data = await response.json()
+                pub = data.get('data') or {}
+                stats = pub.get('stats') or {}
+                return int(stats.get('active_subscriptions') or 0)
+    except Exception:
+        logger.exception("fetch_subscriber_count failed")
+        return 0
+
+
+PROCESSABLE_PLATFORMS = ('email', 'both')
+PROCESSABLE_PUBLISHED_AGE_SECONDS = 48 * 3600
+INITIAL_LEARNING_RECIPIENT_MULTIPLIER = 15
+
+
+def _processable_posts_queryset(user, publication):
+    """
+    Posts eligible for processing in either Learning/Update flow:
+      status = Published, publish_date >= 48h ago, platform in {email, both}.
+    """
+    from django.utils import timezone as dj_timezone
+    from .models import Post
+
+    cutoff = dj_timezone.now() - pd.Timedelta(seconds=PROCESSABLE_PUBLISHED_AGE_SECONDS)
+    return (
+        Post.objects
+        .filter(
+            user=user,
+            publication=publication,
+            status='Published',
+            publish_date__isnull=False,
+            publish_date__lte=cutoff,
+            platform__in=PROCESSABLE_PLATFORMS,
+        )
+    )
+
+
+def select_posts_for_initial_learning(user, publication, subscriber_count):
+    """
+    Pick the most recent eligible published posts whose cumulative recipients
+    reach subscriber_count * INITIAL_LEARNING_RECIPIENT_MULTIPLIER.
+
+    Walks newest-first by publish_date. Returns list[post_id] (Beehiiv IDs).
+    If subscriber_count is 0 or no posts accumulate enough recipients, returns
+    all eligible posts.
+    """
+    target = max(0, int(subscriber_count) * INITIAL_LEARNING_RECIPIENT_MULTIPLIER)
+
+    posts = list(
+        _processable_posts_queryset(user, publication)
+        .order_by('-publish_date')
+        .values('post_id', 'recipients')
+    )
+
+    if not posts:
+        return []
+
+    if target <= 0:
+        return [p['post_id'] for p in posts]
+
+    selected = []
+    total = 0
+    for p in posts:
+        selected.append(p['post_id'])
+        total += int(p.get('recipients') or 0)
+        if total >= target:
+            break
+    return selected
+
+
+def select_posts_for_update(user, publication):
+    """
+    Posts to process during the Updating Your Posts flow: eligible posts that
+    haven't been processed yet AND were published more recently than the oldest
+    already-processed post (so we don't retroactively backfill older history).
+    """
+    from .models import ProcessedPost
+
+    eligible = _processable_posts_queryset(user, publication)
+
+    processed_post_pks = ProcessedPost.objects.filter(
+        user=user, post__publication=publication,
+    ).values_list('post__pk', flat=True)
+
+    eligible_new = eligible.exclude(pk__in=list(processed_post_pks))
+
+    oldest_processed_publish = (
+        ProcessedPost.objects
+        .filter(user=user, post__publication=publication, post__publish_date__isnull=False)
+        .order_by('post__publish_date')
+        .values_list('post__publish_date', flat=True)
+        .first()
+    )
+
+    if oldest_processed_publish is not None:
+        eligible_new = eligible_new.filter(publish_date__gt=oldest_processed_publish)
+
+    return list(eligible_new.order_by('-publish_date').values_list('post_id', flat=True))
+
+
+def wipe_user_publication_data(user, pub_id):
+    """
+    Atomic cleanup for interrupted "Learning Your Audience" flows: delete every
+    Post / ProcessedPost / Section / LinkData row for (user, publication), and
+    remove pub_id from UsageAccount.initial_fetched_pub_ids so the user sees the
+    onboarding coach again on their next page load.
+    """
+    from .models import (
+        LinkData, Post, Publication, ProcessedPost, Section, UsageAccount,
+    )
+
+    with transaction.atomic():
+        try:
+            publication = Publication.objects.get(pub_id=pub_id)
+        except Publication.DoesNotExist:
+            publication = None
+
+        base_filter = {'user': user}
+        if publication is not None:
+            base_filter['publication'] = publication
+
+        LinkData.objects.filter(**base_filter).delete()
+        Section.objects.filter(**base_filter).delete()
+        if publication is not None:
+            ProcessedPost.objects.filter(user=user, post__publication=publication).delete()
+            Post.objects.filter(user=user, publication=publication).delete()
+        else:
+            ProcessedPost.objects.filter(user=user).delete()
+            Post.objects.filter(user=user).delete()
+
+        try:
+            usage = UsageAccount.objects.get(user=user)
+        except UsageAccount.DoesNotExist:
+            usage = None
+        if usage and pub_id and pub_id in (usage.initial_fetched_pub_ids or []):
+            usage.initial_fetched_pub_ids = [
+                p for p in (usage.initial_fetched_pub_ids or []) if p != pub_id
+            ]
+            usage.save(update_fields=['initial_fetched_pub_ids'])
+
+
 async def llm_call(function_name, messages, model, reasoning_level, response_format=None, tools=None, tool_choice=None, user=None, store=False, previous_response_id=None):
     """
     Make an async call to OpenAI API and log the request.
@@ -1784,9 +1943,54 @@ def process_posts_data(posts_list):
     posts_df['email_open_rate'] = posts_df['unique_email_opens'] / posts_df['delivered'].replace(0, pd.NA)
     posts_df['email_click_rate'] = posts_df['unique_email_clicks'] / posts_df['unique_email_opens'].replace(0, pd.NA)
 
-    posts_df = posts_df.drop(columns=['created', 'publish_date_raw', 'platform'])
+    posts_df = posts_df.drop(columns=['created', 'publish_date_raw'])
 
     return posts_df
+
+
+def save_posts_to_db(posts_df, user, publication):
+    """
+    Upsert a posts DataFrame (output of process_posts_data) into the Post table
+    for (user, publication). Returns (created_count, updated_count).
+    """
+    from .models import Post
+
+    created_count = 0
+    updated_count = 0
+
+    for _, row in posts_df.iterrows():
+        publish_date = row.get('publish_date')
+        if pd.isna(publish_date):
+            publish_date = None
+
+        _, created = Post.objects.update_or_create(
+            post_id=row['id'],
+            user=user,
+            defaults={
+                'publication': publication,
+                'title': row['title'],
+                'subtitle': row.get('subtitle', ''),
+                'status': row.get('status', 'Published'),
+                'platform': row.get('platform') or None,
+                'creation_date': row.get('creation_date'),
+                'publish_date': publish_date,
+                'recipients': row.get('recipients', 0),
+                'delivered': row.get('delivered', 0),
+                'email_opens': row.get('email_opens', 0),
+                'unique_email_opens': row.get('unique_email_opens', 0),
+                'email_clicks': row.get('email_clicks', 0),
+                'unique_email_clicks': row.get('unique_email_clicks', 0),
+                'unsubscribes': row.get('unsubscribes', 0),
+                'spam_reports': row.get('spam_reports', 0),
+            },
+        )
+
+        if created:
+            created_count += 1
+        else:
+            updated_count += 1
+
+    return created_count, updated_count
 
 
 async def refresh_posts_data(beehiiv_token, beehiiv_pub_id):
@@ -1819,6 +2023,7 @@ async def refresh_posts_data(beehiiv_token, beehiiv_pub_id):
 
 INCREMENTAL_FETCH_PAGE_SIZE = 5
 INCREMENTAL_FETCH_PUBLISH_AGE_SECONDS = 72 * 3600
+INCREMENTAL_FETCH_PREFETCH_WINDOW = 1
 
 
 async def _fetch_incremental_track(
@@ -1828,9 +2033,15 @@ async def _fetch_incremental_track(
     existing_post_ids,
     order_by,
     apply_publish_age_check,
+    prefetch_window=INCREMENTAL_FETCH_PREFETCH_WINDOW,
 ):
     """
     Paginate posts from Beehiiv newest -> oldest for a single sort order.
+
+    Up to `prefetch_window` pages are fetched in parallel. Pages are still
+    evaluated in order so stop semantics match the serial version — when a
+    page triggers the stop condition, any speculatively in-flight later
+    pages are cancelled.
 
     Stops when the current batch contains a post we already have locally.
     If apply_publish_age_check is True (Track A), additionally requires the
@@ -1839,52 +2050,96 @@ async def _fetch_incremental_track(
     from datetime import timezone as dt_timezone
 
     fetched = []
-    page = 1
+    headers = {"Authorization": beehiiv_token}
 
-    while True:
-        url = (
+    def build_url(page):
+        return (
             f"https://api.beehiiv.com/v2/publications/{beehiiv_pub_id}/posts"
             f"?expand=stats&status=all&order_by={order_by}&direction=desc"
             f"&limit={INCREMENTAL_FETCH_PAGE_SIZE}&page={page}"
         )
-        headers = {"Authorization": beehiiv_token}
 
-        async with session.get(url, headers=headers) as response:
-            if response.status != 200:
-                logger.error(
-                    f"_fetch_incremental_track ({order_by}) page {page} status: {response.status}"
-                )
+    async def fetch_page(page):
+        try:
+            async with session.get(build_url(page), headers=headers) as response:
+                if response.status != 200:
+                    logger.error(
+                        f"_fetch_incremental_track ({order_by}) page {page} status: {response.status}"
+                    )
+                    return None
+                data = await response.json()
+                return data.get('data', [])
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception(
+                f"_fetch_incremental_track ({order_by}) page {page} exception"
+            )
+            return None
+
+    async def cancel_pending(tasks):
+        for t in tasks:
+            t.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+    in_flight = {}
+    next_page_to_launch = 1
+
+    for _ in range(prefetch_window):
+        in_flight[next_page_to_launch] = asyncio.create_task(fetch_page(next_page_to_launch))
+        next_page_to_launch += 1
+
+    try:
+        while in_flight:
+            current_page = min(in_flight.keys())
+            task = in_flight.pop(current_page)
+            page_posts = await task
+
+            if page_posts is None:
+                await cancel_pending(list(in_flight.values()))
+                in_flight.clear()
                 break
-            data = await response.json()
-            page_posts = data.get('data', [])
 
-        if not page_posts:
-            break
-
-        fetched.extend(page_posts)
-
-        any_known = any(p.get('id') in existing_post_ids for p in page_posts)
-        if any_known:
-            if not apply_publish_age_check:
+            if not page_posts:
+                await cancel_pending(list(in_flight.values()))
+                in_flight.clear()
                 break
 
-            publish_timestamps = [
-                p.get('publish_date') for p in page_posts if p.get('publish_date')
-            ]
-            if publish_timestamps:
-                oldest_ts = min(publish_timestamps)
-                oldest_dt = datetime.fromtimestamp(oldest_ts, tz=dt_timezone.utc)
-                age_seconds = (datetime.now(tz=dt_timezone.utc) - oldest_dt).total_seconds()
-                if age_seconds >= INCREMENTAL_FETCH_PUBLISH_AGE_SECONDS:
-                    break
-            else:
-                # No publish_date on any post in batch (all drafts) — treat as old enough
+            fetched.extend(page_posts)
+
+            should_stop = False
+            any_known = any(p.get('id') in existing_post_ids for p in page_posts)
+            if any_known:
+                if not apply_publish_age_check:
+                    should_stop = True
+                else:
+                    publish_timestamps = [
+                        p.get('publish_date') for p in page_posts if p.get('publish_date')
+                    ]
+                    if publish_timestamps:
+                        oldest_ts = min(publish_timestamps)
+                        oldest_dt = datetime.fromtimestamp(oldest_ts, tz=dt_timezone.utc)
+                        age_seconds = (datetime.now(tz=dt_timezone.utc) - oldest_dt).total_seconds()
+                        if age_seconds >= INCREMENTAL_FETCH_PUBLISH_AGE_SECONDS:
+                            should_stop = True
+                    else:
+                        # No publish_date on any post in batch (all drafts) — treat as old enough
+                        should_stop = True
+
+            if len(page_posts) < INCREMENTAL_FETCH_PAGE_SIZE:
+                should_stop = True
+
+            if should_stop:
+                await cancel_pending(list(in_flight.values()))
+                in_flight.clear()
                 break
 
-        if len(page_posts) < INCREMENTAL_FETCH_PAGE_SIZE:
-            break
-
-        page += 1
+            in_flight[next_page_to_launch] = asyncio.create_task(fetch_page(next_page_to_launch))
+            next_page_to_launch += 1
+    finally:
+        if in_flight:
+            await cancel_pending(list(in_flight.values()))
 
     return fetched
 
@@ -2651,3 +2906,227 @@ def run_improvement_tips_background(task_id):
             logger.exception("Failed to save error status for improvement tips task")
     finally:
         connection.close()
+
+
+# =============================================================================
+# Learning / Updating background task runners
+# =============================================================================
+
+def _heartbeat_task(task):
+    """Refresh last_heartbeat on the task row (one-shot)."""
+    from django.utils import timezone as dj_timezone
+    task.last_heartbeat = dj_timezone.now()
+    task.save(update_fields=['last_heartbeat'])
+
+
+def _is_abandoned(task):
+    """Re-read abandoned flag from DB. Returns True if task was marked abandoned."""
+    from analytics.models import PendingLearningTask
+    try:
+        fresh = PendingLearningTask.objects.only('abandoned').get(pk=task.pk)
+        return bool(fresh.abandoned)
+    except PendingLearningTask.DoesNotExist:
+        return True
+
+
+def _heartbeat_loop(task_id, stop_event, interval=5):
+    """
+    Background loop that refreshes `last_heartbeat` on the task row while the
+    runner thread is alive. Lets the stale-sweep detect a dead runner (crash,
+    gunicorn restart) independently of client polling.
+    """
+    from django.db import connection
+    from django.utils import timezone as dj_timezone
+    from analytics.models import PendingLearningTask
+    try:
+        while not stop_event.wait(interval):
+            try:
+                PendingLearningTask.objects.filter(task_id=task_id).update(
+                    last_heartbeat=dj_timezone.now(),
+                )
+            except Exception:
+                logger.exception("Heartbeat loop update failed")
+    finally:
+        connection.close()
+
+
+def _run_learning_task_impl(task_id, kind):
+    """
+    Shared implementation for both kind='initial' and kind='update' runners.
+    - Fetch phase: full refresh (initial) OR incremental fetch (update).
+    - Select post ids to process, charge credits, run processing.
+    - Update task phase/counts throughout. A daemon heartbeat thread keeps
+      `last_heartbeat` fresh so the stale-sweep only fires if the runner
+      actually dies.
+    - On abandoned flag (kind='initial' only): wipe user/publication data
+      and exit. `initial_fetched_pub_ids` is only set on a clean complete
+      with >0 posts processed, so a zero-result or abandoned run lets the
+      user hit the Learning coach again on their next visit.
+    """
+    import threading
+    from asgiref.sync import async_to_sync
+    from django.db import connection
+    from django.utils import timezone as dj_timezone
+    from analytics.models import (
+        PendingLearningTask, Publication, UsageAccount, Post, ProcessedPost,
+    )
+
+    task = None
+    stop_heartbeat = threading.Event()
+    hb_thread = threading.Thread(
+        target=_heartbeat_loop,
+        args=(task_id, stop_heartbeat),
+        daemon=True,
+    )
+    hb_thread.start()
+
+    try:
+        task = PendingLearningTask.objects.select_related('publication', 'user').get(task_id=task_id)
+        task.status = 'running'
+        task.phase = 'fetch'
+        _heartbeat_task(task)
+
+        usage = UsageAccount.objects.get(user=task.user)
+        beehiiv_token = usage.beehiiv_token
+        publication = task.publication
+        beehiiv_pub_id = publication.pub_id if publication else None
+
+        if not beehiiv_token or not beehiiv_pub_id:
+            task.status = 'error'
+            task.error_message = "Missing Beehiiv credentials or publication."
+            task.save(update_fields=['status', 'error_message'])
+            return
+
+        # --- Fetch phase ---
+        if kind == 'initial':
+            posts_df, fetch_msg = async_to_sync(refresh_posts_data)(
+                beehiiv_token, beehiiv_pub_id,
+            )
+        else:
+            existing_post_ids = list(
+                Post.objects.filter(user=task.user, publication=publication)
+                .values_list('post_id', flat=True)
+            )
+            posts_df, fetch_msg = async_to_sync(incremental_refresh_posts_data)(
+                beehiiv_token, beehiiv_pub_id, existing_post_ids,
+            )
+
+        if posts_df is None:
+            task.status = 'error'
+            task.error_message = fetch_msg or "Fetch failed."
+            task.save(update_fields=['status', 'error_message'])
+            return
+
+        if _is_abandoned(task):
+            if kind == 'initial':
+                wipe_user_publication_data(task.user, beehiiv_pub_id)
+            task.status = 'abandoned'
+            task.save(update_fields=['status'])
+            return
+
+        if not posts_df.empty:
+            save_posts_to_db(posts_df, task.user, publication)
+
+        if kind == 'initial' and _is_abandoned(task):
+            wipe_user_publication_data(task.user, beehiiv_pub_id)
+            task.status = 'abandoned'
+            task.save(update_fields=['status'])
+            return
+
+        # --- Select posts to process ---
+        if kind == 'initial':
+            subs = async_to_sync(fetch_subscriber_count)(beehiiv_token, beehiiv_pub_id)
+            post_ids_to_process = select_posts_for_initial_learning(
+                task.user, publication, subs,
+            )
+        else:
+            post_ids_to_process = select_posts_for_update(task.user, publication)
+
+        # Silently cap at MAX_POSTS_PROCESSED_PER_PERIOD across the user's
+        # current billing period. Over-cap posts are dropped without error;
+        # they become eligible again next period via select_posts_for_update.
+        usage.ensure_current_period()
+        already_processed_this_period = ProcessedPost.objects.filter(
+            user=task.user,
+            created_at__gte=usage.period_start,
+        ).count()
+        remaining_quota = max(
+            0, settings.MAX_POSTS_PROCESSED_PER_PERIOD - already_processed_this_period,
+        )
+        post_ids_to_process = post_ids_to_process[:remaining_quota]
+
+        task.target_process_count = len(post_ids_to_process)
+        task.phase = 'process'
+        task.save(update_fields=['target_process_count', 'phase'])
+
+        if not post_ids_to_process:
+            # Empty run — don't flip initial_fetched_pub_ids so the user can
+            # retry via the Learning coach on their next visit.
+            task.status = 'complete'
+            task.save(update_fields=['status'])
+            return
+
+        if kind == 'initial' and _is_abandoned(task):
+            wipe_user_publication_data(task.user, beehiiv_pub_id)
+            task.status = 'abandoned'
+            task.save(update_fields=['status'])
+            return
+
+        # --- Process phase ---
+        # process_posts_sections_sequential handles the first-2-sequential +
+        # rest-parallel semantics internally, so we can't interrupt between
+        # individual posts. Worst-case race window is one post's worth of
+        # writes; those are cleaned up by the post-process abandon check
+        # below (which wipes for kind='initial').
+        async_to_sync(process_posts_sections_sequential)(
+            post_ids_to_process, task.user, beehiiv_token, beehiiv_pub_id, publication,
+        )
+
+        processed_count = ProcessedPost.objects.filter(
+            user=task.user,
+            post__post_id__in=post_ids_to_process,
+        ).count()
+        task.posts_processed_count = processed_count
+
+        if kind == 'initial' and _is_abandoned(task):
+            wipe_user_publication_data(task.user, beehiiv_pub_id)
+            task.status = 'abandoned'
+            task.save(update_fields=['status', 'posts_processed_count'])
+            return
+
+        # Only flip initial_fetched_pub_ids after a clean, non-empty run so a
+        # zero-result initial scan doesn't strand the user on the "No Data"
+        # fallback.
+        if kind == 'initial' and processed_count > 0:
+            if beehiiv_pub_id not in (usage.initial_fetched_pub_ids or []):
+                usage.initial_fetched_pub_ids = list(
+                    usage.initial_fetched_pub_ids or []
+                ) + [beehiiv_pub_id]
+                usage.save(update_fields=['initial_fetched_pub_ids'])
+
+        task.status = 'complete'
+        task.save(update_fields=['status', 'posts_processed_count'])
+
+    except Exception as e:
+        logger.exception(f"Learning task ({kind}) failed")
+        try:
+            if task is not None:
+                task = PendingLearningTask.objects.get(task_id=task_id)
+                task.status = 'error'
+                task.error_message = str(e)
+                task.save(update_fields=['status', 'error_message'])
+        except Exception:
+            logger.exception("Failed to save error status for learning task")
+    finally:
+        stop_heartbeat.set()
+        connection.close()
+
+
+def run_initial_learning_task(task_id):
+    """Background thread entrypoint for the initial Learning Your Audience flow."""
+    _run_learning_task_impl(task_id, 'initial')
+
+
+def run_update_task(task_id):
+    """Background thread entrypoint for the per-page-load Updating Your Posts flow."""
+    _run_learning_task_impl(task_id, 'update')

@@ -222,6 +222,10 @@ class Post(models.Model):
     title = models.CharField(max_length=500)
     subtitle = models.TextField(blank=True, null=True)
     status = models.CharField(max_length=20, default='Published', help_text="Draft, Scheduled, or Published")
+    platform = models.CharField(
+        max_length=20, blank=True, null=True,
+        help_text="Beehiiv platform value: email, web, or both"
+    )
     creation_date = models.DateTimeField(blank=True, null=True, help_text="When the post was first created in Beehiiv")
     publish_date = models.DateTimeField(blank=True, null=True, help_text="When the post was published (stored in UTC)")
     recipients = models.IntegerField(default=0)
@@ -579,6 +583,64 @@ class PendingImprovementTips(models.Model):
 
     def __str__(self):
         return f"PendingImprovementTips {self.task_id} ({self.status})"
+
+
+class PendingLearningTask(models.Model):
+    """
+    Tracks the two onboarding/refresh workflows that replaced the old Posts page:
+
+    - kind='initial' : first-time "Learning Your Audience" flow (full fetch + initial processing).
+      If the user leaves mid-flow, all data for (user, publication) is wiped and they
+      restart at the Learning coach.
+    - kind='update'  : per-page-load "Updating Your Posts" flow (incremental fetch + processing
+      of newly-eligible posts). No cleanup on abandon.
+    """
+
+    task_id = models.UUIDField(default=uuid.uuid4, unique=True)
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='pending_learning_tasks',
+    )
+    publication = models.ForeignKey(
+        Publication,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
+    kind = models.CharField(
+        max_length=10,
+        help_text="initial or update",
+    )
+    phase = models.CharField(
+        max_length=10,
+        default='fetch',
+        help_text="fetch or process",
+    )
+    status = models.CharField(
+        max_length=20,
+        default='pending',
+        help_text="pending, running, complete, error, or abandoned",
+    )
+    target_process_count = models.IntegerField(
+        default=0,
+        help_text="Number of posts the process phase is expected to handle",
+    )
+    posts_processed_count = models.IntegerField(default=0)
+    error_message = models.TextField(blank=True)
+    abandoned = models.BooleanField(default=False)
+    last_heartbeat = models.DateTimeField(auto_now_add=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['user', 'status']),
+        ]
+
+    def __str__(self):
+        return f"PendingLearningTask {self.task_id} ({self.kind}/{self.status})"
 
 
 class SurveyResponse(models.Model):
