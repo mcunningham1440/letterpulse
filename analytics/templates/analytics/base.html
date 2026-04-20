@@ -433,17 +433,10 @@
         <button class="sidebar-toggle" id="sidebarToggle" title="Toggle sidebar">
             <i class="bi bi-chevron-left"></i>
         </button>
-        <a class="sidebar-brand" href="{% url 'analytics:posts' %}">
+        <a class="sidebar-brand" href="{% url 'analytics:insights' %}">
             <img src="{% static 'analytics/images/logo_no_text.png' %}" alt="LetterPulse logo" class="sidebar-brand-logo me-2"><span class="sidebar-brand-text">LetterPulse</span>
         </a>
         <ul class="sidebar-nav">
-            <li class="nav-item">
-                <a class="nav-link {% if request.resolver_match.url_name == 'posts' %}active{% endif %}"
-                   href="{% url 'analytics:posts' %}" title="Posts" id="navPostsLink">
-                    <i class="bi bi-file-earmark-text"></i>
-                    <span class="nav-link-text">Posts</span>
-                </a>
-            </li>
             <li class="nav-item">
                 <a class="nav-link {% if request.resolver_match.url_name == 'insights' %}active{% endif %}"
                    href="{% url 'analytics:insights' %}" title="Write">
@@ -499,6 +492,26 @@
             {% block content %}{% endblock %}
         </main>
     </div>
+
+    {% if show_limited_data_coach %}
+    <!-- Limited Data Available coach — fires every page load while user has
+         fewer than 5 eligible email posts. Single session-only Dismiss. -->
+    <div class="confirm-overlay" id="limitedDataOverlay" style="display: flex; z-index: 10004;">
+        <div class="confirm-modal">
+            <h5 class="mb-3">Limited Data Available</h5>
+            <p>LetterPulse learns from your publication data, but your publication has few published email posts.</p>
+            <p class="mb-4">We strongly recommend waiting to use LetterPulse until you've sent out at least 5&ndash;10 emails to subscribers. The app will automatically read and learn from these new posts when you log in.</p>
+            <div class="d-flex justify-content-end">
+                <button type="button" class="btn btn-primary" id="limitedDataDismissBtn">Dismiss</button>
+            </div>
+        </div>
+    </div>
+    <script>
+        document.getElementById('limitedDataDismissBtn').addEventListener('click', function () {
+            document.getElementById('limitedDataOverlay').style.display = 'none';
+        });
+    </script>
+    {% endif %}
 
     <!-- Beta Feedback Footer -->
     {% if user.is_authenticated %}

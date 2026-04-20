@@ -8,6 +8,7 @@ from django.shortcuts import render, redirect
 from django.urls import reverse
 from django.http import JsonResponse, HttpResponse
 from django.views.decorators.http import require_GET, require_POST
+from django.views.decorators.csrf import csrf_exempt
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
@@ -16,7 +17,7 @@ import pandas as pd
 import json
 from asgiref.sync import async_to_sync
 
-from .models import Post, ContentSet, Report, UsageAccount, SurveyResponse, ProcessedPost, LinkData, Section, PendingContentSearch, PendingImprovementTips, ContentSearchFeedback
+from .models import Post, UsageAccount, SurveyResponse, ProcessedPost, LinkData, Section, PendingContentSearch, PendingImprovementTips, ContentSearchFeedback, PendingLearningTask
 
 logger = logging.getLogger(__name__)
 
@@ -63,9 +64,14 @@ from .utils import (
     fetch_posts_html_and_clicks_parallel,
     process_posts_sections_sequential,
     refresh_posts_data,
+    incremental_refresh_posts_data,
+    save_posts_to_db,
     NotEnoughCredits,
     charge_credits,
     validate_beehiiv_api_key,
+    run_initial_learning_task,
+    run_update_task,
+    wipe_user_publication_data,
 )
 
 
@@ -107,9 +113,9 @@ def require_valid_api_credentials(view_func):
 
 
 def index(request):
-    """Show about page for unauthenticated users, redirect to posts for authenticated users"""
+    """Show about page for unauthenticated users, redirect to Write for authenticated users"""
     if request.user.is_authenticated:
-        return redirect('analytics:posts')
+        return redirect('analytics:insights')
     return render(request, 'analytics/about.html')
 
 
@@ -182,10 +188,7 @@ def account_view(request):
                     if usage.beehiiv_pub_id != old_pub_id:
                         request.session.pop('extracted_items', None)
 
-                    # Only show the banner if user already has posts;
-                    # otherwise the template shows a "Head to Posts" alert instead
-                    if Post.objects.filter(user=request.user).exists():
-                        messages.success(request, "API credentials validated and saved!")
+                    messages.success(request, "API credentials validated and saved!")
                 else:
                     # Invalid key
                     usage.beehiiv_token = beehiiv_token  # Keep token so user can see it
@@ -325,22 +328,83 @@ def account_view(request):
 
     from .utils import TIMEZONE_CHOICES
     has_posts = Post.objects.filter(user=request.user).exists() if usage.api_key_valid else False
+
+    publication = None
+    has_processed_data = False
+    last_fetch_at = None
+    most_recent_published_post = None
+    most_recent_processed_post = None
+    total_posts_count = None
+    processed_posts_count = None
+
     if has_posts and usage.api_key_valid:
         _, beehiiv_pub_id, _ = get_user_api_credentials(request.user)
         try:
             publication = Publication.objects.get(pub_id=beehiiv_pub_id)
+        except Publication.DoesNotExist:
+            publication = None
+
+        if publication is not None:
             has_processed_data = Section.objects.filter(
                 user=request.user, publication=publication
             ).exists()
-        except Publication.DoesNotExist:
-            has_processed_data = False
-    else:
-        has_processed_data = False
+
+            # Post-fetching tab context
+            pub_posts = Post.objects.filter(user=request.user, publication=publication)
+
+            last_fetch_at = pub_posts.order_by('-updated_at').values_list(
+                'updated_at', flat=True
+            ).first()
+
+            recent_published = pub_posts.filter(
+                status='Published', publish_date__isnull=False,
+            ).order_by('-publish_date').values('title', 'publish_date').first()
+            if recent_published:
+                most_recent_published_post = {
+                    'title': recent_published['title'] or '(untitled)',
+                    'publish_date': recent_published['publish_date'],
+                }
+
+            if settings.ENVIRONMENT == 'local':
+                processed_marker = ProcessedPost.objects.filter(
+                    user=request.user, post__publication=publication,
+                    post__publish_date__isnull=False,
+                ).select_related('post').order_by('-post__publish_date').first()
+                if processed_marker:
+                    most_recent_processed_post = {
+                        'title': processed_marker.post.title or '(untitled)',
+                        'publish_date': processed_marker.post.publish_date,
+                    }
+                total_posts_count = pub_posts.count()
+                processed_posts_count = ProcessedPost.objects.filter(
+                    user=request.user, post__publication=publication,
+                ).count()
+
+    # Show "API Key Validated — Go to Write" coach when creds are valid but the
+    # initial post scan hasn't been run for the current publication (and no task
+    # is already running).
+    show_api_validated_coach = False
+    if usage.api_key_valid and usage.beehiiv_pub_id:
+        initial_done = usage.beehiiv_pub_id in (usage.initial_fetched_pub_ids or [])
+        task_running = PendingLearningTask.objects.filter(
+            user=request.user,
+            publication=publication,
+            kind='initial',
+            status__in=('pending', 'running'),
+        ).exists() if publication is not None else False
+        show_api_validated_coach = (not initial_done) and (not task_running)
+
     context = {
         'usage': usage,
         'timezone_choices': TIMEZONE_CHOICES,
         'has_posts': has_posts,
         'has_processed_data': has_processed_data,
+        'last_fetch_at': last_fetch_at,
+        'most_recent_published_post': most_recent_published_post,
+        'most_recent_processed_post': most_recent_processed_post,
+        'total_posts_count': total_posts_count,
+        'processed_posts_count': processed_posts_count,
+        'show_api_validated_coach': show_api_validated_coach,
     }
 
     return render(request, 'analytics/account.html', context)
@@ -348,205 +412,35 @@ def account_view(request):
 
 # Import timezone for account_view
 from django.utils import timezone
+from datetime import timedelta
 
 
-@login_required
-@require_valid_api_credentials
-def posts_view(request):
+def _sweep_stale_learning_tasks(user):
     """
-    Display the posts page with posts table.
+    Mark any pending or running PendingLearningTask whose last_heartbeat is
+    older than settings.LEARNING_TASK_STALE_SECONDS as abandoned. For kind
+    ='initial' we also wipe the pub so the user restarts cleanly; update
+    tasks have no cleanup. Runs for both kinds so a dead update thread
+    can't block future auto-updates.
     """
-    from .utils import convert_to_user_timezone
-    # from .models import Publication
-
-    # Get current publication for filtering
-    _, beehiiv_pub_id, _ = get_user_api_credentials(request.user)
-
-    # Get user timezone for date formatting
-    usage = UsageAccount.objects.get(user=request.user)
-    user_tz = usage.timezone
-
-    
-    ### Demo mode custom BAIA adjustments
-    # Get publication name for demo mode check
-    from .models import Publication
-    publication_name = None
-    try:
-        publication = Publication.objects.get(pub_id=beehiiv_pub_id)
-        publication_name = publication.name
-    except Publication.DoesNotExist:
-        pass
-    ###
-
-
-    # Load posts from database filtered by publication and user
-    posts_df = load_posts_from_db(publication_id=beehiiv_pub_id, user=request.user)
-
-    # Reverse order so newer posts appear first
-    posts_df = posts_df.iloc[::-1].reset_index(drop=True)
-
-
-    ### Demo mode custom BAIA adjustments
-    if publication_name == "Building AI Agents" and not posts_df.empty and request.user.username == "jackstone":
-        # Hide post titled "Farewell, and thank you"
-        posts_df = posts_df[posts_df['title'] != "Farewell, and thank you"].reset_index(drop=True)
-        # Make "Amazon's Shopping Agent Controversy" appear as Scheduled with tomorrow's date and zero stats
-        amazon_mask = posts_df['title'].str.contains("Amazon.*Shopping Agent Controversy", regex=True, na=False)
-        posts_df.loc[amazon_mask, 'status'] = "Scheduled"
-        from datetime import timedelta
-        tomorrow = pd.Timestamp.now('UTC') + timedelta(days=1)
-        posts_df.loc[amazon_mask, 'publish_date'] = tomorrow
-        posts_df.loc[amazon_mask, 'recipients'] = 0
-        posts_df.loc[amazon_mask, 'unique_email_opens'] = 0
-        posts_df.loc[amazon_mask, 'unique_email_clicks'] = 0
-        # Multiply opens by 1.2 and clicks by 3, rounded to nearest int
-        posts_df['unique_email_opens'] = (posts_df['unique_email_opens'] * 1.2).round().astype(int)
-        posts_df['unique_email_clicks'] = (posts_df['unique_email_clicks'] * 3).round().astype(int)
-        # Apply growth factor based on days since November 1, 2025 for each post
-        from datetime import datetime
-        baseline = datetime(2025, 11, 1, tzinfo=pd.Timestamp.now('UTC').tzinfo)
-        posts_df['days_elapsed'] = (pd.to_datetime(posts_df['publish_date']) - baseline).dt.days.fillna(0).clip(lower=0)
-        posts_df['growth_factor'] = (1.006 ** posts_df['days_elapsed']).clip(lower=1.0)
-        posts_df['recipients'] = (posts_df['recipients'].fillna(0) * posts_df['growth_factor']).round().astype(int)
-        posts_df['unique_email_opens'] = (posts_df['unique_email_opens'].fillna(0) * posts_df['growth_factor']).round().astype(int)
-        posts_df['unique_email_clicks'] = (posts_df['unique_email_clicks'].fillna(0) * posts_df['growth_factor']).round().astype(int)
-        posts_df = posts_df.drop(columns=['days_elapsed', 'growth_factor'])
-    ###
-
-
-    # Show only published posts
-    posts_df = posts_df[posts_df['status'] == 'Published'].reset_index(drop=True)
-
-    # Convert to list of dicts for template
-    posts_data = posts_df.to_dict('records')
-
-    # Format dates for display with user's timezone
-    for post in posts_data:
-        # Format publish_date
-        local_dt = convert_to_user_timezone(post.get('publish_date'), user_tz)
-        if local_dt:
-            post['publish_date_display'] = local_dt.strftime('%b %d, %Y')
-            post['publish_date_sortable'] = local_dt.strftime('%Y-%m-%d')
-        else:
-            post['publish_date_display'] = '-'
-            post['publish_date_sortable'] = ''
-
-        # Format creation_date
-        local_dt = convert_to_user_timezone(post.get('creation_date'), user_tz)
-        if local_dt:
-            post['creation_date_display'] = local_dt.strftime('%b %d, %Y')
-            post['creation_date_sortable'] = local_dt.strftime('%Y-%m-%d')
-        else:
-            post['creation_date_display'] = '-'
-            post['creation_date_sortable'] = ''
-    
-    # Get content sets for current publication and user only
-    from .models import Publication
-    try:
-        publication = Publication.objects.get(pub_id=beehiiv_pub_id)
-        all_content_sets = ContentSet.objects.filter(publication=publication, user=request.user).order_by('name')
-        all_reports = Report.objects.filter(content_set__publication=publication, content_set__user=request.user).order_by('name')
-    except Publication.DoesNotExist:
-        all_content_sets = ContentSet.objects.none()
-        all_reports = Report.objects.none()
-
-    # Get set of post_ids that have sections (i.e. actually processed)
-    processed_post_ids = set(
-        Section.objects.filter(user=request.user)
-        .values_list('post__post_id', flat=True)
-        .distinct()
+    cutoff = timezone.now() - timedelta(
+        seconds=getattr(settings, 'LEARNING_TASK_STALE_SECONDS', 15)
     )
+    stale = PendingLearningTask.objects.filter(
+        user=user,
+        status__in=('pending', 'running'),
+        last_heartbeat__lt=cutoff,
+    )
+    for task in stale:
+        task.status = 'abandoned'
+        task.abandoned = True
+        task.save(update_fields=['status', 'abandoned'])
+        if task.kind == 'initial' and task.publication is not None:
+            try:
+                wipe_user_publication_data(user, task.publication.pub_id)
+            except Exception:
+                logger.exception("Stale-sweep wipe failed")
 
-    # Compute recipients percentage relative to max for bar visualization
-    max_recipients = max((p.get('recipients') or 0 for p in posts_data), default=0)
-    for post in posts_data:
-        r = post.get('recipients') or 0
-        post['recipients_pct'] = round(r / max_recipients * 100) if max_recipients else 0
-        post['recipients_display'] = f"{r:,}"
-
-    # Check if user has ever used any Write tab feature
-    from .models import Feedback
-    has_used_write = Feedback.objects.filter(
-        user=request.user,
-        feature__in=['used_content_finder', 'used_write_post_poll', 'used_post_improvement']
-    ).exists()
-
-    context = {
-        'posts': posts_data,
-        'all_content_sets': all_content_sets,
-        'all_reports': all_reports,
-        'processed_post_ids': processed_post_ids,
-        'has_used_write': has_used_write,
-    }
-
-    return render(request, 'analytics/posts.html', context)
-
-
-@login_required
-@require_POST
-def run_processing(request):
-    """
-    Run section-level extraction on selected posts.
-    Fetches HTML, runs agentic GPT loop to identify sections, and stores Section rows.
-    Posts are processed sequentially so each post's sections enrich context for the next.
-    Returns JSON with processed post IDs for frontend checkmark updates.
-    """
-    from .models import Publication
-
-    try:
-        beehiiv_token, beehiiv_pub_id, is_valid = get_user_api_credentials(request.user)
-        if not beehiiv_token or not beehiiv_pub_id or not is_valid:
-            return JsonResponse({'success': False, 'error': 'Please configure valid API credentials in Account settings.'}, status=400)
-
-        body = json.loads(request.body)
-        post_ids = body.get('selected_post_ids', [])
-
-        if not post_ids:
-            return JsonResponse({'success': False, 'error': 'Please select at least one post.'}, status=400)
-
-        # Charge credits (1 per post)
-        credits_needed = len(post_ids) * settings.CREDITS_PER_EXTRACTION
-        charge_credits(request.user, credits_needed)
-
-        # Get publication for FK
-        try:
-            publication = Publication.objects.get(pub_id=beehiiv_pub_id)
-        except Publication.DoesNotExist:
-            publication = None
-
-        # Run sequential section extraction (each post saves to DB before the next)
-        from analytics.llm_tracker import start_tracking, finish_tracking
-        if settings.ENVIRONMENT == 'local':
-            start_tracking()
-
-        results_by_post = async_to_sync(process_posts_sections_sequential)(
-            post_ids, request.user, beehiiv_token, beehiiv_pub_id, publication
-        )
-
-        dev_panel_data = None
-        if settings.ENVIRONMENT == 'local':
-            dev_panel_data = finish_tracking()
-
-        processed_post_ids = list(results_by_post.keys())
-
-        usage = UsageAccount.objects.get(user=request.user)
-
-        resp_data = {
-            'success': True,
-            'processed_post_ids': processed_post_ids,
-            'credits_used': usage.used_this_period,
-            'credits_quota': usage.monthly_quota
-        }
-        if dev_panel_data:
-            resp_data['dev_panel'] = dev_panel_data
-
-        return JsonResponse(resp_data)
-
-    except NotEnoughCredits as e:
-        return JsonResponse({'success': False, 'error': str(e)}, status=400)
-    except Exception as e:
-        logger.error(f"Error in run_processing: {str(e)}", exc_info=True)
-        return JsonResponse({'success': False, 'error': f'Error during processing: {str(e)}'}, status=500)
 
 
 @login_required
@@ -556,6 +450,9 @@ def insights_view(request):
     Display the insights page with section data table.
     """
     from .models import Publication
+
+    # Sweep stale initial Learning tasks first so the gating below uses fresh state.
+    _sweep_stale_learning_tasks(request.user)
 
     # Get current publication for filtering
     _, beehiiv_pub_id, _ = get_user_api_credentials(request.user)
@@ -570,6 +467,7 @@ def insights_view(request):
             user=request.user, publication=publication
         ).exists()
     except Publication.DoesNotExist:
+        publication = None
         has_processed_data = False
 
     from .models import Feedback
@@ -585,6 +483,40 @@ def insights_view(request):
         ).values_list('feature', flat=True)
     )
 
+    # --- Learning / Update flow gating ---
+    usage = UsageAccount.objects.get(user=request.user)
+    initial_done = beehiiv_pub_id in (usage.initial_fetched_pub_ids or [])
+
+    active_initial_task = PendingLearningTask.objects.filter(
+        user=request.user,
+        publication=publication,
+        kind='initial',
+        status__in=('pending', 'running'),
+    ).order_by('-created_at').first()
+
+    active_update_task = PendingLearningTask.objects.filter(
+        user=request.user,
+        publication=publication,
+        kind='update',
+        status__in=('pending', 'running'),
+    ).order_by('-created_at').first()
+
+    # Show the Learning coach if the user has valid creds but initial flow
+    # hasn't completed and there is no task running.
+    show_learning_coach = (not initial_done) and (active_initial_task is None)
+
+    # If an initial task is already running, jump straight into the modal.
+    show_learning_modal = active_initial_task is not None
+
+    # The Updating-Your-Posts modal fires on every eligible page load (initial
+    # flow already done AND no running task). The 60s TTL check happens in JS
+    # via localStorage so rapid reloads don't spam Beehiiv.
+    show_update_modal = (
+        initial_done
+        and active_initial_task is None
+        and active_update_task is None
+    )
+
     context = {
         'has_posts': has_posts,
         'has_processed_data': has_processed_data,
@@ -594,6 +526,12 @@ def insights_view(request):
         'has_used_content_finder': 'used_content_finder' in used_features,
         'has_used_write_post_poll': 'used_write_post_poll' in used_features,
         'has_used_post_improvement': 'used_post_improvement' in used_features,
+        'beehiiv_pub_id': beehiiv_pub_id,
+        'show_learning_coach': show_learning_coach,
+        'show_learning_modal': show_learning_modal,
+        'show_update_modal': show_update_modal,
+        'active_learning_task_id': str(active_initial_task.task_id) if active_initial_task else '',
+        'active_update_task_id': str(active_update_task.task_id) if active_update_task else '',
     }
 
     return render(request, 'analytics/insights.html', context)
@@ -705,6 +643,168 @@ def load_link_data(request):
 
     except Exception as e:
         return JsonResponse({'success': False, 'error': str(e)}, status=500)
+
+
+# =============================================================================
+# Learning / Updating flow views
+# =============================================================================
+
+@login_required
+@require_POST
+@require_valid_api_credentials
+def start_learning_task(request):
+    """
+    Start the initial "Learning Your Audience" task: full Beehiiv fetch then
+    process top-k eligible posts. Refuses if one is already running for this
+    user/publication.
+    """
+    import threading
+    from .models import Publication
+
+    _sweep_stale_learning_tasks(request.user)
+
+    _, beehiiv_pub_id, _ = get_user_api_credentials(request.user)
+    try:
+        publication = Publication.objects.get(pub_id=beehiiv_pub_id)
+    except Publication.DoesNotExist:
+        return JsonResponse(
+            {'success': False, 'error': 'Publication not found.'}, status=400,
+        )
+
+    # Refuse if an initial task is already pending/running for this pub
+    existing = PendingLearningTask.objects.filter(
+        user=request.user,
+        publication=publication,
+        kind='initial',
+        status__in=('pending', 'running'),
+    ).first()
+    if existing:
+        return JsonResponse({
+            'success': True,
+            'task_id': str(existing.task_id),
+            'already_running': True,
+        })
+
+    task = PendingLearningTask.objects.create(
+        user=request.user,
+        publication=publication,
+        kind='initial',
+        status='pending',
+    )
+
+    threading.Thread(
+        target=run_initial_learning_task,
+        args=(task.task_id,),
+        daemon=True,
+    ).start()
+
+    return JsonResponse({'success': True, 'task_id': str(task.task_id)})
+
+
+@login_required
+@require_POST
+@require_valid_api_credentials
+def start_update_task(request):
+    """
+    Start the "Updating Your Posts" incremental task. The 60s TTL is enforced
+    client-side via localStorage; here we only enforce "no duplicate running
+    task" as defense-in-depth.
+    """
+    import threading
+    from .models import Publication
+
+    _sweep_stale_learning_tasks(request.user)
+
+    _, beehiiv_pub_id, _ = get_user_api_credentials(request.user)
+    try:
+        publication = Publication.objects.get(pub_id=beehiiv_pub_id)
+    except Publication.DoesNotExist:
+        return JsonResponse(
+            {'success': False, 'error': 'Publication not found.'}, status=400,
+        )
+
+    existing = PendingLearningTask.objects.filter(
+        user=request.user,
+        publication=publication,
+        kind='update',
+        status__in=('pending', 'running'),
+    ).first()
+    if existing:
+        return JsonResponse({
+            'success': True,
+            'task_id': str(existing.task_id),
+            'already_running': True,
+        })
+
+    task = PendingLearningTask.objects.create(
+        user=request.user,
+        publication=publication,
+        kind='update',
+        status='pending',
+    )
+
+    threading.Thread(
+        target=run_update_task,
+        args=(task.task_id,),
+        daemon=True,
+    ).start()
+
+    return JsonResponse({'success': True, 'task_id': str(task.task_id)})
+
+
+@login_required
+@require_GET
+def poll_learning_task(request, task_id):
+    """
+    Poll the status of a PendingLearningTask. Does NOT touch last_heartbeat
+    — that's maintained by the runner's own heartbeat thread so stale-sweep
+    measures runner liveness, not client polling.
+    """
+    try:
+        task = PendingLearningTask.objects.get(task_id=task_id, user=request.user)
+    except PendingLearningTask.DoesNotExist:
+        return JsonResponse({'success': False, 'error': 'Task not found'}, status=404)
+
+    usage = request.user.usage_account
+    return JsonResponse({
+        'success': True,
+        'kind': task.kind,
+        'status': task.status,
+        'phase': task.phase,
+        'target_process_count': task.target_process_count,
+        'posts_processed_count': task.posts_processed_count,
+        'error_message': task.error_message,
+        'credits_used': usage.used_this_period,
+        'credits_quota': usage.monthly_quota,
+    })
+
+
+@csrf_exempt
+@login_required
+@require_POST
+def abandon_learning_task(request, task_id):
+    """
+    Called via `navigator.sendBeacon` on pagehide. Marks the task abandoned;
+    the wipe (for kind='initial') is performed by the runner's own
+    `_is_abandoned` check — doing it inline races against in-flight writes
+    from the runner thread. If the runner thread is dead, the stale-sweep
+    does the wipe when `last_heartbeat` ages out.
+
+    CSRF-exempt because `sendBeacon` cannot set custom headers; the view is
+    still session-authenticated and can only affect the caller's own tasks.
+    """
+    try:
+        task = PendingLearningTask.objects.get(task_id=task_id, user=request.user)
+    except PendingLearningTask.DoesNotExist:
+        return JsonResponse({'success': False, 'error': 'Task not found'}, status=404)
+
+    if task.status in ('complete', 'abandoned', 'error'):
+        return JsonResponse({'success': True, 'already_finished': True})
+
+    task.abandoned = True
+    task.save(update_fields=['abandoned'])
+
+    return JsonResponse({'success': True})
 
 
 
@@ -1055,79 +1155,6 @@ def download_improvement_tips(request, task_id):
     return response
 
 
-@login_required
-@require_POST
-@require_valid_api_credentials
-def refresh_posts(request):
-    """
-    Refresh posts data from Beehiiv API and update the database.
-    """
-    from .models import Publication
-
-    try:
-        # Get API credentials (already validated by decorator)
-        beehiiv_token, beehiiv_pub_id, _ = get_user_api_credentials(request.user)
-
-        # Get or create the Publication record
-        usage = UsageAccount.objects.get(user=request.user)
-        pub_data = next((p for p in usage.available_publications if p["id"] == beehiiv_pub_id), None)
-        publication, _ = Publication.objects.get_or_create(
-            pub_id=beehiiv_pub_id,
-            defaults={
-                'name': pub_data.get('name', 'Unknown') if pub_data else 'Unknown',
-                'organization_name': pub_data.get('organization_name', '') if pub_data else ''
-            }
-        )
-
-        # Fetch and process posts data
-        posts_df, result_message = async_to_sync(refresh_posts_data)(beehiiv_token, beehiiv_pub_id)
-
-        if posts_df is None:
-            messages.error(request, result_message)
-            return redirect('analytics:posts')
-
-        # Update database with new posts
-        created_count = 0
-        updated_count = 0
-
-        for _, row in posts_df.iterrows():
-            # Handle null publish_date for drafts
-            publish_date = row['publish_date']
-            if pd.isna(publish_date):
-                publish_date = None
-
-            post, created = Post.objects.update_or_create(
-                post_id=row['id'],
-                user=request.user,
-                defaults={
-                    'publication': publication,
-                    'title': row['title'],
-                    'subtitle': row.get('subtitle', ''),
-                    'status': row.get('status', 'Published'),
-                    'creation_date': row.get('creation_date'),
-                    'publish_date': publish_date,
-                    'recipients': row.get('recipients', 0),
-                    'delivered': row.get('delivered', 0),
-                    'email_opens': row.get('email_opens', 0),
-                    'unique_email_opens': row.get('unique_email_opens', 0),
-                    'email_clicks': row.get('email_clicks', 0),
-                    'unique_email_clicks': row.get('unique_email_clicks', 0),
-                    'unsubscribes': row.get('unsubscribes', 0),
-                    'spam_reports': row.get('spam_reports', 0),
-                }
-            )
-            
-            if created:
-                created_count += 1
-            else:
-                updated_count += 1
-        
-        messages.success(request, "Updated posts")
-        
-    except Exception as e:
-        messages.error(request, f"Error refreshing posts: {str(e)}")
-    
-    return redirect('analytics:posts')
 
 
 @login_required
@@ -1208,44 +1235,6 @@ def submit_survey(request):
         }, status=500)
 
 
-@login_required
-@require_POST
-@login_required
-@require_POST
-def clear_processed_posts(request):
-    """
-    Delete ProcessedPost and Section records for the given post_ids (owned by the requesting user).
-    """
-    try:
-        body = json.loads(request.body)
-        post_ids = body.get('post_ids', [])
-
-        if not post_ids:
-            return JsonResponse({'success': False, 'error': 'No post IDs provided.'}, status=400)
-
-        # Delete Section and LinkData rows first
-        Section.objects.filter(
-            user=request.user,
-            post__post_id__in=post_ids
-        ).delete()
-        LinkData.objects.filter(
-            user=request.user,
-            post__post_id__in=post_ids
-        ).delete()
-
-        deleted_count, _ = ProcessedPost.objects.filter(
-            user=request.user,
-            post__post_id__in=post_ids
-        ).delete()
-
-        return JsonResponse({
-            'success': True,
-            'message': f'Cleared processed data from {deleted_count} post{"s" if deleted_count != 1 else ""}.'
-        })
-
-    except Exception as e:
-        logger.error(f"Error in clear_processed_posts: {str(e)}", exc_info=True)
-        return JsonResponse({'success': False, 'error': str(e)}, status=500)
 
 
 @login_required

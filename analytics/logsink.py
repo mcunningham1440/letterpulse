@@ -174,6 +174,12 @@ class LogSink:
         try:
             # Import here to avoid circular imports
             from .models import ExecutionLog
+            from django.db import close_old_connections
+
+            # The sink's worker thread sleeps between flushes; RDS can drop
+            # the idle socket, so ensure we have a fresh connection before
+            # the bulk insert rather than surfacing SSL SYSCALL EOF.
+            close_old_connections()
 
             log_objects = []
             for entry in batch:
