@@ -219,7 +219,7 @@ MESSAGE_TAGS = {
 # AI Credit System Configuration
 # =============================================================================
 # Default monthly credits for new users
-DEFAULT_MONTHLY_CREDITS = 150
+DEFAULT_MONTHLY_CREDITS = 75
 
 # Credit costs per operation
 CREDITS_PER_REPORT = 1          # Flat cost for generating insights

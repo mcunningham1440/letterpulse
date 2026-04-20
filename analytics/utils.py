@@ -408,7 +408,7 @@ async def llm_call(function_name, messages, model, reasoning_level, response_for
 
     try:
         if asyncio.get_event_loop().is_running():
-            client = AsyncOpenAI(api_key=OPENAI_API_KEY)
+            client = AsyncOpenAI(api_key=OPENAI_API_KEY, timeout=90.0, max_retries=2)
             try:
                 if response_format is not None:
                     kwargs["text_format"] = response_format
@@ -419,7 +419,7 @@ async def llm_call(function_name, messages, model, reasoning_level, response_for
             finally:
                 await client.close()
         else:
-            client = OpenAI(api_key=OPENAI_API_KEY)
+            client = OpenAI(api_key=OPENAI_API_KEY, timeout=90.0, max_retries=2)
             try:
                 if response_format is not None:
                     kwargs["text_format"] = response_format
@@ -1152,7 +1152,7 @@ async def run_content_finder_agent(messages, allow_exclusion, model, reasoning, 
         )
 
         response = await llm_call(
-            "content_finder",
+            "content_finder_search",
             input_messages,
             model,
             reasoning,
@@ -1194,7 +1194,7 @@ async def run_content_finder_agent(messages, allow_exclusion, model, reasoning, 
 
     # Max rounds reached — force structured output
     response = await llm_call(
-        "content_finder",
+        "content_finder_final_output",
         input_messages,
         model,
         reasoning,
@@ -1486,8 +1486,8 @@ def build_sections_desc(user, publication, post, n_examples=5):
                 full_text = full_text[:half] + " [...] " + full_text[-half:]
 
             example_parts.append(
-                f'<example lines="{ex.start_line}-{ex.end_line}" '
-                f'position="{start_pct}%-{end_pct}%">\n'
+                f'<lines={ex.start_line}-{ex.end_line} '
+                f'(relative position in HTML={start_pct}%-{end_pct}%)>\n'
                 f'<first_html_line>{first_line}</first_html_line>\n'
                 f'<last_html_line>{last_line}</last_html_line>\n'
                 f'<text_content>{full_text}</text_content>\n'

@@ -179,6 +179,5 @@ Content Finder and Improvement Tips both use the same pattern: create a Pending*
 
 ## Testing Notes
 
-- LLM calls are logged to `data/llm_call_logs.csv` with timing and token usage
 - The `sandboxes/`, `testing_data/`, and `code_dump/` directories are for development/testing
 - Time zone is set to `America/Chicago` in settings

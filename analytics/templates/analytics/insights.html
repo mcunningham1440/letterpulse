@@ -474,8 +474,6 @@
                 if (kind === 'initial' && data.status === 'complete') {
                     const doneOverlay = document.getElementById('learningDoneOverlay');
                     if (doneOverlay) doneOverlay.style.display = 'flex';
-                    // Reload so insights_view recomputes has_processed_data etc.
-                    setTimeout(function () { window.location.reload(); }, 1500);
                 }
             }, 1000);
         }
@@ -575,12 +573,14 @@
             }
         });
 
-        // Dismiss the post-learning coach
+        // Dismiss the post-learning coach and reload so insights_view
+        // recomputes has_processed_data etc. and the next coach can render.
         const doneBtn = document.getElementById('closeLearningDoneBtn');
         if (doneBtn) {
             doneBtn.addEventListener('click', function () {
                 const doneOverlay = document.getElementById('learningDoneOverlay');
                 if (doneOverlay) doneOverlay.style.display = 'none';
+                window.location.reload();
             });
         }
     })();
