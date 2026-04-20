@@ -17,7 +17,7 @@ import pandas as pd
 import json
 from asgiref.sync import async_to_sync
 
-from .models import Post, ContentSet, Report, UsageAccount, SurveyResponse, ProcessedPost, LinkData, Section, PendingContentSearch, PendingImprovementTips, ContentSearchFeedback, PendingLearningTask
+from .models import Post, UsageAccount, SurveyResponse, ProcessedPost, LinkData, Section, PendingContentSearch, PendingImprovementTips, ContentSearchFeedback, PendingLearningTask
 
 logger = logging.getLogger(__name__)
 
@@ -334,6 +334,8 @@ def account_view(request):
     last_fetch_at = None
     most_recent_published_post = None
     most_recent_processed_post = None
+    total_posts_count = None
+    processed_posts_count = None
 
     if has_posts and usage.api_key_valid:
         _, beehiiv_pub_id, _ = get_user_api_credentials(request.user)
@@ -373,6 +375,24 @@ def account_view(request):
                         'title': processed_marker.post.title or '(untitled)',
                         'publish_date': processed_marker.post.publish_date,
                     }
+                total_posts_count = pub_posts.count()
+                processed_posts_count = ProcessedPost.objects.filter(
+                    user=request.user, post__publication=publication,
+                ).count()
+
+    # Show "API Key Validated — Go to Write" coach when creds are valid but the
+    # initial post scan hasn't been run for the current publication (and no task
+    # is already running).
+    show_api_validated_coach = False
+    if usage.api_key_valid and usage.beehiiv_pub_id:
+        initial_done = usage.beehiiv_pub_id in (usage.initial_fetched_pub_ids or [])
+        task_running = PendingLearningTask.objects.filter(
+            user=request.user,
+            publication=publication,
+            kind='initial',
+            status__in=('pending', 'running'),
+        ).exists() if publication is not None else False
+        show_api_validated_coach = (not initial_done) and (not task_running)
 
     context = {
         'usage': usage,
@@ -382,6 +402,9 @@ def account_view(request):
         'last_fetch_at': last_fetch_at,
         'most_recent_published_post': most_recent_published_post,
         'most_recent_processed_post': most_recent_processed_post,
+        'total_posts_count': total_posts_count,
+        'processed_posts_count': processed_posts_count,
+        'show_api_validated_coach': show_api_validated_coach,
     }
 
     return render(request, 'analytics/account.html', context)

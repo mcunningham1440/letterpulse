@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Post, ContentSet, Report, UsageAccount, Publication, ExecutionLog, SurveyResponse, ProcessedPost, LinkData, Section, ClickVizEmailLog, CronRunLog, PendingContentSearch, ContentSearchFeedback, PendingLearningTask
+from .models import Post, UsageAccount, Publication, ExecutionLog, SurveyResponse, ProcessedPost, LinkData, Section, ClickVizEmailLog, CronRunLog, PendingContentSearch, ContentSearchFeedback, PendingLearningTask
 
 
 @admin.register(UsageAccount)
@@ -38,24 +38,6 @@ class PostAdmin(admin.ModelAdmin):
     list_filter = ('status', 'publish_date', 'publication', 'user')
     search_fields = ('title', 'subtitle', 'post_id', 'user__email')
     ordering = ('-publish_date',)
-    readonly_fields = ('created_at', 'updated_at')
-
-
-@admin.register(ContentSet)
-class ContentSetAdmin(admin.ModelAdmin):
-    list_display = ('name', 'user', 'publication', 'description', 'created_at', 'updated_at')
-    list_filter = ('publication', 'user', 'created_at')
-    search_fields = ('name', 'description', 'user__email')
-    ordering = ('-created_at',)
-    readonly_fields = ('created_at', 'updated_at')
-
-
-@admin.register(Report)
-class ReportAdmin(admin.ModelAdmin):
-    list_display = ('section_name', 'name', 'user', 'publication', 'created_at', 'updated_at')
-    list_filter = ('section_name', 'publication', 'user', 'created_at')
-    search_fields = ('section_name', 'name', 'report_text', 'user__email')
-    ordering = ('-created_at',)
     readonly_fields = ('created_at', 'updated_at')
 
 

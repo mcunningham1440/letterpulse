@@ -243,8 +243,11 @@ INITIAL_LEARNING_RECIPIENT_MULTIPLIER = 15
 def _processable_posts_queryset(user, publication):
     """
     Posts eligible for processing in either Learning/Update flow:
-      status = Published, publish_date >= 48h ago, platform in {email, both}.
+      status = Published, publish_date >= 48h ago, platform in {email, both}
+      OR platform is NULL (legacy rows fetched before the platform field
+      existed — treat as eligible; they'll be backfilled on next fetch).
     """
+    from django.db.models import Q
     from django.utils import timezone as dj_timezone
     from .models import Post
 
@@ -252,12 +255,12 @@ def _processable_posts_queryset(user, publication):
     return (
         Post.objects
         .filter(
+            Q(platform__in=PROCESSABLE_PLATFORMS) | Q(platform__isnull=True),
             user=user,
             publication=publication,
             status='Published',
             publish_date__isnull=False,
             publish_date__lte=cutoff,
-            platform__in=PROCESSABLE_PLATFORMS,
         )
     )
 
@@ -1249,7 +1252,7 @@ def run_content_finder_background(task_id):
     """
     import threading
     from asgiref.sync import async_to_sync
-    from django.db import connection
+    from django.db import connection, close_old_connections
     from analytics.models import PendingContentSearch, Section, LinkData
 
     try:
@@ -1355,6 +1358,11 @@ def run_content_finder_background(task_id):
 
         raw_results = async_to_sync(run_all)()
 
+        # Long-running LLM calls can leave the DB connection stale (RDS-side
+        # idle timeout). Drop any unhealthy connection so the next ORM call
+        # opens a fresh one instead of raising SSL SYSCALL EOF.
+        close_old_connections()
+
         result_data = {}
         for section_name, links in raw_results:
             if links is not None:
@@ -1378,6 +1386,7 @@ def run_content_finder_background(task_id):
     except Exception as e:
         logger.exception("Content finder background task failed")
         try:
+            close_old_connections()
             task = PendingContentSearch.objects.get(task_id=task_id)
             task.status = 'error'
             task.error_message = str(e)
@@ -2853,7 +2862,7 @@ def run_improvement_tips_background(task_id):
     Loads the PendingImprovementTips task, generates annotated HTML, saves result.
     """
     from asgiref.sync import async_to_sync
-    from django.db import connection
+    from django.db import connection, close_old_connections
     from analytics.models import PendingImprovementTips, UsageAccount
 
     try:
@@ -2880,6 +2889,11 @@ def run_improvement_tips_background(task_id):
             post, user, publication, beehiiv_token, beehiiv_pub_id
         )
 
+        # Long-running LLM calls can leave the DB connection stale (RDS-side
+        # idle timeout). Drop any unhealthy connection so the next ORM call
+        # opens a fresh one instead of raising SSL SYSCALL EOF.
+        close_old_connections()
+
         task.status = 'complete'
         task.result_html = result_html
         if settings.ENVIRONMENT == 'local':
@@ -2898,6 +2912,7 @@ def run_improvement_tips_background(task_id):
     except Exception as e:
         logger.exception("Improvement tips background task failed")
         try:
+            close_old_connections()
             task = PendingImprovementTips.objects.get(task_id=task_id)
             task.status = 'error'
             task.error_message = str(e)

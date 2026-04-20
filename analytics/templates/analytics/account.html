@@ -16,26 +16,25 @@
 <!-- Coach mark dim overlay (backdrop only) -->
 <div class="confirm-overlay" id="apiSetupOverlay" style="display: none;"></div>
 
+{% if show_api_validated_coach %}
+<div class="confirm-overlay" id="apiValidatedOverlay" style="display: flex;">
+    <div class="confirm-modal">
+        <h5 class="mb-3">API Key Validated</h5>
+        <p class="mb-4">Your API key works! Head to the Write tab to start using LetterPulse.</p>
+        <div class="d-flex justify-content-end gap-2">
+            <button type="button" class="btn btn-secondary" id="apiValidatedStayBtn">Stay on Account</button>
+            <a href="{% url 'analytics:insights' %}" class="btn btn-primary">Go to Write</a>
+        </div>
+    </div>
+</div>
+{% endif %}
+
 <div class="row">
     <div class="col-12">
         <h1 class="mb-4">Account Settings</h1>
-        <ul class="nav nav-tabs mb-4" id="accountTabs" role="tablist">
-            <li class="nav-item" role="presentation">
-                <button class="nav-link active" id="account-tab" data-bs-toggle="tab" data-bs-target="#accountPanel" type="button" role="tab">
-                    Account
-                </button>
-            </li>
-            <li class="nav-item" role="presentation">
-                <button class="nav-link" id="post-fetching-tab" data-bs-toggle="tab" data-bs-target="#postFetchingPanel" type="button" role="tab">
-                    Post fetching
-                </button>
-            </li>
-        </ul>
     </div>
 </div>
 
-<div class="tab-content" id="accountTabsContent">
-<div class="tab-pane fade show active" id="accountPanel" role="tabpanel">
 <div class="row">
     <!-- Left Column: API Credentials + Usage Stats -->
     <div class="col-md-6">
@@ -60,7 +59,7 @@
         </div>
 
         <!-- API Credentials Card -->
-        <div class="card" id="apiCredentialsCard">
+        <div class="card mb-4" id="apiCredentialsCard">
             <div class="card-header">
                 <i class="bi bi-key me-2"></i>Beehiiv API Credentials
             </div>
@@ -170,10 +169,10 @@
         {% endif %}
     </div>
 
-    <!-- Right Column: Account Info + Click Viz Email -->
+    <!-- Right Column: Account Info + Post Fetching -->
     <div class="col-md-6">
         {% if usage.api_key_valid %}
-        <div class="card">
+        <div class="card mb-4">
             <div class="card-header">
                 <i class="bi bi-person me-2"></i>Account Information
             </div>
@@ -208,70 +207,73 @@
         </div>
         {% endif %}
 
-        {% comment %}Click Viz Email Card – hidden for now{% endcomment %}
-    </div>
-</div>
-</div>
-
-<div class="tab-pane fade" id="postFetchingPanel" role="tabpanel">
-    <div class="row">
-        <div class="col-md-8">
-            <div class="card">
-                <div class="card-header">
-                    <i class="bi bi-inbox me-2"></i>Post Fetching
-                </div>
-                <div class="card-body">
-                    {% if not usage.api_key_valid %}
-                    <p class="text-muted mb-0">Add a valid Beehiiv API key to see post-fetching details.</p>
-                    {% else %}
-                    <dl class="row mb-0">
-                        <dt class="col-sm-5 text-muted">Last fetch</dt>
-                        <dd class="col-sm-7">
-                            {% if last_fetch_at %}
-                                {{ last_fetch_at|date:"F j, Y, g:i a" }}
-                            {% else %}
-                                <span class="text-muted">Never</span>
-                            {% endif %}
-                        </dd>
-
-                        <dt class="col-sm-5 text-muted">Most recent published post</dt>
-                        <dd class="col-sm-7">
-                            {% if most_recent_published_post %}
-                                <div>{{ most_recent_published_post.title }}</div>
-                                <div class="text-muted small">{{ most_recent_published_post.publish_date|date:"F j, Y" }}</div>
-                            {% else %}
-                                <span class="text-muted">None yet</span>
-                            {% endif %}
-                        </dd>
-
-                        {% if is_local %}
-                        <dt class="col-sm-5 text-muted">Most recent processed post <span class="badge bg-secondary">dev</span></dt>
-                        <dd class="col-sm-7">
-                            {% if most_recent_processed_post %}
-                                <div>{{ most_recent_processed_post.title }}</div>
-                                <div class="text-muted small">{{ most_recent_processed_post.publish_date|date:"F j, Y" }}</div>
-                            {% else %}
-                                <span class="text-muted">None yet</span>
-                            {% endif %}
-                        </dd>
+        {% if usage.api_key_valid %}
+        <!-- Post Fetching Card -->
+        <div class="card">
+            <div class="card-header">
+                <i class="bi bi-inbox me-2"></i>Post Fetching
+            </div>
+            <div class="card-body">
+                <dl class="row mb-0">
+                    <dt class="col-sm-5 text-muted">Last fetch</dt>
+                    <dd class="col-sm-7">
+                        {% if last_fetch_at %}
+                            {{ last_fetch_at|date:"F j, Y, g:i a" }}
+                        {% else %}
+                            <span class="text-muted">Never</span>
                         {% endif %}
-                    </dl>
-                    <p class="text-muted small mt-3 mb-0">
-                        LetterPulse fetches new posts automatically when you open the Write page.
-                    </p>
+                    </dd>
+
+                    <dt class="col-sm-5 text-muted">Most recent published post</dt>
+                    <dd class="col-sm-7">
+                        {% if most_recent_published_post %}
+                            <div>{{ most_recent_published_post.title }}</div>
+                            <div class="text-muted small">{{ most_recent_published_post.publish_date|date:"F j, Y" }}</div>
+                        {% else %}
+                            <span class="text-muted">None yet</span>
+                        {% endif %}
+                    </dd>
+
+                    {% if is_local %}
+                    <dt class="col-sm-5 text-muted">Most recent processed post <span class="badge bg-secondary">dev</span></dt>
+                    <dd class="col-sm-7">
+                        {% if most_recent_processed_post %}
+                            <div>{{ most_recent_processed_post.title }}</div>
+                            <div class="text-muted small">{{ most_recent_processed_post.publish_date|date:"F j, Y" }}</div>
+                        {% else %}
+                            <span class="text-muted">None yet</span>
+                        {% endif %}
+                    </dd>
+
+                    <dt class="col-sm-5 text-muted">Total posts <span class="badge bg-secondary">dev</span></dt>
+                    <dd class="col-sm-7">{{ total_posts_count|default:"0" }}</dd>
+
+                    <dt class="col-sm-5 text-muted">Processed posts <span class="badge bg-secondary">dev</span></dt>
+                    <dd class="col-sm-7">{{ processed_posts_count|default:"0" }}</dd>
                     {% endif %}
-                </div>
+                </dl>
+                <p class="text-muted small mt-3 mb-0">
+                    LetterPulse fetches new posts automatically when you open the Write page.
+                </p>
             </div>
         </div>
+        {% endif %}
     </div>
-</div>
-
 </div>
 {% endblock %}
 
 {% block extra_js %}
 <script>
 document.addEventListener('DOMContentLoaded', function() {
+    // Dismiss "API Key Validated" coach
+    const apiValidatedOverlay = document.getElementById('apiValidatedOverlay');
+    const apiValidatedStayBtn = document.getElementById('apiValidatedStayBtn');
+    if (apiValidatedOverlay && apiValidatedStayBtn) {
+        apiValidatedStayBtn.addEventListener('click', function() {
+            apiValidatedOverlay.style.display = 'none';
+        });
+    }
+
     // Auto-submit timezone form on change
     const timezoneSelect = document.getElementById('timezone');
     if (timezoneSelect) {

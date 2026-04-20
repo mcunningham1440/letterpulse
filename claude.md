@@ -84,8 +84,6 @@ All models are in `analytics/models.py`. Key models and their relationships:
 
 - **Publication**: Beehiiv publication (users may have multiple)
 - **Post**: Newsletter post metadata + engagement stats from Beehiiv, including `platform` ('email', 'web', or 'both') used to filter for processing eligibility. Scoped to `(post_id, user)`
-- **ContentSet**: Named collections of extracted content items (legacy). Scoped to `(name, publication, user)`
-- **Report**: AI-generated insights per section. Has legacy nullable `content_set` FK. Scoped to `(section_name, user, publication)`
 - **UsageAccount**: Per-user credits, API credentials, preferences. OneToOneField to User. Billing resets on signup anniversary each month
 - **ProcessedPost**: Marker that a post has been processed. Scoped to `(post, user)`
 - **Section**: Structural section extracted from a post's HTML (name, title, line range, HTML content). Scoped to `(post, user, section_name)`
@@ -121,10 +119,10 @@ All models are in `analytics/models.py`. Key models and their relationships:
 - **Improvement Tips**: User selects any post (published or draft). Background task builds numbered text with HTML line mapping, gathers link history, calls LLM with structured output, generates two-column annotated HTML with tip cards and SVG connectors. Downloaded as file
 
 ### 2. Account Page (`/account/`)
-- Two tabs: **Account** (usage stats, API credentials, publication selector, timezone, password) and **Post fetching** (last-fetch datetime, most-recent-published post, and — dev only — most-recent-processed post).
+- Single grid of cards: **Beehiiv API Credentials**, **AI Credits Usage**, **Account Information**, and **Post Fetching** (last-fetch datetime, most-recent-published post, and — dev only — most-recent-processed post plus total/processed post counts).
 - No manual "Refresh Posts" or "Process Posts" controls exist anywhere; fetching and processing are fully automatic via the Learning/Update flows.
 
-**User Scoping**: Posts, ContentSets, Sections, and LinkData are all scoped to both publication AND user.
+**User Scoping**: Posts, Sections, and LinkData are all scoped to both publication AND user.
 
 ## API Endpoints
 
@@ -174,7 +172,7 @@ When `ENVIRONMENT == 'local'`, a floating panel appears after LLM-powered workfl
 - `static/analytics/js/dev-panel.js`: Frontend renderer, loaded conditionally via `{% if is_local %}`
 
 ### Background Task Pattern
-Content Finder, Improvement Tips, and Report generation all use the same pattern: create a Pending* model row → spawn a background thread → frontend polls a status endpoint at 3s intervals → result stored on the model row.
+Content Finder and Improvement Tips both use the same pattern: create a Pending* model row → spawn a background thread → frontend polls a status endpoint at 3s intervals → result stored on the model row.
 
 ### Management Commands
 - `send_click_viz_emails [--dry-run] [--user-email=<email>]`: Emails click visualizations for posts published >24h ago. Runs automatically every 30 minutes via a daemon thread in `AnalyticsConfig.ready()` (gunicorn/runserver only)

@@ -67,16 +67,24 @@ def limited_data_context(request):
     if not usage.api_key_valid or not usage.beehiiv_pub_id:
         return {'show_limited_data_coach': False}
 
+    # Only show after the initial scan + processing has completed for the
+    # current publication. Before that, the user either sees the API-validated
+    # coach (Account) or the Learning coach/modal (Write).
+    if usage.beehiiv_pub_id not in (usage.initial_fetched_pub_ids or []):
+        return {'show_limited_data_coach': False}
+
     try:
         publication = Publication.objects.get(pub_id=usage.beehiiv_pub_id)
     except Publication.DoesNotExist:
         return {'show_limited_data_coach': False}
 
+    from django.db.models import Q
+
     eligible_count = Post.objects.filter(
+        Q(platform__in=('email', 'both')) | Q(platform__isnull=True),
         user=request.user,
         publication=publication,
         status='Published',
-        platform__in=('email', 'both'),
     ).count()
 
     return {'show_limited_data_coach': eligible_count < 5}
