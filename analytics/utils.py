@@ -1119,41 +1119,41 @@ def run_content_finder_background(task_id):
             task.save(update_fields=['status', 'result_data'])
             return
 
-        #<TEMPORARY>
-        # Dev shortcut: return dummy results to speed up onboarding testing
-        if settings.ENVIRONMENT == 'local':
-            import time
-            time.sleep(2)  # simulate brief delay
-            result_data = {}
-            for section in sections:
-                result_data[section.section_name] = [
-                    {
-                        'title': f'Sample Article for {section.section_name}',
-                        'url': 'https://example.com/sample-article',
-                        'source': 'Example News',
-                        'date': '2026-04-15',
-                        'description': 'A sample article that matches your audience preferences.',
-                        'relevance': 'This content aligns with topics your readers frequently click on.',
-                    },
-                    {
-                        'title': f'Another Story for {section.section_name}',
-                        'url': 'https://example.com/another-story',
-                        'source': 'Demo Source',
-                        'date': '2026-04-14',
-                        'description': 'Another sample link for testing the onboarding flow.',
-                        'relevance': 'High engagement potential based on historical click patterns.',
-                    },
-                ]
-            task.status = 'complete'
-            task.result_data = result_data
-            task.save(update_fields=['status', 'result_data'])
-            from analytics.models import Feedback
-            Feedback.objects.get_or_create(
-                user=task.user, feature='used_content_finder',
-                defaults={'response': 'completed'}
-            )
-            return
-        #</TEMPORARY>
+        # #<TEMPORARY>
+        # # Dev shortcut: return dummy results to speed up onboarding testing
+        # if settings.ENVIRONMENT == 'local':
+        #     import time
+        #     time.sleep(2)  # simulate brief delay
+        #     result_data = {}
+        #     for section in sections:
+        #         result_data[section.section_name] = [
+        #             {
+        #                 'title': f'Sample Article for {section.section_name}',
+        #                 'url': 'https://example.com/sample-article',
+        #                 'source': 'Example News',
+        #                 'date': '2026-04-15',
+        #                 'description': 'A sample article that matches your audience preferences.',
+        #                 'relevance': 'This content aligns with topics your readers frequently click on.',
+        #             },
+        #             {
+        #                 'title': f'Another Story for {section.section_name}',
+        #                 'url': 'https://example.com/another-story',
+        #                 'source': 'Demo Source',
+        #                 'date': '2026-04-14',
+        #                 'description': 'Another sample link for testing the onboarding flow.',
+        #                 'relevance': 'High engagement potential based on historical click patterns.',
+        #             },
+        #         ]
+        #     task.status = 'complete'
+        #     task.result_data = result_data
+        #     task.save(update_fields=['status', 'result_data'])
+        #     from analytics.models import Feedback
+        #     Feedback.objects.get_or_create(
+        #         user=task.user, feature='used_content_finder',
+        #         defaults={'response': 'completed'}
+        #     )
+        #     return
+        # #</TEMPORARY>
 
         allow_exclusion = (task.mode == 'auto')
         model = settings.CONTENT_FINDER_MODEL
