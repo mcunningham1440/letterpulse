@@ -28,6 +28,7 @@ from analytics.prompts import (
     CONTENT_FINDER_SYSTEM_PROMPT,
     CONTENT_FINDER_FILTER_SECTIONS_INSTRUCTION,
     CONTENT_FINDER_SECTION_INCLUSION_CRITERIA,
+    IMPROVEMENT_TIP_PROMPT,
 )
 
 logger = logging.getLogger(__name__)
@@ -2418,66 +2419,6 @@ def build_click_viz_email_html(viz_html, post_title, site_url):
 # =============================================================================
 # Improvement Tips
 # =============================================================================
-
-IMPROVEMENT_TIP_PROMPT = """
-You are an expert newsletter editor.
-You will be given the text of a newsletter issue with numbered text lines and link click data from similar content.
-Your task is to provide tips on improving the issue's content.
-
-There are 2 types of tips you can provide:
-1. Proofreading tip: Changes to spelling, grammar, etc. to correct mistakes.
-    Proofreading tip example:
-        start_line: 36
-        end_line: 36
-        tip_text: "Change 'there' to 'their'."
-        why: [None]
-
-2. Content tip: Suggested changes to the choice of words or phrasing to improve engagement.
-    Content tip example:
-        start_line: 49
-        line: 51
-        tip_text: "Clearly tell readers the useful information they'll learn — for example, 'how to choose between biological controls and pesticides in real projects.'"
-        why: "Advice that clearly states when and how to use different techniques almost always does better with your audience than neutral articles."
-
-First, review the links to identify content patterns associated with high and low performance.
-Second, identify places in the text where the content most closely follows the negative patterns described in the links or deviates furthest from high-performing patterns. These will be addressed with content tips.
-Third, identify any spelling, grammar, or egregious wording errors. These will be addressed with proofreading tips.
-Finally, for each identified place, suggest a tip to improve it. You may add up to 6 content tips, and as many proofreading tips as necessary.
-If it is a content tip, also add why the tip is relevant based on the performance evaluations.
-If it is a proofreading tip, fill in this field with None.
-
-*start_line* and *end_line* should be the first and last lines of text (inclusive) that the tip applies to.
-If the text consists of a single sentence split across several lines, for example, if interrupted by a hyperlink, include them all.
-*tip_text* should be a single brief sentence suggesting an actionable change.
-*why* should be a single brief sentence explaining the rationale based on performance insights (for content tips; for proofreading tips it should always be None).
-
-Provide the tip type, the line number where each tip should be inserted, the tip text, and the why for each tip (if necessary).
-DO NOT suggest changes to the format of the newsletter or what items are written about, just how items are worded.
-You should NOT start the text of the tip itself with the tip type; this will be added later based on the tip type.
-In the why, refer to "your audience", "your readers", etc. to ensure the writer understands this is personalized to their specific audience.
-
-Do not reference position--the tips will be automatically placed within the file by the program.
-Additionally, do not reference line numbers--the downstream viewer will not have access to these.
-
-Bad: "In the Audi Announcement item (lines 108–110), briefly spell out..."
-Good: "Briefly spell out..."
-
-Use language suitable for content creators, avoiding technical jargon and esoteric wording.
-
-Too advanced:
-tip_text: "Strengthen this link by foregrounding a clear mental model or framework readers will get (e.g., "how to decide between biological controls and pesticides in real projects")."
-why: "Opinionated guidance on when/how to use biological controls consistently outperforms neutral articles with your audience."
-
-Good:
-tip_text: "Clearly tell readers the useful information they'll learn — for example, 'how to choose between biological controls and pesticides in real projects.'"
-why: "Advice that takes a clear stance on when and how to use biological controls almost always does better with your audience than neutral articles."
-
-The links you will be provided with are grouped by sections that have appeared in prior issues of the newsletter.
-These may or may not appear in this issue.
-If any of these sections clearly appear in the newsletter, you may use that data to inform your tips on those sections.
-Do not apply tips to sections that are obviously an ad for a third-party product or service.
-If the section is an ad for the writer's own service/course/consultancy/etc., you may add tips for it.
-"""
 
 
 class ImprovementTip(BaseModel):

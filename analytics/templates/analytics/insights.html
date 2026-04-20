@@ -367,7 +367,7 @@
         const LEARNING_FETCH_DURATION = {{ progress_durations.learning_fetch|default:30 }};
         const UPDATE_FETCH_DURATION = {{ progress_durations.refresh_posts|default:10 }};
         const PROCESS_PER_POST_SECONDS = 12;  // empirical per-post estimate
-        const UPDATE_TTL_MS = 60 * 1000;
+        const UPDATE_TTL_MS = 15 * 60 * 1000;
         const PUB_ID = "{{ beehiiv_pub_id|default_if_none:'' }}";
         const TTL_KEY = "incrementalRefreshLastRun:" + PUB_ID;
         const PROGRESS_CONTAINER_ID = 'learningRunProgressContainer';
@@ -406,6 +406,10 @@
             overlay.style.display = 'flex';
         }
 
+        function isModalVisible() {
+            return overlay.style.display === 'flex';
+        }
+
         function closeModal() {
             overlay.style.display = 'none';
             ProgressBar.forceClose({ containerId: PROGRESS_CONTAINER_ID });
@@ -439,22 +443,30 @@
                 try { localStorage.setItem(TTL_KEY, String(Date.now())); } catch (e) {}
             }
 
+            // An update task that never surfaced a modal (no posts needed
+            // processing) should clean up silently.
+            const silentUpdate = kind === 'update' && !isModalVisible();
+
             if (data.status === 'error') {
-                ProgressBar.complete({ containerId: PROGRESS_CONTAINER_ID, success: false, message: 'Error' });
-                setTimeout(closeModal, 1200);
-                showToast(GENERIC_ERROR_TOAST, 'danger');
+                if (!silentUpdate) {
+                    ProgressBar.complete({ containerId: PROGRESS_CONTAINER_ID, success: false, message: 'Error' });
+                    setTimeout(closeModal, 1200);
+                    showToast(GENERIC_ERROR_TOAST, 'danger');
+                }
                 return;
             }
 
             if (data.status === 'abandoned') {
                 // Another tab / pagehide aborted this run — reload so the
                 // Learning coach can re-fire if appropriate.
-                closeModal();
+                if (!silentUpdate) closeModal();
                 if (kind === 'initial') {
                     setTimeout(function () { window.location.reload(); }, 400);
                 }
                 return;
             }
+
+            if (silentUpdate) return;
 
             ProgressBar.complete({ containerId: PROGRESS_CONTAINER_ID, success: true, message: 'Done!' });
             setTimeout(function () {
@@ -478,6 +490,15 @@
 
                     if (data.phase && data.phase !== lastPhase) {
                         lastPhase = data.phase;
+                        // Update flow runs silently until there are posts
+                        // to process — reveal the modal on the transition
+                        // into the process phase, but only while the task
+                        // is still live (avoid a flash when a single poll
+                        // returns both the phase bump and the terminal state).
+                        const stillRunning = data.status === 'pending' || data.status === 'running';
+                        if (data.kind === 'update' && data.phase === 'process' && stillRunning && !isModalVisible()) {
+                            openModal();
+                        }
                         startPhase(data.kind, data.phase, data.target_process_count);
                     }
 
@@ -503,8 +524,12 @@
                 activeTaskId = data.task_id;
                 activeKind = kind;
                 lastPhase = 'fetch';
-                openModal();
-                startPhase(kind, 'fetch', 0);
+                // Update flow runs silently in the background during fetch;
+                // the modal only opens if the task enters the process phase.
+                if (kind !== 'update') {
+                    openModal();
+                    startPhase(kind, 'fetch', 0);
+                }
                 pollActiveTask();
             } catch (err) {
                 showToast(GENERIC_ERROR_TOAST, 'danger');
