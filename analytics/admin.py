@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Post, UsageAccount, Publication, ExecutionLog, SurveyResponse, ProcessedPost, LinkData, Section, ClickVizEmailLog, CronRunLog, PendingContentSearch, ContentSearchFeedback, PendingLearningTask
+from .models import Post, UsageAccount, Publication, ExecutionLog, LLMCall, SurveyResponse, ProcessedPost, LinkData, Section, ClickVizEmailLog, CronRunLog, PendingContentSearch, ContentSearchFeedback, PendingLearningTask
 
 
 @admin.register(UsageAccount)
@@ -63,6 +63,40 @@ class ExecutionLogAdmin(admin.ModelAdmin):
 
     def has_change_permission(self, request, obj=None):
         # Logs should be immutable
+        return False
+
+
+@admin.register(LLMCall)
+class LLMCallAdmin(admin.ModelAdmin):
+    list_display = (
+        'ts_start', 'function_name', 'model', 'success', 'duration_display',
+        'user', 'publication', 'task_kind',
+        'input_tokens_new', 'input_tokens_cached',
+        'output_tokens_response', 'output_tokens_reasoning',
+        'error_type',
+    )
+    list_filter = ('function_name', 'model', 'task_kind', 'success', 'ts_start')
+    search_fields = ('function_name', 'model', 'task_id', 'error_type', 'error_message', 'user__email')
+    ordering = ('-ts_start',)
+    readonly_fields = (
+        'ts_start', 'ts_end', 'user', 'publication', 'function_name', 'model',
+        'input_tokens_cached', 'input_tokens_new',
+        'output_tokens_reasoning', 'output_tokens_response',
+        'success', 'error_type', 'error_message',
+        'task_id', 'task_kind', 'additional_info', 'created_at',
+    )
+    date_hierarchy = 'ts_start'
+
+    def duration_display(self, obj):
+        if obj.ts_end and obj.ts_start:
+            return f"{int((obj.ts_end - obj.ts_start).total_seconds() * 1000)}ms"
+        return '—'
+    duration_display.short_description = 'Duration'
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
         return False
 
 

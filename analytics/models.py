@@ -318,6 +318,66 @@ class ExecutionLog(models.Model):
         return f"[{self.kind}] {self.name} - {status} ({self.duration_ms}ms)"
 
 
+class LLMCall(models.Model):
+    """
+    Per-call record for every OpenAI Responses API invocation made through
+    analytics.utils.llm_call. Written asynchronously via the LogSink queue.
+    """
+
+    ts_start = models.DateTimeField(help_text="When the LLM call was initiated")
+    ts_end = models.DateTimeField(help_text="When the LLM call returned or errored")
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='llm_calls',
+    )
+    publication = models.ForeignKey(
+        'Publication',
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='llm_calls',
+    )
+
+    function_name = models.CharField(max_length=100, help_text="Logical function the call is for (e.g. 'content_finder')")
+    model = models.CharField(max_length=100, help_text="OpenAI model name")
+
+    input_tokens_cached = models.PositiveIntegerField(default=0)
+    input_tokens_new = models.PositiveIntegerField(default=0)
+    output_tokens_reasoning = models.PositiveIntegerField(default=0)
+    output_tokens_response = models.PositiveIntegerField(default=0)
+
+    success = models.BooleanField(default=True)
+    error_type = models.CharField(max_length=255, blank=True, default='')
+    error_message = models.TextField(blank=True, default='')
+
+    task_id = models.CharField(max_length=64, blank=True, default='', db_index=True,
+                               help_text="UUID of the Pending* task that spawned this call, if any")
+    task_kind = models.CharField(max_length=50, blank=True, default='',
+                                 help_text="e.g. 'content_finder', 'improvement_tips', 'learning_initial'")
+
+    additional_info = models.JSONField(default=dict, blank=True,
+                                       help_text="Arbitrary call-specific metadata (e.g. section_name)")
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-ts_start']
+        indexes = [
+            models.Index(fields=['-ts_start']),
+            models.Index(fields=['function_name']),
+            models.Index(fields=['task_id']),
+            models.Index(fields=['success']),
+            models.Index(fields=['user', '-ts_start']),
+        ]
+
+    def __str__(self):
+        status = "OK" if self.success else "ERROR"
+        dur_ms = int((self.ts_end - self.ts_start).total_seconds() * 1000) if self.ts_end and self.ts_start else 0
+        return f"[{self.function_name}] {self.model} - {status} ({dur_ms}ms)"
+
+
 class ProcessedPost(models.Model):
     """Lightweight marker indicating a post has been processed for link data."""
 

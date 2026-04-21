@@ -166,14 +166,14 @@ class LogSink:
         """
         Write a batch of log entries to the database.
 
-        Uses bulk_create for efficiency. Never raises exceptions.
+        Entries are routed to ExecutionLog or LLMCall based on the optional
+        '_target' key. Uses bulk_create for efficiency. Never raises.
         """
         if not batch:
             return
 
         try:
-            # Import here to avoid circular imports
-            from .models import ExecutionLog
+            from .models import ExecutionLog, LLMCall
             from django.db import close_old_connections
 
             # The sink's worker thread sleeps between flushes; RDS can drop
@@ -181,30 +181,53 @@ class LogSink:
             # the bulk insert rather than surfacing SSL SYSCALL EOF.
             close_old_connections()
 
-            log_objects = []
+            exec_objs = []
+            llm_objs = []
             for entry in batch:
-                # Convert dict to ExecutionLog instance
-                log_obj = ExecutionLog(
-                    ts_start=entry.get('ts_start'),
-                    ts_end=entry.get('ts_end'),
-                    duration_ms=entry.get('duration_ms', 0),
-                    kind=entry.get('kind', 'function'),
-                    name=entry.get('name', 'unknown'),
-                    success=entry.get('success', True),
-                    error_type=entry.get('error_type', ''),
-                    error_message=entry.get('error_message', ''),
-                    traceback=entry.get('traceback', ''),
-                    user_id=entry.get('user_id'),
-                    request_id=entry.get('request_id', ''),
-                    parent_id=entry.get('parent_id'),
-                    inputs=entry.get('inputs', {}),
-                    outputs=entry.get('outputs', {}),
-                    meta=entry.get('meta', {}),
-                )
-                log_objects.append(log_obj)
+                target = entry.get('_target', 'ExecutionLog')
+                if target == 'LLMCall':
+                    llm_objs.append(LLMCall(
+                        ts_start=entry.get('ts_start'),
+                        ts_end=entry.get('ts_end'),
+                        user_id=entry.get('user_id'),
+                        publication_id=entry.get('publication_id'),
+                        function_name=entry.get('function_name', 'unknown')[:100],
+                        model=entry.get('model', '')[:100],
+                        input_tokens_cached=entry.get('input_tokens_cached', 0),
+                        input_tokens_new=entry.get('input_tokens_new', 0),
+                        output_tokens_reasoning=entry.get('output_tokens_reasoning', 0),
+                        output_tokens_response=entry.get('output_tokens_response', 0),
+                        success=entry.get('success', True),
+                        error_type=entry.get('error_type', '')[:255],
+                        error_message=entry.get('error_message', ''),
+                        task_id=entry.get('task_id', '')[:64],
+                        task_kind=entry.get('task_kind', '')[:50],
+                        additional_info=entry.get('additional_info', {}),
+                    ))
+                else:
+                    exec_objs.append(ExecutionLog(
+                        ts_start=entry.get('ts_start'),
+                        ts_end=entry.get('ts_end'),
+                        duration_ms=entry.get('duration_ms', 0),
+                        kind=entry.get('kind', 'function'),
+                        name=entry.get('name', 'unknown'),
+                        success=entry.get('success', True),
+                        error_type=entry.get('error_type', ''),
+                        error_message=entry.get('error_message', ''),
+                        traceback=entry.get('traceback', ''),
+                        user_id=entry.get('user_id'),
+                        request_id=entry.get('request_id', ''),
+                        parent_id=entry.get('parent_id'),
+                        inputs=entry.get('inputs', {}),
+                        outputs=entry.get('outputs', {}),
+                        meta=entry.get('meta', {}),
+                    ))
 
-            ExecutionLog.objects.bulk_create(log_objects, ignore_conflicts=True)
-            logger.debug(f"LogSink flushed {len(log_objects)} entries")
+            if exec_objs:
+                ExecutionLog.objects.bulk_create(exec_objs, ignore_conflicts=True)
+            if llm_objs:
+                LLMCall.objects.bulk_create(llm_objs, ignore_conflicts=True)
+            logger.debug(f"LogSink flushed {len(exec_objs)} exec + {len(llm_objs)} llm entries")
 
         except Exception as e:
             # Log the error but NEVER propagate - logging must not break the app

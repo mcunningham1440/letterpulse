@@ -370,7 +370,7 @@ def wipe_user_publication_data(user, pub_id):
             usage.save(update_fields=['initial_fetched_pub_ids'])
 
 
-async def llm_call(function_name, messages, model, reasoning_level, response_format=None, tools=None, tool_choice=None, user=None, store=False, previous_response_id=None):
+async def llm_call(function_name, messages, model, reasoning_level, response_format=None, tools=None, tool_choice=None, user=None, store=False, previous_response_id=None, timeout=90.0):
     """
     Make an async call to OpenAI API and log the request.
 
@@ -389,7 +389,11 @@ async def llm_call(function_name, messages, model, reasoning_level, response_for
     Returns:
         OpenAI API response object
     """
+    from django.utils import timezone as dj_timezone
+    from analytics.llm_tracker import record_call, record_error
+
     start_datetime = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    start_ts = dj_timezone.now()
     start_time = time.time()
 
     kwargs = {
@@ -408,7 +412,7 @@ async def llm_call(function_name, messages, model, reasoning_level, response_for
 
     try:
         if asyncio.get_event_loop().is_running():
-            client = AsyncOpenAI(api_key=OPENAI_API_KEY, timeout=90.0, max_retries=2)
+            client = AsyncOpenAI(api_key=OPENAI_API_KEY, timeout=timeout, max_retries=2)
             try:
                 if response_format is not None:
                     kwargs["text_format"] = response_format
@@ -419,7 +423,7 @@ async def llm_call(function_name, messages, model, reasoning_level, response_for
             finally:
                 await client.close()
         else:
-            client = OpenAI(api_key=OPENAI_API_KEY, timeout=90.0, max_retries=2)
+            client = OpenAI(api_key=OPENAI_API_KEY, timeout=timeout, max_retries=2)
             try:
                 if response_format is not None:
                     kwargs["text_format"] = response_format
@@ -429,15 +433,13 @@ async def llm_call(function_name, messages, model, reasoning_level, response_for
                     response = client.responses.create(**kwargs)
             finally:
                 client.close()
-    except Exception:
+    except Exception as e:
         logger.exception("llm_call failed")
+        record_error(function_name, model, time.time() - start_time, e, start_ts=start_ts)
         raise
     duration = time.time() - start_time
 
-    # Record to dev panel tracker (no-op outside local mode)
-    from analytics.llm_tracker import is_tracking, record_call
-    if is_tracking():
-        record_call(function_name, model, messages, response, duration)
+    record_call(function_name, model, messages, response, duration, start_ts=start_ts)
 
     return response
 
@@ -1160,6 +1162,7 @@ async def run_content_finder_agent(messages, allow_exclusion, model, reasoning, 
             tool_choice="required",
             store=True,
             previous_response_id=prev_response_id,
+            timeout=30.0,
         )
         all_responses.append(response)
         prev_response_id = response.id
@@ -1201,6 +1204,7 @@ async def run_content_finder_agent(messages, allow_exclusion, model, reasoning, 
         response_format=ContentFinderAllLinks,
         store=True,
         previous_response_id=prev_response_id,
+        timeout=45.0,
     )
     all_responses.append(response)
     return response, all_responses, all_results
@@ -1212,6 +1216,8 @@ async def process_content_finder_section(section, allow_exclusion, max_links=60,
     Returns (section_name, parsed_links_or_None).
     """
     from asgiref.sync import sync_to_async
+    from analytics.llm_tracker import set_additional_info
+    set_additional_info({'section_name': section.section_name})
     link_history, link_count = await sync_to_async(format_link_history)(section, max_links=max_links, max_url_len=max_url_len)
 
     if link_count == 0:
@@ -1261,7 +1267,13 @@ def run_content_finder_background(task_id):
         task.status = 'running'
         task.save(update_fields=['status'])
 
-        from analytics.llm_tracker import start_tracking, finish_tracking
+        from analytics.llm_tracker import start_tracking, finish_tracking, set_llm_context
+        set_llm_context(
+            user_id=task.user_id,
+            publication_id=task.publication_id,
+            task_id=task.task_id,
+            task_kind='content_finder',
+        )
         if settings.ENVIRONMENT == 'local':
             start_tracking()
 
@@ -2811,7 +2823,13 @@ def run_improvement_tips_background(task_id):
         task.status = 'running'
         task.save(update_fields=['status'])
 
-        from analytics.llm_tracker import start_tracking, finish_tracking
+        from analytics.llm_tracker import start_tracking, finish_tracking, set_llm_context
+        set_llm_context(
+            user_id=task.user_id,
+            publication_id=task.publication_id,
+            task_id=task.task_id,
+            task_kind='improvement_tips',
+        )
         if settings.ENVIRONMENT == 'local':
             start_tracking()
 
@@ -2941,6 +2959,14 @@ def _run_learning_task_impl(task_id, kind):
         task.status = 'running'
         task.phase = 'fetch'
         _heartbeat_task(task)
+
+        from analytics.llm_tracker import set_llm_context
+        set_llm_context(
+            user_id=task.user_id,
+            publication_id=task.publication_id,
+            task_id=task.task_id,
+            task_kind=f'learning_{kind}',
+        )
 
         usage = UsageAccount.objects.get(user=task.user)
         beehiiv_token = usage.beehiiv_token
