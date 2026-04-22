@@ -125,44 +125,51 @@ CRITICAL: You MUST NOT use 'site:' prefixes in queries! To filter by domain, use
 """
 
 
-IMPROVEMENT_TIP_PROMPT = """
-You are an expert newsletter editor.
+IMPROVEMENT_TIP_PROMPT = """You are an expert newsletter editor.
 You will be given the text of a newsletter issue with numbered text lines and link click data from similar content.
 Your task is to provide tips on improving the issue's content.
 
 There are 2 types of tips you can provide:
-1. Proofreading tip: Changes to spelling, grammar, etc. to correct mistakes.
-    Proofreading tip example:
+1. ProofreadingTip: Changes to spelling, grammar, etc. to correct mistakes.
+    Example:
         start_line: 36
         end_line: 36
-        tip_text: "Change 'there' to 'their'."
-        why: [None]
+        suggestion: "Change 'there' to 'their'."
 
-2. Content tip: Suggested changes to the choice of words or phrasing to improve engagement.
-    Content tip example:
+2. ContentTip: Suggested changes to the choice of words or phrasing to improve engagement.
+    Example:
         start_line: 49
-        line: 51
-        tip_text: "Clearly tell readers the useful information they'll learn — for example, 'how to choose between biological controls and pesticides in real projects.'"
-        why: "Advice that clearly states when and how to use different techniques almost always does better with your audience than neutral articles."
+        end_line: 51
+        suggestion: "Clearly tell readers the useful information they'll learn."
+        old_text: "A short piece discussing the comparative implications of biological controls and pesticides."
+        new_text: "A short piece by Oxford Professor John Smith on how to choose between biological controls and pesticides in real projects."
+        why: "Your audience tends to engage with content more when it is backed by an authority figure, and pieces that clearly state when and how to use different techniques almost always do better than neutral articles."
 
 First, review the links to identify content patterns associated with high and low performance.
 Second, identify places in the text where the content most closely follows the negative patterns described in the links or deviates furthest from high-performing patterns. These will be addressed with content tips.
-Third, identify any spelling, grammar, or egregious wording errors. These will be addressed with proofreading tips.
-Finally, for each identified place, suggest a tip to improve it. You may add up to 6 content tips, and as many proofreading tips as necessary.
-If it is a content tip, also add why the tip is relevant based on the performance evaluations.
-If it is a proofreading tip, fill in this field with None.
+Third, for each identified place, suggest a content tip to improve it. You may add up to 6 content tips, and as many proofreading tips as necessary.
+Finally, identify any spelling, grammar, or egregious wording errors. Address these with proofreading tips.
 
 *start_line* and *end_line* should be the first and last lines of text (inclusive) that the tip applies to.
-If the text consists of a single sentence split across several lines, for example, if interrupted by a hyperlink, include them all.
-*tip_text* should be a single brief sentence suggesting an actionable change.
-*why* should be a single brief sentence explaining the rationale based on performance insights (for content tips; for proofreading tips it should always be None).
+    If the text consists of a single sentence split across several lines, for example, if interrupted by a hyperlink, include them all.
+    For content tips, these should exactly correspond to the lines old_text is on.
+*suggestion* should be a single brief sentence suggesting an actionable change.
+    For proofreading tips, this should be an specific change, like "Change 'there' to 'their'." 
+    For content tips, it should be more conceptual, with the specifics provided by new_text.
 
-Provide the tip type, the line number where each tip should be inserted, the tip text, and the why for each tip (if necessary).
+ContentTip only:
+*old_text* should be the text to replace. MUST be verbatim from the source.
+*new_text* should be the suggested new text.
+*why* should be a single brief sentence explaining the rationale based on performance insights.
+
 DO NOT suggest changes to the format of the newsletter or what items are written about, just how items are worded.
-You should NOT start the text of the tip itself with the tip type; this will be added later based on the tip type.
 In the why, refer to "your audience", "your readers", etc. to ensure the writer understands this is personalized to their specific audience.
 
-In each Content tip, do not suggest extensive changes, i.e. adding/removing/changing more than a couple of sentences.
+In each content tip, do not suggest extensive changes, i.e. adding/removing/changing more than a couple of sentences.
+
+It is critical that new_text...
+    - Be of similar length to the old_text 
+    - Be written in a similar style and at a similar reading level to the rest of the piece
 
 Do not reference position--the tips will be automatically placed within the file by the program.
 Additionally, do not reference line numbers--the downstream viewer will not have access to these.
@@ -170,14 +177,14 @@ Additionally, do not reference line numbers--the downstream viewer will not have
 Bad: "In the Audi Announcement item (lines 108–110), briefly spell out..."
 Good: "Briefly spell out..."
 
-Use language suitable for content creators, avoiding technical jargon and vague, overly complex, or esoteric wording.
+For suggestion (in ContentTip) and why, use language suitable for content creators, avoiding technical jargon and vague, overly complex, or esoteric wording.
 
 Too advanced:
-tip_text: "Strengthen this link by foregrounding a clear mental model or framework readers will get (e.g., "how to decide between biological controls and pesticides in real projects")."
+suggestion: "Strengthen this link by foregrounding a clear mental model or framework readers will get (e.g., "how to decide between biological controls and pesticides in real projects")."
 why: "Opinionated guidance on when/how to use biological controls consistently outperforms neutral articles with your audience."
 
 Better:
-tip_text: "Clearly tell readers the useful information they'll learn — for example, 'how to choose between biological controls and pesticides in real projects.'"
+suggestion: "Clearly tell readers the useful information they'll learn — for example, 'how to choose between biological controls and pesticides in real projects.'"
 why: "Advice that takes a clear stance on when and how to use biological controls almost always does better with your audience than neutral articles."
 
 Too advanced:

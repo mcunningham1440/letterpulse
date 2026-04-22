@@ -8,7 +8,7 @@ import math
 from collections import Counter
 from openai import AsyncOpenAI, OpenAI, BadRequestError
 from pydantic import BaseModel
-from typing import List, Literal, Optional
+from typing import List, Optional
 import pandas as pd
 import asyncio
 import aiohttp
@@ -2433,15 +2433,22 @@ def build_click_viz_email_html(viz_html, post_title, site_url):
 # =============================================================================
 
 
-class ImprovementTip(BaseModel):
-    tip_type: Literal["content", "proofreading"]
-    line_number: int
-    tip_text: str
+class ProofreadingTip(BaseModel):
+    start_line: int
+    end_line: int
+    suggestion: str
+
+class ContentTip(BaseModel):
+    start_line: int
+    end_line: int
+    suggestion: str
+    old_text: str
+    new_text: str
     why: str
 
-
 class AllImprovementTips(BaseModel):
-    tips: List[ImprovementTip]
+    proofreading_tips: List[ProofreadingTip]
+    content_tips: List[ContentTip]
 
 
 async def generate_improvement_tips_html(post, user, publication, beehiiv_token, beehiiv_pub_id):
@@ -2607,36 +2614,89 @@ async def generate_improvement_tips_html(post, user, publication, beehiiv_token,
         "proofreading": "#0D47A1",
     }
 
-    valid_tips = [t for t in tips.tips if text_to_html_line.get(t.line_number)]
-    sorted_tips_asc = sorted(valid_tips, key=lambda t: text_to_html_line[t.line_number])
+    # Tag each tip with its kind so rendering can dispatch on it.
+    typed_tips = (
+        [('proofreading', t) for t in tips.proofreading_tips]
+        + [('content', t) for t in tips.content_tips]
+    )
+
+    # For each tip, map the (start_line, end_line) text span to HTML source lines
+    # and pick the midpoint so the anchor lands in the body of a multi-line span,
+    # not at its start. Drop tips whose span doesn't resolve to any HTML line.
+    tips_with_anchors = []
+    for tip_kind, t in typed_tips:
+        start_src = text_to_html_line.get(t.start_line)
+        end_src = text_to_html_line.get(t.end_line)
+        if start_src is None and end_src is None:
+            continue
+        if start_src is None:
+            mid = end_src
+        elif end_src is None:
+            mid = start_src
+        else:
+            lo, hi = (start_src, end_src) if start_src <= end_src else (end_src, start_src)
+            mid = (lo + hi) // 2
+        tips_with_anchors.append((tip_kind, t, mid))
+
+    tips_with_anchors.sort(key=lambda tup: tup[2])
 
     # Insert anchor spans (reverse order to preserve indices)
     annotated_lines = list(html_lines)
-    for i, tip in enumerate(reversed(sorted_tips_asc)):
-        marker_id = f"tip-target-{len(sorted_tips_asc) - 1 - i}"
-        html_line_num = text_to_html_line[tip.line_number]
-        anchor = f'<span id="{marker_id}" data-tip-anchor="true" data-tip-type="{tip.tip_type}"></span>'
-        annotated_lines.insert(html_line_num - 1, anchor)
+    for i, (tip_kind, tip, mid) in enumerate(reversed(tips_with_anchors)):
+        marker_id = f"tip-target-{len(tips_with_anchors) - 1 - i}"
+        anchor = f'<span id="{marker_id}" data-tip-anchor="true" data-tip-type="{tip_kind}"></span>'
+        annotated_lines.insert(mid - 1, anchor)
 
     newsletter_html = '\n'.join(annotated_lines)
 
+    copy_icon_svg = (
+        '<svg class="copy-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" '
+        'stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'
+        '<rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>'
+        '<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>'
+        '</svg>'
+        '<svg class="check-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" '
+        'stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" '
+        'style="display:none;">'
+        '<polyline points="20 6 9 17 4 12"></polyline>'
+        '</svg>'
+    )
+
     # Build tip card divs
     tip_cards = []
-    for i, tip in enumerate(sorted_tips_asc):
-        header = tip_type_to_header[tip.tip_type]
-        header_color = tip_type_to_header_color[tip.tip_type]
-        safe_text = html_module.escape(tip.tip_text)
-        has_why = tip.why and tip.why.lower() not in ('none', '')
+    for i, (tip_kind, tip, _mid) in enumerate(tips_with_anchors):
+        header = tip_type_to_header[tip_kind]
+        header_color = tip_type_to_header_color[tip_kind]
+        safe_suggestion = html_module.escape(tip.suggestion)
+
+        change_block = ""
         why_block = ""
-        if has_why:
-            safe_why = html_module.escape(tip.why)
-            why_block = f"""
+        if tip_kind == 'content':
+            has_old = bool(tip.old_text and tip.old_text.strip())
+            has_new = bool(tip.new_text and tip.new_text.strip())
+            if has_old or has_new:
+                old_html = f'<div class="old-text">{html_module.escape(tip.old_text)}</div>' if has_old else ''
+                new_html = f'<div class="new-text copy-source">{html_module.escape(tip.new_text)}</div>' if has_new else ''
+                copy_btn = (
+                    f'<button type="button" class="copy-btn" title="Copy to clipboard" '
+                    f'aria-label="Copy suggested text">{copy_icon_svg}</button>'
+                ) if has_new else ''
+                change_block = f"""
+        <div style="font-weight: bold; margin-bottom: 4px; margin-top: 10px; color: {header_color};">Suggested change</div>
+        <div class="suggested-row">
+            <div class="suggested-text-stack">{old_html}{new_html}</div>
+            {copy_btn}
+        </div>"""
+            if tip.why and tip.why.strip() and tip.why.lower() != 'none':
+                safe_why = html_module.escape(tip.why)
+                why_block = f"""
         <div style="font-weight: bold; margin-bottom: 4px; margin-top: 10px; color: {header_color};">Why?</div>
         <div>{safe_why}</div>"""
+
         tip_cards.append(f"""
-    <div class="tip-card {tip.tip_type}" id="tip-card-{i}" data-target="tip-target-{i}" data-tip-type="{tip.tip_type}">
+    <div class="tip-card {tip_kind}" id="tip-card-{i}" data-target="tip-target-{i}" data-tip-type="{tip_kind}">
         <div style="font-weight: bold; margin-bottom: 4px; color: {header_color};">{header}</div>
-        <div style="margin-bottom: 10px;">{safe_text}</div>{why_block}
+        <div style="margin-bottom: 10px;">{safe_suggestion}</div>{change_block}{why_block}
     </div>""")
 
     tip_cards_html = '\n'.join(tip_cards)
@@ -2726,6 +2786,50 @@ async def generate_improvement_tips_html(post, user, publication, beehiiv_token,
         border-radius: 4px;
         box-shadow: 0 1px 3px rgba(0,0,0,0.1);
     }}
+    .suggested-row {{
+        display: flex;
+        align-items: flex-start;
+        gap: 8px;
+        background-color: rgba(0,0,0,0.04);
+        border-radius: 4px;
+        padding: 8px 10px;
+    }}
+    .suggested-text-stack {{
+        flex: 1 1 auto;
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+    }}
+    .old-text {{
+        text-decoration: line-through;
+        color: #888;
+        white-space: pre-wrap;
+        word-break: break-word;
+    }}
+    .new-text {{
+        white-space: pre-wrap;
+        word-break: break-word;
+    }}
+    .copy-btn {{
+        flex: 0 0 auto;
+        background: transparent;
+        border: 1px solid rgba(0,0,0,0.15);
+        border-radius: 3px;
+        padding: 3px 6px;
+        cursor: pointer;
+        color: #555;
+        line-height: 0;
+        transition: background 0.15s, color 0.15s, border-color 0.15s;
+    }}
+    .copy-btn:hover {{
+        background: rgba(0,0,0,0.06);
+        color: #000;
+    }}
+    .copy-btn.copied {{
+        color: #2e7d32;
+        border-color: #2e7d32;
+    }}
 </style>
 </head>
 <body>
@@ -2802,6 +2906,62 @@ async def generate_improvement_tips_html(post, user, publication, beehiiv_token,
 
     window.addEventListener('load', positionCardsAndDrawConnectors);
     window.addEventListener('resize', positionCardsAndDrawConnectors);
+
+    function fallbackCopy(text) {{
+        try {{
+            const ta = document.createElement('textarea');
+            ta.value = text;
+            ta.style.position = 'fixed';
+            ta.style.top = '0';
+            ta.style.left = '0';
+            ta.style.opacity = '0';
+            document.body.appendChild(ta);
+            ta.focus();
+            ta.select();
+            const ok = document.execCommand('copy');
+            document.body.removeChild(ta);
+            return ok;
+        }} catch (e) {{
+            return false;
+        }}
+    }}
+
+    function flashCopied(btn, ok) {{
+        btn.classList.toggle('copied', ok);
+        btn.setAttribute('title', ok ? 'Copied!' : 'Copy failed');
+        const copyIcon = btn.querySelector('.copy-icon');
+        const checkIcon = btn.querySelector('.check-icon');
+        if (ok && copyIcon && checkIcon) {{
+            copyIcon.style.display = 'none';
+            checkIcon.style.display = '';
+        }}
+        setTimeout(function() {{
+            btn.classList.remove('copied');
+            btn.setAttribute('title', 'Copy to clipboard');
+            if (copyIcon && checkIcon) {{
+                copyIcon.style.display = '';
+                checkIcon.style.display = 'none';
+            }}
+        }}, 1500);
+    }}
+
+    document.addEventListener('click', function(e) {{
+        const btn = e.target.closest('.copy-btn');
+        if (!btn) return;
+        const card = btn.closest('.tip-card');
+        if (!card) return;
+        const src = card.querySelector('.copy-source');
+        if (!src) return;
+        const text = src.innerText;
+        if (navigator.clipboard && navigator.clipboard.writeText) {{
+            navigator.clipboard.writeText(text).then(
+                function() {{ flashCopied(btn, true); }},
+                function() {{ flashCopied(btn, fallbackCopy(text)); }}
+            );
+        }} else {{
+            flashCopied(btn, fallbackCopy(text));
+        }}
+    }});
 </script>
 </body>
 </html>"""
