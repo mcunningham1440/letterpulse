@@ -25,9 +25,10 @@ from django.db.models import F
 from Levenshtein import distance as levenshtein_distance
 from dotenv import load_dotenv
 from analytics.prompts import (
-    CONTENT_FINDER_SYSTEM_PROMPT,
-    CONTENT_FINDER_FILTER_SECTIONS_INSTRUCTION,
-    CONTENT_FINDER_SECTION_INCLUSION_CRITERIA,
+    CONTENT_FINDER_PLAN_PROMPT,
+    CONTENT_FINDER_DISPATCH_PROMPT,
+    CONTENT_FINDER_SEARCH_PROMPT,
+    CONTENT_FINDER_OUTPUT_PROMPT,
     IMPROVEMENT_TIP_PROMPT,
 )
 
@@ -1086,25 +1087,6 @@ CONTENT_FINDER_SEARCH_TOOL = {
     "strict": True,
 }
 
-CONTENT_FINDER_DISMISS_TOOL = {
-    "type": "function",
-    "name": "dismiss_section",
-    "description": "Call this to skip a section that does not require new external content (e.g. intro sections, sponsored content, reader polls, self-promotion, recurring sections that don't change week-to-week).",
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "reason": {
-                "type": "string",
-                "description": "Brief explanation of why this section does not need new content."
-            }
-        },
-        "required": ["reason"],
-        "additionalProperties": False,
-    },
-    "strict": True,
-}
-
-
 class ContentFinderLink(BaseModel):
     title: str
     source: str
@@ -1116,6 +1098,10 @@ class ContentFinderLink(BaseModel):
 
 class ContentFinderAllLinks(BaseModel):
     links: List[ContentFinderLink]
+
+
+class ContentFinderDispatchList(BaseModel):
+    sections: List[str]
 
 
 def build_content_finder_user_prompt(section, link_history_str, link_count, max_url_len=75):
@@ -1134,51 +1120,158 @@ The following links have appeared in this section in past issues. Values above 1
 """
 
 
-async def run_content_finder_agent(messages, allow_exclusion, model, reasoning, max_rounds=3, historical_urls=None):
+def build_all_sections_user_prompt(sections, max_links=60, max_url_len=75):
+    """Concatenate build_content_finder_user_prompt() output for every section in order."""
+    blocks = []
+    for section in sections:
+        link_history_str, link_count = format_link_history(
+            section, max_links=max_links, max_url_len=max_url_len,
+        )
+        blocks.append(
+            build_content_finder_user_prompt(
+                section, link_history_str, link_count, max_url_len=max_url_len,
+            )
+        )
+    return "\n".join(blocks)
+
+
+def _serialize_response_output(response):
+    """Serialize response.output items to JSON-safe dicts so they can be appended
+    to a growing input message list on subsequent LLM calls. Each successive agent
+    (plan → dispatch → search) carries forward the full conversation verbatim."""
+    serialized = []
+    for item in response.output:
+        try:
+            serialized.append(item.model_dump(mode='json', exclude_none=True))
+        except AttributeError:
+            serialized.append(dict(item))
+    return serialized
+
+
+def _extract_plan_text(response):
+    text = ""
+    try:
+        text = response.output_text or ""
+    except AttributeError:
+        pass
+    if text:
+        return text
+    for item in response.output:
+        if getattr(item, "type", None) == "message":
+            for part in getattr(item, "content", []) or []:
+                t = getattr(part, "text", None)
+                if t:
+                    text += t
+    return text
+
+
+async def run_plan_stage(task, sections):
+    """Stage 1: single LLM call that sees all sections and drafts a search plan.
+
+    Returns (plan_text, plan_messages) where plan_messages is the full list
+    [system(PLAN_PROMPT), user(user_prompt), <plan response output items>].
     """
-    Per-section agentic loop: call llm_call, execute tool calls (web search),
-    feed results back, repeat until max_rounds is hit.
-    Uses store=True + previous_response_id to preserve reasoning traces across rounds.
-    Returns (final_response_or_None, all_responses, all_search_results).
-    If the model dismisses the section, returns (None, ...).
+    from asgiref.sync import sync_to_async
+
+    max_links = settings.CONTENT_FINDER_MAX_LINKS
+    max_url_len = settings.CONTENT_FINDER_MAX_URL_LEN
+
+    user_prompt = await sync_to_async(build_all_sections_user_prompt)(
+        sections, max_links=max_links, max_url_len=max_url_len,
+    )
+
+    messages = [
+        {"role": "system", "content": CONTENT_FINDER_PLAN_PROMPT},
+        {"role": "user", "content": user_prompt},
+    ]
+
+    response = await llm_call(
+        "content_finder_plan",
+        messages,
+        settings.CONTENT_FINDER_PLAN_MODEL,
+        settings.CONTENT_FINDER_PLAN_REASONING,
+        store=True,
+        timeout=90.0,
+    )
+
+    plan_text = _extract_plan_text(response)
+    plan_messages = messages + _serialize_response_output(response)
+    return plan_text, plan_messages
+
+
+async def run_dispatch_stage(task):
+    """Stage 2: append the user's feedback + DISPATCH_PROMPT to plan_messages and
+    ask the model for a structured List[str] of section labels.
+
+    Returns (dispatch_sections, dispatch_messages) where dispatch_messages is
+    plan_messages + [user(feedback), system(DISPATCH_PROMPT), <dispatch response output items>].
     """
-    input_messages = list(messages)
-    all_responses, all_results = [], []
-    prev_response_id = None
+    feedback = (task.user_feedback or "").strip() or "(no changes)"
+
+    messages = list(task.plan_messages or []) + [
+        {"role": "user", "content": feedback},
+        {"role": "system", "content": CONTENT_FINDER_DISPATCH_PROMPT},
+    ]
+
+    response = await llm_call(
+        "content_finder_dispatch",
+        messages,
+        settings.CONTENT_FINDER_PLAN_MODEL,
+        settings.CONTENT_FINDER_PLAN_REASONING,
+        response_format=ContentFinderDispatchList,
+        store=True,
+        timeout=60.0,
+    )
+
+    dispatch_sections = []
+    try:
+        parsed = response.output[-1].content[0].parsed
+        dispatch_sections = list(parsed.sections)
+    except (AttributeError, IndexError):
+        dispatch_sections = []
+
+    dispatch_sections = dispatch_sections[:settings.CONTENT_FINDER_DISPATCH_MAX_SECTIONS]
+    dispatch_messages = messages + _serialize_response_output(response)
+    return dispatch_sections, dispatch_messages
+
+
+async def run_search_agent(section_name, dispatch_messages, historical_urls, max_rounds=3):
+    """
+    Per-section search agent. Starts from the full dispatch_messages list,
+    appends user(SEARCH_PROMPT), runs `max_rounds` of tool-call turns (each
+    appending the assistant output + tool outputs), then appends user(OUTPUT_PROMPT)
+    and emits the final structured output.
+
+    Returns (section_name, parsed_links_or_empty_list).
+    """
+    from analytics.llm_tracker import set_additional_info
+    set_additional_info({'section_name': section_name})
+
+    model = settings.CONTENT_FINDER_MODEL
+    reasoning = settings.CONTENT_FINDER_REASONING
+
+    messages = list(dispatch_messages) + [
+        {"role": "user", "content": CONTENT_FINDER_SEARCH_PROMPT.format(section_name=section_name)},
+    ]
 
     for round_num in range(max_rounds):
-        tools = (
-            [CONTENT_FINDER_SEARCH_TOOL, CONTENT_FINDER_DISMISS_TOOL]
-            if round_num == 0 and allow_exclusion
-            else [CONTENT_FINDER_SEARCH_TOOL]
-        )
-
         response = await llm_call(
             "content_finder_search",
-            input_messages,
+            messages,
             model,
             reasoning,
-            tools=tools,
+            tools=[CONTENT_FINDER_SEARCH_TOOL],
             tool_choice="required",
             store=True,
-            previous_response_id=prev_response_id,
-            timeout=30.0,
+            timeout=45.0,
         )
-        all_responses.append(response)
-        prev_response_id = response.id
+
+        # Carry the assistant output (including any reasoning items) forward.
+        messages = messages + _serialize_response_output(response)
 
         tool_calls = [item for item in response.output if item.type == "function_call"]
-
         if not tool_calls:
-            return response, all_responses, all_results
-
-        # Check for dismiss
-        for call in tool_calls:
-            if call.name == "dismiss_section":
-                return None, all_responses, all_results
-
-        # With previous_response_id, only send new tool outputs
-        input_messages = []
+            break
 
         for call in tool_calls:
             args = json.loads(call.arguments)
@@ -1186,224 +1279,180 @@ async def run_content_finder_agent(messages, allow_exclusion, model, reasoning, 
             domains = args.get("domains") or None
             max_days_ago = args.get("max_days_ago") or None
 
-            result = perplexity_search(queries, domains=domains, max_days_ago=max_days_ago, historical_urls=historical_urls)
-            all_results.append(result)
-
-            input_messages.append({
+            result = perplexity_search(
+                queries, domains=domains, max_days_ago=max_days_ago,
+                historical_urls=historical_urls,
+            )
+            messages.append({
                 "type": "function_call_output",
                 "call_id": call.call_id,
                 "output": result,
             })
 
-    # Max rounds reached — force structured output
+    messages = messages + [
+        {"role": "user", "content": CONTENT_FINDER_OUTPUT_PROMPT.format(section_name=section_name)},
+    ]
+
     response = await llm_call(
         "content_finder_final_output",
-        input_messages,
+        messages,
         model,
         reasoning,
         response_format=ContentFinderAllLinks,
         store=True,
-        previous_response_id=prev_response_id,
-        timeout=45.0,
-    )
-    all_responses.append(response)
-    return response, all_responses, all_results
-
-
-async def process_content_finder_section(section, allow_exclusion, max_links=60, max_url_len=75, model="gpt-5.4-mini", reasoning="medium", max_rounds=3, historical_urls=None):
-    """
-    Orchestrate content finding for a single section.
-    Returns (section_name, parsed_links_or_None).
-    """
-    from asgiref.sync import sync_to_async
-    from analytics.llm_tracker import set_additional_info
-    set_additional_info({'section_name': section.section_name})
-    link_history, link_count = await sync_to_async(format_link_history)(section, max_links=max_links, max_url_len=max_url_len)
-
-    if link_count == 0:
-        return (section.section_name, None)
-
-    system_prompt = CONTENT_FINDER_SYSTEM_PROMPT.format(
-        CONTENT_FINDER_FILTER_SECTIONS_INSTRUCTION if allow_exclusion else "",
-        CONTENT_FINDER_SECTION_INCLUSION_CRITERIA if allow_exclusion else "",
-    )
-    user_prompt = build_content_finder_user_prompt(section, link_history, link_count, max_url_len=max_url_len)
-
-    messages = [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": user_prompt},
-    ]
-
-    response, all_responses, all_results = await run_content_finder_agent(
-        messages, allow_exclusion, model, reasoning, max_rounds=max_rounds,
-        historical_urls=historical_urls,
+        timeout=60.0,
     )
 
-    if response is None:
-        return (section.section_name, None)
-
-    # Parse structured output from the final response
     try:
         parsed = response.output[-1].content[0].parsed
         links = [link.model_dump() for link in parsed.links]
     except (AttributeError, IndexError):
         links = []
 
-    return (section.section_name, links)
+    return (section_name, links)
 
 
-def run_content_finder_background(task_id):
-    """
-    Background thread entry point for running content finder.
-    Loads the PendingContentSearch, processes sections, saves results.
-    """
-    import threading
-    from asgiref.sync import async_to_sync
-    from django.db import connection, close_old_connections
-    from analytics.models import PendingContentSearch, Section, LinkData
+async def run_all_searches(task):
+    """Stage 3: fan out parallel search agents, one per entry in task.dispatch_sections."""
+    from asgiref.sync import sync_to_async
+    from analytics.models import LinkData, ContentSearchFeedback
 
-    try:
-        task = PendingContentSearch.objects.get(task_id=task_id)
-        task.status = 'running'
-        task.save(update_fields=['status'])
-
-        from analytics.llm_tracker import start_tracking, finish_tracking, set_llm_context
-        set_llm_context(
-            user_id=task.user_id,
-            publication_id=task.publication_id,
-            task_id=task.task_id,
-            task_kind='content_finder',
-        )
-        if settings.ENVIRONMENT == 'local':
-            start_tracking()
-
-        # Load sections for the post
-        sections = Section.objects.filter(
-            post=task.post,
-            user=task.user,
-        ).order_by('start_line')
-
-        if task.mode == 'manual' and task.selected_sections:
-            sections = sections.filter(section_name__in=task.selected_sections)
-
-        sections = list(sections)
-
-        if not sections:
-            task.status = 'complete'
-            task.result_data = {}
-            task.save(update_fields=['status', 'result_data'])
-            return
-
-        # #<TEMPORARY>
-        # # Dev shortcut: return dummy results to speed up onboarding testing
-        # if settings.ENVIRONMENT == 'local':
-        #     import time
-        #     time.sleep(2)  # simulate brief delay
-        #     result_data = {}
-        #     for section in sections:
-        #         result_data[section.section_name] = [
-        #             {
-        #                 'title': f'Sample Article for {section.section_name}',
-        #                 'url': 'https://example.com/sample-article',
-        #                 'source': 'Example News',
-        #                 'date': '2026-04-15',
-        #                 'description': 'A sample article that matches your audience preferences.',
-        #                 'relevance': 'This content aligns with topics your readers frequently click on.',
-        #             },
-        #             {
-        #                 'title': f'Another Story for {section.section_name}',
-        #                 'url': 'https://example.com/another-story',
-        #                 'source': 'Demo Source',
-        #                 'date': '2026-04-14',
-        #                 'description': 'Another sample link for testing the onboarding flow.',
-        #                 'relevance': 'High engagement potential based on historical click patterns.',
-        #             },
-        #         ]
-        #     task.status = 'complete'
-        #     task.result_data = result_data
-        #     task.save(update_fields=['status', 'result_data'])
-        #     from analytics.models import Feedback
-        #     Feedback.objects.get_or_create(
-        #         user=task.user, feature='used_content_finder',
-        #         defaults={'response': 'completed'}
-        #     )
-        #     return
-        # #</TEMPORARY>
-
-        allow_exclusion = (task.mode == 'auto')
-        model = settings.CONTENT_FINDER_MODEL
-        reasoning = settings.CONTENT_FINDER_REASONING
-        max_rounds = settings.CONTENT_FINDER_MAX_ROUNDS
-        max_links = settings.CONTENT_FINDER_MAX_LINKS
-        max_url_len = settings.CONTENT_FINDER_MAX_URL_LEN
-
-        # Load all historical URLs for this user/publication once (strip trailing /)
-        historical_urls = set(
+    def _load_historical_urls():
+        urls = set(
             url.rstrip('/') for url in
             LinkData.objects.filter(
                 user=task.user,
                 publication=task.publication,
             ).values_list('raw_url', flat=True)
         )
-
-        # Also exclude URLs the user has already reviewed via content search feedback
-        from analytics.models import ContentSearchFeedback
-        feedback_urls = set(
+        urls |= set(
             url.rstrip('/') for url in
             ContentSearchFeedback.objects.filter(
                 user=task.user,
                 publication=task.publication,
             ).values_list('url', flat=True)
         )
-        historical_urls |= feedback_urls
+        return urls
 
-        async def run_all():
-            tasks = [
-                process_content_finder_section(
-                    section, allow_exclusion,
-                    max_links=max_links, max_url_len=max_url_len,
-                    model=model, reasoning=reasoning, max_rounds=max_rounds,
-                    historical_urls=historical_urls,
-                )
-                for section in sections
-            ]
-            return await asyncio.gather(*tasks)
+    historical_urls = await sync_to_async(_load_historical_urls)()
 
-        raw_results = async_to_sync(run_all)()
+    max_rounds = settings.CONTENT_FINDER_MAX_ROUNDS
+    dispatch_messages = task.dispatch_messages or []
 
-        # Long-running LLM calls can leave the DB connection stale (RDS-side
-        # idle timeout). Drop any unhealthy connection so the next ORM call
-        # opens a fresh one instead of raising SSL SYSCALL EOF.
-        close_old_connections()
+    agents = [
+        run_search_agent(section_name, dispatch_messages, historical_urls, max_rounds=max_rounds)
+        for section_name in (task.dispatch_sections or [])
+    ]
+    return await asyncio.gather(*agents)
 
-        result_data = {}
-        for section_name, links in raw_results:
-            if links is not None:
-                result_data[section_name] = links
 
-        task.status = 'complete'
-        task.result_data = result_data
-        if settings.ENVIRONMENT == 'local':
-            task.dev_panel_data = finish_tracking() or {}
-            task.save(update_fields=['status', 'result_data', 'dev_panel_data'])
-        else:
-            task.save(update_fields=['status', 'result_data'])
+def run_content_finder_background(task_id):
+    """
+    Background thread entry point for running content finder.
+    Branches on task.status: 'planning' runs Stage 1 (exits awaiting user feedback);
+    'dispatching' runs Stage 2 + Stage 3.
+    """
+    from asgiref.sync import async_to_sync
+    from django.db import connection, close_old_connections
+    from analytics.models import PendingContentSearch, Section
+    from analytics.llm_tracker import start_tracking, seed_tracking, finish_tracking, set_llm_context
 
-        # Mark that the user has used content finder
-        from analytics.models import Feedback
-        Feedback.objects.get_or_create(
-            user=task.user, feature='used_content_finder',
-            defaults={'response': 'completed'}
+    task = None
+    try:
+        task = PendingContentSearch.objects.get(task_id=task_id)
+        initial_status = task.status
+
+        set_llm_context(
+            user_id=task.user_id,
+            publication_id=task.publication_id,
+            task_id=task.task_id,
+            task_kind='content_finder',
         )
+
+        if initial_status == 'planning':
+            if settings.ENVIRONMENT == 'local':
+                start_tracking()
+
+            sections = list(
+                Section.objects.filter(post=task.post, user=task.user).order_by('start_line')
+            )
+            if not sections:
+                task.status = 'complete'
+                task.result_data = {}
+                task.save(update_fields=['status', 'result_data'])
+                return
+
+            plan_text, plan_messages = async_to_sync(run_plan_stage)(task, sections)
+            close_old_connections()
+
+            task.plan_text = plan_text
+            task.plan_messages = plan_messages
+            task.status = 'awaiting_feedback'
+            if settings.ENVIRONMENT == 'local':
+                task.dev_panel_data = finish_tracking() or {}
+                task.save(update_fields=['plan_text', 'plan_messages', 'status', 'dev_panel_data'])
+            else:
+                task.save(update_fields=['plan_text', 'plan_messages', 'status'])
+            return
+
+        if initial_status == 'dispatching':
+            # Resume dev-panel accumulation from what Stage 1 recorded so the
+            # final panel shows plan + dispatch + all parallel searches together.
+            if settings.ENVIRONMENT == 'local':
+                seed_tracking(task.dev_panel_data)
+
+            dispatch_sections, dispatch_messages = async_to_sync(run_dispatch_stage)(task)
+            close_old_connections()
+
+            task.dispatch_sections = dispatch_sections
+            task.dispatch_messages = dispatch_messages
+            task.status = 'searching'
+            task.save(update_fields=['dispatch_sections', 'dispatch_messages', 'status'])
+
+            if not dispatch_sections:
+                task.status = 'complete'
+                task.result_data = {}
+                if settings.ENVIRONMENT == 'local':
+                    task.dev_panel_data = finish_tracking() or task.dev_panel_data
+                    task.save(update_fields=['status', 'result_data', 'dev_panel_data'])
+                else:
+                    task.save(update_fields=['status', 'result_data'])
+                return
+
+            raw_results = async_to_sync(run_all_searches)(task)
+            close_old_connections()
+
+            result_data = {}
+            for section_name, links in raw_results:
+                if links is not None:
+                    result_data[section_name] = links
+
+            task.status = 'complete'
+            task.result_data = result_data
+            if settings.ENVIRONMENT == 'local':
+                task.dev_panel_data = finish_tracking() or task.dev_panel_data
+                task.save(update_fields=['status', 'result_data', 'dev_panel_data'])
+            else:
+                task.save(update_fields=['status', 'result_data'])
+
+            from analytics.models import Feedback
+            Feedback.objects.get_or_create(
+                user=task.user, feature='used_content_finder',
+                defaults={'response': 'completed'}
+            )
+            return
+
+        # Any other status shouldn't reach the thread; no-op defensively.
+        return
 
     except Exception as e:
         logger.exception("Content finder background task failed")
         try:
             close_old_connections()
-            task = PendingContentSearch.objects.get(task_id=task_id)
-            task.status = 'error'
-            task.error_message = str(e)
-            task.save(update_fields=['status', 'error_message'])
+            t = PendingContentSearch.objects.get(task_id=task_id)
+            t.status = 'error'
+            t.error_message = str(e)
+            t.save(update_fields=['status', 'error_message'])
         except Exception:
             logger.exception("Failed to save error status for content finder task")
     finally:

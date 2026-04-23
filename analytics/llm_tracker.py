@@ -61,6 +61,22 @@ def start_tracking():
     _tracker_start.set(time.time())
 
 
+def seed_tracking(prior_data):
+    """
+    Resume dev-panel tracking in a new context (e.g. a new background thread)
+    by replaying the calls from a previous finish_tracking() dict. The caller
+    passes task.dev_panel_data from the prior stage; subsequent llm_call
+    invocations accumulate on top of the replayed list.
+    """
+    if settings.ENVIRONMENT != 'local':
+        return
+    prior_calls = []
+    if isinstance(prior_data, dict):
+        prior_calls = list(prior_data.get('calls') or [])
+    _tracker_calls.set(prior_calls)
+    _tracker_start.set(time.time())
+
+
 def is_tracking():
     """Return True if dev-panel tracking is active in the current context."""
     if settings.ENVIRONMENT != 'local':

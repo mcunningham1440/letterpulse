@@ -525,8 +525,13 @@ class PendingContentSearch(models.Model):
     status = models.CharField(
         max_length=20,
         default='pending',
-        help_text="pending, running, complete, or error"
+        help_text="pending, planning, awaiting_feedback, dispatching, searching, complete, or error"
     )
+    plan_text = models.TextField(blank=True, default='')
+    plan_messages = models.JSONField(default=list, blank=True)
+    user_feedback = models.TextField(blank=True, default='')
+    dispatch_messages = models.JSONField(default=list, blank=True)
+    dispatch_sections = models.JSONField(default=list, blank=True)
     result_data = models.JSONField(default=dict, blank=True)
     error_message = models.TextField(blank=True)
     dev_panel_data = models.JSONField(default=dict, blank=True)

@@ -184,21 +184,6 @@
 
                 <!-- Options shown after post is selected -->
                 <div id="cfPostOptions" style="display:none;">
-                    <!-- Mode toggle -->
-                    <div class="mb-3">
-                        <div class="form-check">
-                            <input type="checkbox" id="cfModeToggle" class="form-check-input">
-                            <label class="form-check-label" for="cfModeToggle">Manually choose sections</label>
-                        </div>
-                    </div>
-
-                    <!-- Section checklist (hidden by default) -->
-                    <div class="mb-3" id="cfSectionSelectWrapper" style="display:none;">
-                        <label class="form-label">Sections to search</label>
-                        <div id="cfSectionChecklist" class="border rounded p-2" style="max-height: 200px; overflow-y: auto;">
-                        </div>
-                    </div>
-
                     <!-- Run button -->
                     <div class="d-flex align-items-center gap-2">
                         <button id="cfRunBtn" class="btn btn-success" disabled>
@@ -208,6 +193,22 @@
                     </div>
                 </div>
                 <div id="cfProgressContainer" class="mt-2"></div>
+            </div>
+
+            <!-- Plan review overlay (shown when the planning LLM call completes) -->
+            <div class="confirm-overlay" id="cfPlanOverlay" style="display: none;">
+                <div class="confirm-modal" style="max-width: 640px;">
+                    <h5 class="mb-3">Review search plan</h5>
+                    <div id="cfPlanBody" class="mb-3" style="max-height: 40vh; overflow-y: auto; white-space: pre-wrap; font-size: 0.9rem;"></div>
+                    <div class="mb-3">
+                        <label class="form-label" for="cfPlanFeedback">Any changes? (optional)</label>
+                        <textarea class="form-control" id="cfPlanFeedback" rows="3" placeholder="E.g. 'Skip the sponsor section' or 'Focus the tech news search on open-source releases.'"></textarea>
+                    </div>
+                    <div class="d-flex justify-content-end gap-2">
+                        <button type="button" class="btn btn-secondary" id="cfPlanCancelBtn">Cancel</button>
+                        <button type="button" class="btn btn-primary" id="cfPlanConfirmBtn">Confirm and search</button>
+                    </div>
+                </div>
             </div>
 
             <!-- Results area -->
@@ -933,7 +934,6 @@
     // =========================================================================
     // Content Finder
     // =========================================================================
-    let cfSections = [];
     let cfPollTimer = null;
 
     // Load processed posts into dropdown
@@ -961,106 +961,132 @@
         const runBtn = document.getElementById('cfRunBtn');
         const postOptions = document.getElementById('cfPostOptions');
 
-        cfSections = [];
-        document.getElementById('cfSectionChecklist').innerHTML = '';
         runBtn.disabled = !postId;
         postOptions.style.display = postId ? 'block' : 'none';
 
         // Hide results from previous run
         document.getElementById('cfResults').style.display = 'none';
         document.getElementById('cfResultsAccordion').innerHTML = '';
-
-        if (!postId) return;
-
-        try {
-            const resp = await fetch(`/insights/content-finder/sections/?post_id=${encodeURIComponent(postId)}`);
-            const data = await resp.json();
-            if (data.success) {
-                cfSections = data.sections;
-                renderSectionChecklist();
-            }
-        } catch (err) {
-            console.error('Error loading sections:', err);
-        }
     });
 
-    function renderSectionChecklist() {
-        const container = document.getElementById('cfSectionChecklist');
-        container.innerHTML = '';
+    // Two-stage polling: stop on awaiting_feedback, show plan modal; resume after confirm.
+    function startContentFinderPolling(taskId) {
+        if (cfPollTimer) clearInterval(cfPollTimer);
+        cfPollTimer = setInterval(async () => {
+            try {
+                const resp = await fetch(`/insights/content-finder/status/${taskId}/`);
+                const data = await resp.json();
 
-        // Select/Deselect All toggle
-        const allDiv = document.createElement('div');
-        allDiv.className = 'form-check mb-1 pb-1 border-bottom';
-        allDiv.innerHTML = `
-            <input class="form-check-input" type="checkbox" id="cfSecAll" checked>
-            <label class="form-check-label fw-bold" for="cfSecAll">Select all</label>
-        `;
-        container.appendChild(allDiv);
+                if (data.credits_used !== undefined) {
+                    updateCreditsDisplay(data.credits_used, data.credits_quota);
+                }
 
-        cfSections.forEach((name, i) => {
-            const div = document.createElement('div');
-            div.className = 'form-check';
-            div.innerHTML = `
-                <input class="form-check-input cf-section-cb" type="checkbox" value="${name}" id="cfSec_${i}" checked>
-                <label class="form-check-label" for="cfSec_${i}">${name}</label>
-            `;
-            container.appendChild(div);
-        });
-
-        // Toggle all when "Select all" is clicked
-        document.getElementById('cfSecAll').addEventListener('change', function() {
-            container.querySelectorAll('.cf-section-cb').forEach(cb => cb.checked = this.checked);
-        });
-
-        // Update "Select all" state when individual checkboxes change
-        container.addEventListener('change', function(e) {
-            if (e.target.classList.contains('cf-section-cb')) {
-                const allCbs = container.querySelectorAll('.cf-section-cb');
-                document.getElementById('cfSecAll').checked = [...allCbs].every(cb => cb.checked);
+                if (data.status === 'awaiting_feedback') {
+                    clearInterval(cfPollTimer);
+                    cfPollTimer = null;
+                    ProgressBar.complete({ containerId: 'cfProgressContainer', success: true, message: 'Plan ready' });
+                    showPlanOverlay(taskId, data.plan_text || '');
+                } else if (data.status === 'complete') {
+                    clearInterval(cfPollTimer);
+                    cfPollTimer = null;
+                    ProgressBar.complete({ containerId: 'cfProgressContainer', success: true, message: 'Done!' });
+                    document.getElementById('cfRunBtn').disabled = false;
+                    renderContentFinderResults(data.result_data || {});
+                    if (typeof DevPanel !== 'undefined' && data.dev_panel) {
+                        DevPanel.show(data.dev_panel, 'Content Finder');
+                    }
+                    {% if not has_used_write_post_poll %}
+                    var contentFoundOverlay = document.getElementById('contentFoundOverlay');
+                    if (contentFoundOverlay) contentFoundOverlay.style.display = 'flex';
+                    var nextBtn = document.getElementById('nextFeatureContainer');
+                    if (nextBtn) nextBtn.style.display = '';
+                    {% endif %}
+                } else if (data.status === 'error') {
+                    clearInterval(cfPollTimer);
+                    cfPollTimer = null;
+                    ProgressBar.complete({ containerId: 'cfProgressContainer', success: false, message: 'Error' });
+                    document.getElementById('cfRunBtn').disabled = false;
+                    showToast(GENERIC_ERROR_TOAST, 'danger');
+                }
+            } catch (err) {
+                console.error('Content finder polling error:', err);
             }
-        });
+        }, 3000);
     }
 
-    // Mode toggle
-    document.getElementById('cfModeToggle').addEventListener('change', function() {
-        const wrapper = document.getElementById('cfSectionSelectWrapper');
-        wrapper.style.display = this.checked ? 'block' : 'none';
-        if (this.checked && cfSections.length > 0) {
-            renderSectionChecklist();
+    function showPlanOverlay(taskId, planText) {
+        const overlay = document.getElementById('cfPlanOverlay');
+        const body = document.getElementById('cfPlanBody');
+        const feedback = document.getElementById('cfPlanFeedback');
+        const confirmBtn = document.getElementById('cfPlanConfirmBtn');
+        const cancelBtn = document.getElementById('cfPlanCancelBtn');
+
+        if (typeof marked !== 'undefined' && marked.parse) {
+            body.innerHTML = marked.parse(planText);
+            body.style.whiteSpace = 'normal';
+        } else {
+            body.textContent = planText;
         }
-    });
+        feedback.value = '';
+
+        overlay.style.display = 'flex';
+
+        const onConfirm = async () => {
+            confirmBtn.disabled = true;
+            cancelBtn.disabled = true;
+            try {
+                const data = await postJSON(`/insights/content-finder/confirm-plan/${taskId}/`, {
+                    feedback: feedback.value || '',
+                });
+                if (!data.success) {
+                    showToast(data.error || GENERIC_ERROR_TOAST, 'danger');
+                    confirmBtn.disabled = false;
+                    cancelBtn.disabled = false;
+                    return;
+                }
+                overlay.style.display = 'none';
+                ProgressBar.start({
+                    containerId: 'cfProgressContainer',
+                    expectedDuration: {{ progress_durations.content_search_run }},
+                    subtext: 'Searching...',
+                });
+                startContentFinderPolling(taskId);
+            } catch (err) {
+                console.error('Error confirming plan:', err);
+                showToast(GENERIC_ERROR_TOAST, 'danger');
+                confirmBtn.disabled = false;
+                cancelBtn.disabled = false;
+            } finally {
+                confirmBtn.removeEventListener('click', onConfirm);
+                cancelBtn.removeEventListener('click', onCancel);
+            }
+        };
+
+        const onCancel = () => {
+            overlay.style.display = 'none';
+            document.getElementById('cfRunBtn').disabled = false;
+            confirmBtn.removeEventListener('click', onConfirm);
+            cancelBtn.removeEventListener('click', onCancel);
+        };
+
+        confirmBtn.addEventListener('click', onConfirm);
+        cancelBtn.addEventListener('click', onCancel);
+    }
 
     // Run button
     document.getElementById('cfRunBtn').addEventListener('click', async function() {
         const postId = document.getElementById('cfPostSelect').value;
         if (!postId) return;
 
-        const manualMode = document.getElementById('cfModeToggle').checked;
-        let selectedSections = [];
-
-        if (manualMode) {
-            document.querySelectorAll('.cf-section-cb:checked').forEach(cb => {
-                selectedSections.push(cb.value);
-            });
-            if (selectedSections.length === 0) {
-                showToast('Please select at least one section.', 'warning');
-                return;
-            }
-        }
-
-        // Disable UI
         const runBtn = this;
         runBtn.disabled = true;
 
-        // Hide previous results
         document.getElementById('cfResults').style.display = 'none';
         document.getElementById('cfResultsAccordion').innerHTML = '';
 
         try {
             const data = await postJSON('/insights/content-finder/run/', {
                 post_id: postId,
-                mode: manualMode ? 'manual' : 'auto',
-                selected_sections: selectedSections,
             });
 
             if (!data.success) {
@@ -1069,29 +1095,12 @@
                 return;
             }
 
-            // Start progress bar and polling
             ProgressBar.start({
                 containerId: 'cfProgressContainer',
-                expectedDuration: {{ progress_durations.content_search }},
-                subtext: 'Searching for content...',
+                expectedDuration: {{ progress_durations.content_search_plan }},
+                subtext: 'Building search plan...',
             });
-            if (cfPollTimer) clearInterval(cfPollTimer);
-            cfPollTimer = pollTask('/insights/content-finder/status/', data.task_id, {
-                progressContainerId: 'cfProgressContainer',
-                runBtnId: 'cfRunBtn',
-                devPanelName: 'Content Finder',
-                onComplete: (data) => {
-                    renderContentFinderResults(data.result_data || {});
-                    {% if not has_used_write_post_poll %}
-                    // Show "Content Found" coach mark
-                    var contentFoundOverlay = document.getElementById('contentFoundOverlay');
-                    if (contentFoundOverlay) contentFoundOverlay.style.display = 'flex';
-                    // Show "Next feature" button
-                    var nextBtn = document.getElementById('nextFeatureContainer');
-                    if (nextBtn) nextBtn.style.display = '';
-                    {% endif %}
-                },
-            });
+            startContentFinderPolling(data.task_id);
         } catch (err) {
             console.error('Error starting content finder:', err);
             showToast(GENERIC_ERROR_TOAST, 'danger');
