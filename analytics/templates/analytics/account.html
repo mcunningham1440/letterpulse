@@ -9,6 +9,9 @@
         max-width: 350px;
         text-align: left;
     }
+    .extract-tooltip {
+        z-index: 10004;
+    }
 </style>
 {% endblock %}
 
@@ -90,7 +93,7 @@
                             </button>
                         </div>
                         <div class="form-text">
-                            {% if not usage.beehiiv_token %}
+                            {% if not usage.beehiiv_token and request.GET.setup != 'configure' %}
                             Create an API key in your Beehiiv dashboard by navigating to <b>Settings</b> in the lower left of the screen, clicking <b>API</b> under Workspace Settings, and clicking <b>Create New API Key</b>.
                             <br>
                             {% endif %}
@@ -99,7 +102,7 @@
                                   data-bs-placement="bottom"
                                   data-bs-html="true"
                                   data-bs-custom-class="extract-tooltip"
-                                  title="<b>We take your privacy and security seriously.</b><br><br>Your API key is stored in an encrypted database. You can clear it from our system at any time, or deactivate it in the API page on the Beehiiv website.<br><br>We will never sell or share your data with third parties."
+                                  title="<b>We take your data's safety seriously.</b><br><br>Your API key is stored in an encrypted database. You can clear it from our system at any time, or deactivate it in the API page on the Beehiiv website.<br><br>We will never sell or share your data with third parties."
                                   style="cursor: help;">
                                 <i class="bi bi-info-circle"></i> How we ensure your privacy and security
                             </span>
@@ -207,11 +210,11 @@
         </div>
         {% endif %}
 
-        {% if usage.api_key_valid %}
-        <!-- Post Fetching Card -->
+        {% if usage.api_key_valid and is_local %}
+        <!-- Post Fetching Card (dev only) -->
         <div class="card">
             <div class="card-header">
-                <i class="bi bi-inbox me-2"></i>Post Fetching
+                <i class="bi bi-inbox me-2"></i>Post Fetching <span class="badge bg-secondary">dev</span>
             </div>
             <div class="card-body">
                 <dl class="row mb-0">
@@ -234,8 +237,7 @@
                         {% endif %}
                     </dd>
 
-                    {% if is_local %}
-                    <dt class="col-sm-5 text-muted">Most recent processed post <span class="badge bg-secondary">dev</span></dt>
+                    <dt class="col-sm-5 text-muted">Most recent processed post</dt>
                     <dd class="col-sm-7">
                         {% if most_recent_processed_post %}
                             <div>{{ most_recent_processed_post.title }}</div>
@@ -245,12 +247,11 @@
                         {% endif %}
                     </dd>
 
-                    <dt class="col-sm-5 text-muted">Total posts <span class="badge bg-secondary">dev</span></dt>
+                    <dt class="col-sm-5 text-muted">Total posts</dt>
                     <dd class="col-sm-7">{{ total_posts_count|default:"0" }}</dd>
 
-                    <dt class="col-sm-5 text-muted">Processed posts <span class="badge bg-secondary">dev</span></dt>
+                    <dt class="col-sm-5 text-muted">Processed posts</dt>
                     <dd class="col-sm-7">{{ processed_posts_count|default:"0" }}</dd>
-                    {% endif %}
                 </dl>
                 <p class="text-muted small mt-3 mb-0">
                     LetterPulse fetches new posts automatically when you open the Write page.

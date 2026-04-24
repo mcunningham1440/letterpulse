@@ -120,7 +120,7 @@ All models are in `analytics/models.py`. Key models and their relationships:
 - **Improvement Tips**: User selects any post (published or draft). Background task builds numbered prettified HTML, gathers link history, calls LLM with structured output (model returns tips referencing HTML line numbers), then inserts inline anchor `<span>`s into the live DOM (via BeautifulSoup) so logically-continuous paragraphs stay grouped even when split across many prettified lines by inline tags like `<a>`. Generates two-column annotated HTML with tip cards and SVG connectors. Downloaded as file
 
 ### 2. Account Page (`/account/`)
-- Single grid of cards: **Beehiiv API Credentials**, **AI Credits Usage**, **Account Information**, and **Post Fetching** (last-fetch datetime, most-recent-published post, and — dev only — most-recent-processed post plus total/processed post counts).
+- Single grid of cards: **Beehiiv API Credentials**, **AI Credits Usage**, **Account Information**, and (dev only) **Post Fetching** (last-fetch datetime, most-recent-published post, most-recent-processed post, and total/processed post counts). The Post Fetching card is hidden entirely in cloud/prod — it's a dev-only diagnostic.
 - No manual "Refresh Posts" or "Process Posts" controls exist anywhere; fetching and processing are fully automatic via the Learning/Update flows.
 
 **User Scoping**: Posts, Sections, and LinkData are all scoped to both publication AND user.
