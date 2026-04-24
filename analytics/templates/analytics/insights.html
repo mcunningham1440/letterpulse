@@ -16,6 +16,73 @@
         animation: coach-mark-pulse 1.2s ease-in-out infinite;
         border-radius: 0.375rem;
     }
+
+    /* Custom post picker — native <select> can't style individual options */
+    .fancy-select { position: relative; }
+    .fancy-select > select { display: none; }
+    .fancy-select-btn {
+        text-align: left;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.5rem;
+        width: 100%;
+    }
+    .fancy-select-btn .fancy-select-label {
+        flex: 1 1 auto;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+    .fancy-select-btn.is-placeholder .fancy-select-label { color: #6c757d; }
+    .fancy-select-menu {
+        position: absolute;
+        top: calc(100% + 4px);
+        left: 0;
+        right: 0;
+        z-index: 1050;
+        background: #fff;
+        border: 1px solid #dee2e6;
+        border-radius: 0.375rem;
+        box-shadow: 0 0.5rem 1rem rgba(0, 0, 0, 0.12);
+        overflow: hidden;
+    }
+    .fancy-select-menu[hidden] { display: none; }
+    .fancy-select-menu-scroll {
+        max-height: 320px;
+        overflow-y: auto;
+        overscroll-behavior: contain;
+        padding: 0.25rem 0;
+        background: #fff;
+    }
+    .fancy-select-item {
+        display: flex;
+        align-items: baseline;
+        gap: 0.75rem;
+        padding: 0.5rem 0.75rem;
+        cursor: pointer;
+        font-size: 0.9375rem;
+    }
+    .fancy-select-item:hover,
+    .fancy-select-item.is-active { background-color: rgba(40, 167, 69, 0.08); }
+    .fancy-select-item-title {
+        flex: 1 1 auto;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        color: #212529;
+    }
+    .fancy-select-item-meta {
+        flex: 0 0 auto;
+        color: #868e96;
+        font-size: 0.8125rem;
+        font-variant-numeric: tabular-nums;
+    }
+    .fancy-select-empty {
+        padding: 0.5rem 0.75rem;
+        color: #6c757d;
+        font-size: 0.875rem;
+    }
 </style>
 {% endblock %}
 
@@ -82,13 +149,13 @@
     </div>
 </div>
 
-<!-- Coach mark 2: Run Content Search (shown after post selected) -->
+<!-- Coach mark 2: Start Content Search (shown after post selected) -->
 <div class="confirm-overlay" id="runSearchOverlay" style="display: none;">
     <div class="confirm-modal">
-        <h5 class="mb-3">Run Content Search</h5>
+        <h5 class="mb-3">Start Content Search</h5>
         <p>Let's find stories to write about for your new issue.</p>
         <p>LetterPulse can automatically detect which sections in your newsletter need new content, or you can select them yourself. For now, we'll detect them automatically.</p>
-        <p class="mb-4"><b>Close this window and click <i class="bi bi-search"></i> Run Content Search</b></p>
+        <p class="mb-4"><b>Close this window and click <i class="bi bi-search"></i> Start Content Search</b></p>
         <div class="d-flex justify-content-end">
             <button type="button" class="btn btn-primary" id="closeSearchCoachBtn">Close</button>
         </div>
@@ -184,30 +251,31 @@
 
                 <!-- Options shown after post is selected -->
                 <div id="cfPostOptions" style="display:none;">
-                    <!-- Mode toggle -->
-                    <div class="mb-3">
-                        <div class="form-check">
-                            <input type="checkbox" id="cfModeToggle" class="form-check-input">
-                            <label class="form-check-label" for="cfModeToggle">Manually choose sections</label>
-                        </div>
-                    </div>
-
-                    <!-- Section checklist (hidden by default) -->
-                    <div class="mb-3" id="cfSectionSelectWrapper" style="display:none;">
-                        <label class="form-label">Sections to search</label>
-                        <div id="cfSectionChecklist" class="border rounded p-2" style="max-height: 200px; overflow-y: auto;">
-                        </div>
-                    </div>
-
                     <!-- Run button -->
                     <div class="d-flex align-items-center gap-2">
                         <button id="cfRunBtn" class="btn btn-success" disabled>
-                            <i class="bi bi-search"></i> Run Content Search
+                            <i class="bi bi-search"></i> Start Content Search
                         </button>
                         <small class="text-muted">Uses <strong>{{ credits_per_search }}</strong> credit</small>
                     </div>
                 </div>
                 <div id="cfProgressContainer" class="mt-2"></div>
+            </div>
+
+            <!-- Plan review overlay (shown when the planning LLM call completes) -->
+            <div class="confirm-overlay" id="cfPlanOverlay" style="display: none;">
+                <div class="confirm-modal" style="max-width: 640px;">
+                    <h5 class="mb-3">Review search plan</h5>
+                    <div id="cfPlanBody" class="mb-3" style="max-height: 40vh; overflow-y: auto; white-space: pre-wrap; font-size: 0.9rem;"></div>
+                    <div class="mb-3">
+                        <label class="form-label" for="cfPlanFeedback">Any changes? (optional)</label>
+                        <textarea class="form-control" id="cfPlanFeedback" rows="3" placeholder='E.g. "Skip the essay section" or "Focus the tech news search on open-source releases."'></textarea>
+                    </div>
+                    <div class="d-flex justify-content-end gap-2">
+                        <button type="button" class="btn btn-secondary" id="cfPlanCancelBtn">Cancel</button>
+                        <button type="button" class="btn btn-primary" id="cfPlanConfirmBtn">Confirm and search</button>
+                    </div>
+                </div>
             </div>
 
             <!-- Results area -->
@@ -360,6 +428,134 @@
 
 {% block extra_js %}
 <script>
+    // =========================================================================
+    // FancySelect — custom dropdown that wraps a native <select>, rendering
+    // each option as "{title} ........ {relative date}" with a muted date.
+    // Backed by the real <select> so existing .value / change listeners work.
+    // =========================================================================
+    function formatRelativeDate(isoDate) {
+        if (!isoDate) return '';
+        const then = new Date(isoDate + 'T00:00:00');
+        if (isNaN(then.getTime())) return '';
+        const now = new Date();
+        const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        const days = Math.round((today - then) / 86400000);
+        if (days < 0) return 'Scheduled';
+        if (days === 0) return 'Today';
+        if (days === 1) return 'Yesterday';
+        if (days < 7) return `${days}d ago`;
+        if (days < 30) return `${Math.round(days / 7)}w ago`;
+        if (days < 365) return `${Math.round(days / 30)}mo ago`;
+        return `${Math.round(days / 365)}y ago`;
+    }
+
+    function mountFancySelect(selectEl) {
+        if (!selectEl || selectEl.dataset.fancyMounted) return;
+        selectEl.dataset.fancyMounted = '1';
+
+        const wrap = document.createElement('div');
+        wrap.className = 'fancy-select';
+        selectEl.parentNode.insertBefore(wrap, selectEl);
+        wrap.appendChild(selectEl);
+
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'form-select fancy-select-btn';
+        btn.setAttribute('aria-haspopup', 'listbox');
+        btn.setAttribute('aria-expanded', 'false');
+        const label = document.createElement('span');
+        label.className = 'fancy-select-label';
+        btn.appendChild(label);
+        wrap.appendChild(btn);
+
+        const menu = document.createElement('div');
+        menu.className = 'fancy-select-menu';
+        menu.hidden = true;
+        const scroll = document.createElement('div');
+        scroll.className = 'fancy-select-menu-scroll';
+        scroll.setAttribute('role', 'listbox');
+        menu.appendChild(scroll);
+        wrap.appendChild(menu);
+
+        function syncLabel() {
+            const opt = selectEl.selectedOptions[0];
+            if (!opt || !opt.value) {
+                label.textContent = selectEl.options[0] ? selectEl.options[0].textContent : '';
+                btn.classList.add('is-placeholder');
+            } else {
+                label.textContent = opt.textContent;
+                btn.classList.remove('is-placeholder');
+            }
+        }
+
+        function rebuildMenu() {
+            scroll.innerHTML = '';
+            const realOptions = Array.from(selectEl.options).filter(o => o.value);
+            if (realOptions.length === 0) {
+                const empty = document.createElement('div');
+                empty.className = 'fancy-select-empty';
+                empty.textContent = 'No posts available';
+                scroll.appendChild(empty);
+                return;
+            }
+            realOptions.forEach(opt => {
+                const item = document.createElement('div');
+                item.className = 'fancy-select-item';
+                item.setAttribute('role', 'option');
+                item.dataset.value = opt.value;
+                if (opt.value === selectEl.value) item.classList.add('is-active');
+
+                const title = document.createElement('span');
+                title.className = 'fancy-select-item-title';
+                title.textContent = opt.textContent;
+                item.appendChild(title);
+
+                const iso = opt.dataset.date;
+                if (iso) {
+                    const meta = document.createElement('span');
+                    meta.className = 'fancy-select-item-meta';
+                    meta.textContent = formatRelativeDate(iso);
+                    meta.title = new Date(iso + 'T00:00:00').toLocaleDateString('en-US',
+                        { year: 'numeric', month: 'short', day: 'numeric' });
+                    item.appendChild(meta);
+                }
+
+                item.addEventListener('click', () => {
+                    selectEl.value = opt.value;
+                    selectEl.dispatchEvent(new Event('change', { bubbles: true }));
+                    close();
+                });
+                scroll.appendChild(item);
+            });
+        }
+
+        function open() {
+            rebuildMenu();
+            menu.hidden = false;
+            btn.setAttribute('aria-expanded', 'true');
+            document.addEventListener('mousedown', onDocDown, true);
+            document.addEventListener('keydown', onKeyDown);
+        }
+        function close() {
+            menu.hidden = true;
+            btn.setAttribute('aria-expanded', 'false');
+            document.removeEventListener('mousedown', onDocDown, true);
+            document.removeEventListener('keydown', onKeyDown);
+        }
+        function toggle() { menu.hidden ? open() : close(); }
+        function onDocDown(e) { if (!wrap.contains(e.target)) close(); }
+        function onKeyDown(e) { if (e.key === 'Escape') close(); }
+
+        btn.addEventListener('click', toggle);
+
+        // Re-render when the underlying <select> changes (programmatic repopulation)
+        const mo = new MutationObserver(() => { syncLabel(); if (!menu.hidden) rebuildMenu(); });
+        mo.observe(selectEl, { childList: true, subtree: true, attributes: true, attributeFilter: ['value'] });
+        selectEl.addEventListener('change', syncLabel);
+
+        syncLabel();
+    }
+
     // =========================================================================
     // Learning / Updating flow
     // =========================================================================
@@ -599,8 +795,9 @@
     document.getElementById('selectTemplateBtn').addEventListener('click', function() {
         document.getElementById('getContentOverlay').style.display = 'none';
         var select = document.getElementById('cfPostSelect');
-        select.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        select.focus();
+        var focusTarget = select.parentElement.querySelector('.fancy-select-btn') || select;
+        focusTarget.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        focusTarget.focus();
     });
 
     // Show coach mark 2 after user selects a template post (one-time)
@@ -933,20 +1130,21 @@
     // =========================================================================
     // Content Finder
     // =========================================================================
-    let cfSections = [];
     let cfPollTimer = null;
 
     // Load processed posts into dropdown
     (async function loadContentFinderPosts() {
+        const select = document.getElementById('cfPostSelect');
+        mountFancySelect(select);
         try {
             const resp = await fetch('/insights/content-finder/posts/');
             const data = await resp.json();
             if (data.success && data.posts.length > 0) {
-                const select = document.getElementById('cfPostSelect');
                 data.posts.forEach(p => {
                     const opt = document.createElement('option');
                     opt.value = p.post_id;
-                    opt.textContent = `${p.title} (${p.publish_date})`;
+                    opt.textContent = p.title;
+                    if (p.publish_date_iso) opt.dataset.date = p.publish_date_iso;
                     select.appendChild(opt);
                 });
             }
@@ -961,106 +1159,132 @@
         const runBtn = document.getElementById('cfRunBtn');
         const postOptions = document.getElementById('cfPostOptions');
 
-        cfSections = [];
-        document.getElementById('cfSectionChecklist').innerHTML = '';
         runBtn.disabled = !postId;
         postOptions.style.display = postId ? 'block' : 'none';
 
         // Hide results from previous run
         document.getElementById('cfResults').style.display = 'none';
         document.getElementById('cfResultsAccordion').innerHTML = '';
-
-        if (!postId) return;
-
-        try {
-            const resp = await fetch(`/insights/content-finder/sections/?post_id=${encodeURIComponent(postId)}`);
-            const data = await resp.json();
-            if (data.success) {
-                cfSections = data.sections;
-                renderSectionChecklist();
-            }
-        } catch (err) {
-            console.error('Error loading sections:', err);
-        }
     });
 
-    function renderSectionChecklist() {
-        const container = document.getElementById('cfSectionChecklist');
-        container.innerHTML = '';
+    // Two-stage polling: stop on awaiting_feedback, show plan modal; resume after confirm.
+    function startContentFinderPolling(taskId) {
+        if (cfPollTimer) clearInterval(cfPollTimer);
+        cfPollTimer = setInterval(async () => {
+            try {
+                const resp = await fetch(`/insights/content-finder/status/${taskId}/`);
+                const data = await resp.json();
 
-        // Select/Deselect All toggle
-        const allDiv = document.createElement('div');
-        allDiv.className = 'form-check mb-1 pb-1 border-bottom';
-        allDiv.innerHTML = `
-            <input class="form-check-input" type="checkbox" id="cfSecAll" checked>
-            <label class="form-check-label fw-bold" for="cfSecAll">Select all</label>
-        `;
-        container.appendChild(allDiv);
+                if (data.credits_used !== undefined) {
+                    updateCreditsDisplay(data.credits_used, data.credits_quota);
+                }
 
-        cfSections.forEach((name, i) => {
-            const div = document.createElement('div');
-            div.className = 'form-check';
-            div.innerHTML = `
-                <input class="form-check-input cf-section-cb" type="checkbox" value="${name}" id="cfSec_${i}" checked>
-                <label class="form-check-label" for="cfSec_${i}">${name}</label>
-            `;
-            container.appendChild(div);
-        });
-
-        // Toggle all when "Select all" is clicked
-        document.getElementById('cfSecAll').addEventListener('change', function() {
-            container.querySelectorAll('.cf-section-cb').forEach(cb => cb.checked = this.checked);
-        });
-
-        // Update "Select all" state when individual checkboxes change
-        container.addEventListener('change', function(e) {
-            if (e.target.classList.contains('cf-section-cb')) {
-                const allCbs = container.querySelectorAll('.cf-section-cb');
-                document.getElementById('cfSecAll').checked = [...allCbs].every(cb => cb.checked);
+                if (data.status === 'awaiting_feedback') {
+                    clearInterval(cfPollTimer);
+                    cfPollTimer = null;
+                    ProgressBar.complete({ containerId: 'cfProgressContainer', success: true, message: 'Plan ready' });
+                    showPlanOverlay(taskId, data.plan_text || '');
+                } else if (data.status === 'complete') {
+                    clearInterval(cfPollTimer);
+                    cfPollTimer = null;
+                    ProgressBar.complete({ containerId: 'cfProgressContainer', success: true, message: 'Done!' });
+                    document.getElementById('cfRunBtn').disabled = false;
+                    renderContentFinderResults(data.result_data || {});
+                    if (typeof DevPanel !== 'undefined' && data.dev_panel) {
+                        DevPanel.show(data.dev_panel, 'Content Finder');
+                    }
+                    {% if not has_used_write_post_poll %}
+                    var contentFoundOverlay = document.getElementById('contentFoundOverlay');
+                    if (contentFoundOverlay) contentFoundOverlay.style.display = 'flex';
+                    var nextBtn = document.getElementById('nextFeatureContainer');
+                    if (nextBtn) nextBtn.style.display = '';
+                    {% endif %}
+                } else if (data.status === 'error') {
+                    clearInterval(cfPollTimer);
+                    cfPollTimer = null;
+                    ProgressBar.complete({ containerId: 'cfProgressContainer', success: false, message: 'Error' });
+                    document.getElementById('cfRunBtn').disabled = false;
+                    showToast(GENERIC_ERROR_TOAST, 'danger');
+                }
+            } catch (err) {
+                console.error('Content finder polling error:', err);
             }
-        });
+        }, 3000);
     }
 
-    // Mode toggle
-    document.getElementById('cfModeToggle').addEventListener('change', function() {
-        const wrapper = document.getElementById('cfSectionSelectWrapper');
-        wrapper.style.display = this.checked ? 'block' : 'none';
-        if (this.checked && cfSections.length > 0) {
-            renderSectionChecklist();
+    function showPlanOverlay(taskId, planText) {
+        const overlay = document.getElementById('cfPlanOverlay');
+        const body = document.getElementById('cfPlanBody');
+        const feedback = document.getElementById('cfPlanFeedback');
+        const confirmBtn = document.getElementById('cfPlanConfirmBtn');
+        const cancelBtn = document.getElementById('cfPlanCancelBtn');
+
+        if (typeof marked !== 'undefined' && marked.parse) {
+            body.innerHTML = marked.parse(planText);
+            body.style.whiteSpace = 'normal';
+        } else {
+            body.textContent = planText;
         }
-    });
+        feedback.value = '';
+
+        overlay.style.display = 'flex';
+
+        const onConfirm = async () => {
+            confirmBtn.disabled = true;
+            cancelBtn.disabled = true;
+            try {
+                const data = await postJSON(`/insights/content-finder/confirm-plan/${taskId}/`, {
+                    feedback: feedback.value || '',
+                });
+                if (!data.success) {
+                    showToast(data.error || GENERIC_ERROR_TOAST, 'danger');
+                    confirmBtn.disabled = false;
+                    cancelBtn.disabled = false;
+                    return;
+                }
+                overlay.style.display = 'none';
+                ProgressBar.start({
+                    containerId: 'cfProgressContainer',
+                    expectedDuration: {{ progress_durations.content_search_run }},
+                    subtext: 'Searching...',
+                });
+                startContentFinderPolling(taskId);
+            } catch (err) {
+                console.error('Error confirming plan:', err);
+                showToast(GENERIC_ERROR_TOAST, 'danger');
+                confirmBtn.disabled = false;
+                cancelBtn.disabled = false;
+            } finally {
+                confirmBtn.removeEventListener('click', onConfirm);
+                cancelBtn.removeEventListener('click', onCancel);
+            }
+        };
+
+        const onCancel = () => {
+            overlay.style.display = 'none';
+            document.getElementById('cfRunBtn').disabled = false;
+            confirmBtn.removeEventListener('click', onConfirm);
+            cancelBtn.removeEventListener('click', onCancel);
+        };
+
+        confirmBtn.addEventListener('click', onConfirm);
+        cancelBtn.addEventListener('click', onCancel);
+    }
 
     // Run button
     document.getElementById('cfRunBtn').addEventListener('click', async function() {
         const postId = document.getElementById('cfPostSelect').value;
         if (!postId) return;
 
-        const manualMode = document.getElementById('cfModeToggle').checked;
-        let selectedSections = [];
-
-        if (manualMode) {
-            document.querySelectorAll('.cf-section-cb:checked').forEach(cb => {
-                selectedSections.push(cb.value);
-            });
-            if (selectedSections.length === 0) {
-                showToast('Please select at least one section.', 'warning');
-                return;
-            }
-        }
-
-        // Disable UI
         const runBtn = this;
         runBtn.disabled = true;
 
-        // Hide previous results
         document.getElementById('cfResults').style.display = 'none';
         document.getElementById('cfResultsAccordion').innerHTML = '';
 
         try {
             const data = await postJSON('/insights/content-finder/run/', {
                 post_id: postId,
-                mode: manualMode ? 'manual' : 'auto',
-                selected_sections: selectedSections,
             });
 
             if (!data.success) {
@@ -1069,29 +1293,12 @@
                 return;
             }
 
-            // Start progress bar and polling
             ProgressBar.start({
                 containerId: 'cfProgressContainer',
-                expectedDuration: {{ progress_durations.content_search }},
-                subtext: 'Searching for content...',
+                expectedDuration: {{ progress_durations.content_search_plan }},
+                subtext: 'Building search plan...',
             });
-            if (cfPollTimer) clearInterval(cfPollTimer);
-            cfPollTimer = pollTask('/insights/content-finder/status/', data.task_id, {
-                progressContainerId: 'cfProgressContainer',
-                runBtnId: 'cfRunBtn',
-                devPanelName: 'Content Finder',
-                onComplete: (data) => {
-                    renderContentFinderResults(data.result_data || {});
-                    {% if not has_used_write_post_poll %}
-                    // Show "Content Found" coach mark
-                    var contentFoundOverlay = document.getElementById('contentFoundOverlay');
-                    if (contentFoundOverlay) contentFoundOverlay.style.display = 'flex';
-                    // Show "Next feature" button
-                    var nextBtn = document.getElementById('nextFeatureContainer');
-                    if (nextBtn) nextBtn.style.display = '';
-                    {% endif %}
-                },
-            });
+            startContentFinderPolling(data.task_id);
         } catch (err) {
             console.error('Error starting content finder:', err);
             showToast(GENERIC_ERROR_TOAST, 'danger');
@@ -1103,15 +1310,18 @@
         const accordion = document.getElementById('cfResultsAccordion');
         accordion.innerHTML = '';
 
-        const sectionNames = Object.keys(resultData);
-        if (sectionNames.length === 0) {
+        // Backend emits an ordered list of {section, links} so dispatch order
+        // is preserved (JSONB would have dropped dict key order).
+        const sections = Array.isArray(resultData) ? resultData : [];
+        if (sections.length === 0) {
             accordion.innerHTML = '<p class="text-muted">No content recommendations were generated. All sections were either dismissed or had no historical link data.</p>';
             document.getElementById('cfResults').style.display = 'block';
             return;
         }
 
-        sectionNames.forEach((sectionName, idx) => {
-            const links = resultData[sectionName];
+        sections.forEach((entry, idx) => {
+            const sectionName = entry.section;
+            const links = entry.links || [];
             const collapseId = `cfCollapse_${idx}`;
             const headerId = `cfHeader_${idx}`;
             const isFirst = idx === 0;
@@ -1227,7 +1437,8 @@
             const opt = document.createElement('option');
             opt.value = p.post_id;
             const statusIcon = p.status === 'Draft' ? '🟡 ' : p.status === 'Scheduled' ? '🔵 ' : '🟢 ';
-            opt.textContent = `${statusIcon}${p.title} (${p.date})`;
+            opt.textContent = `${statusIcon}${p.title}`;
+            if (p.date_iso) opt.dataset.date = p.date_iso;
             select.appendChild(opt);
         });
         // Reset selection state
@@ -1237,6 +1448,7 @@
 
     // Load all posts into dropdown
     (async function loadImprovementTipsPosts() {
+        mountFancySelect(document.getElementById('itPostSelect'));
         try {
             const resp = await fetch('/insights/improvement-tips/posts/');
             const data = await resp.json();

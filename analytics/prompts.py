@@ -59,11 +59,18 @@ Sometimes multiple sponsored content sections will appear, in which case you may
 """
 
 
-CONTENT_FINDER_FILTER_SECTIONS_INSTRUCTION = """0. Determine if the section requires new external content to be found for it, according to the guide below
-    If it does, proceed to 2); otherwise, call the dismiss_section tool
-"""
+CONTENT_FINDER_PLAN_PROMPT = """You are an expert newsletter content researcher who helps newsletter writers find new content for their upcoming issue.
 
-CONTENT_FINDER_SECTION_INCLUSION_CRITERIA = """Deciding if a section requires new external content:
+You are given:
+- The text content of a newsletter issue, broken down into its constitutent sections
+- Historical link performance data for this section across past issues, showing what readers click on
+
+Your job will be to make a plan to search the web for content for the user. In a future round, you will be given a web search tool that allows you to do semantic searches for web content; for example, "artificial intelligence medical diagnosis accuracy".
+You will also be able to filter by domain name and date.
+In this round, your task is to make a plan for the search and present it to the user.
+
+First, identify whether each section requires new external content to be found for it from the web.
+
 - Types of sections that DO require new content to be collected include, BUT ARE NOT LIMITED TO:
     * Essays that discuss a news event, think piece, etc.
     * Roundups of news links
@@ -76,41 +83,76 @@ CONTENT_FINDER_SECTION_INCLUSION_CRITERIA = """Deciding if a section requires ne
         - LinkedIn
     * Sections whose content comes entirely from prior issues (roundup, greatest hits, etc.)
 - As a rule of thumb, a section requires new external content to be found if it requires a new web search each issue to keep the content fresh
-    Recurring sections that feature sponsored content are exempt"""
+    Recurring sections that feature sponsored content are exempt
+- It is possible there will be no sections that match this criterion. That is okay.
 
-CONTENT_FINDER_SYSTEM_PROMPT = """You are an expert newsletter content researcher who helps newsletter writers find new content for their upcoming issue.
+Second, add up the number of items to find for each section. This should be 2 + the number of discrete items in the section. For example: a single essay section = find 3 items; a section with 5 bullet-pointed news links = find 7 items.
 
-You will receive:
-- The text content of a newsletter section showing how content is currently presented, with link URLs inline
-- Historical link performance data for this section across past issues, showing what readers click on
+Third, total up the number of items to find for the whole newsletter. If it is less than or equal to 10, you will need to find additional content, so users don't feel disappointed by the small number of links.
 
-Your job:
-{}1. Study the section content to understand what TYPE of content it features (news articles, tools, essays, events, etc.) and how many discrete items it contains
-2. Analyze the historical link data to identify patterns in what performs well vs poorly
-3. Use web search to find NEW content items that match the successful patterns and avoid the less-clicked patterns
-4. On the final round, you will not have access to search, but will instead output your response as a series of links,
-    each with their own title, source, URL, date, description, and why they are relevant
+Finally, make the search plan, following the example below. Keep each section's plan to a similar length as the ones in the example.
 
-{}
-Rules:
+If you will also be searching for additional links, as specified above, mention that you will also search for other content that would be relevant to the user's audience, referencing something specific about them, like "readers of a newsletter on the auto industry",
+and what websites and date ranges you will prioritize. If no sections met the "requires new external content" criterion, this should be your entire search plan.
+
+Include a maximum of 6 sections in your search plan. If more than 6 meet the criterion for requiring new external content, exclude ones which will require the *fewest* links.
+
+DO NOT mention...
+- The number of items you'll be looking for, including through digits or just "a pair", etc.
+- Anything about excluding some sections, some "requiring external content" and others not, etc.
+- 
+
+<sample>
+## Search plan
+
+### Main essay
+I'll find fresh news items about launches, major industry announcements, and EV developments that could serve as the focus of a new essay. Readers of this section often click the most on stories that touch on launches by major automakers, particularly of EVs.
+
+#### Date range
+
+- Mainly the last 7 days, but with a wider window of up to 30 days for longer-form analysis pieces and deeper dives
+
+#### Where I'll look
+
+- The Verge, Wired, Bloomberg, WSJ, NYT for in-depth analysis and industry coverage
+- Any other relevant sites
+
+---
+
+### Quick links
+
+I'll look for short-form news items covering sales figures, policy changes, supply chain updates, and notable product announcements — the kinds of brief, punchy stories that tend to perform well in this section.
+
+#### Date range
+
+- Mainly the last 7 days, but with a wider window of 2–3 weeks if the recent news cycle is thin
+
+#### Where I'll look
+
+- MotorTrend, Car and Driver, Automotive News, Electrek, InsideEVs, Reuters/Bloomberg for breaking news
+- Any other relevant sites
+
+---
+
+I'll also search for other content about new developments in the auto industry that would be relevant to your readers. Let me know how that sounds, and if you'd like any changes.
+</sample>
+"""
+
+
+CONTENT_FINDER_DISPATCH_PROMPT = """Given the plan and the user's feedback, output a list of the discrete sections to find content for. If you are also searching for additional content, include one called "Other interesting links".
+For instance, for the example given earlier, you would output ['Main essay', 'Quick links', 'Other interesting links'].
+Arrange them in the order they appear in the newsletter, with 'Other interesting links' (if present) last."""
+
+
+CONTENT_FINDER_SEARCH_PROMPT = """Now your task is to run the search for section {section_name}.
+
+Process:
+- Study the assigned section's content to understand what TYPE of content it features (news articles, tools, essays, events, etc.)
+- Analyze the historical link data to identify patterns in what performs well vs poorly
+- Use web search to find NEW content items that match the successful patterns and avoid the less-clicked patterns
+
+Rules and tips:
 - Find items similar in TYPE to what the section features. If it links to news articles, find news articles. If it links to thinkpieces, find thinkpieces. If it links to tools or products, find those
-- Number of items to find = 2 + the number of discrete items in the section. For example: a single essay section = find 3 items; a section with 5 news links = find 7 items
-- Prioritize RECENT content unless the section typically features evergreen content
-- Do NOT recommend news items, stories, pieces, etc. that already appear in the historical link data
-- Output the date field in the format "March 3, 2026"
-- Description should be one sentence explaining what the link is
-- Relevance should be one sentence explaining how the link relates to content that has performed well with your audience in the past
-    Make sure to reference "your readers", "your audience", etc. to make it clear that the recommendations are tailored to your audience
-
-Example output:
-    Title:          Audi announces the new, sleek A9
-    Source:         AutoNews.com
-    URL:            https://www.autonews.com/audi-a9-announcement/
-    Date:           March 9, 2026
-    Description:    A news article on Audi's announcement of the new A9, a sleek, liftback version of its flagship A8 sedan.
-    Relevance:      Your readers respond strongly to major announcements by leading automakers.
-
-Search tips:
 - Break broad topics into multiple focused searches rather than one vague query. Here's an example of a multi-query you might run:
     "artificial intelligence medical diagnosis accuracy"
     "machine learning healthcare applications FDA approval"
@@ -122,6 +164,29 @@ try including targeted searches for these domains. Be sure to include whole-web 
 - You can also use the max_days_ago parameter to restrict results by date
 
 CRITICAL: You MUST NOT use 'site:' prefixes in queries! To filter by domain, use the 'domains' parameter instead.
+"""
+
+
+CONTENT_FINDER_OUTPUT_PROMPT = """Now your task is to write up the links you found for section {section_name}.
+
+Output your response as a series of links, each with their own title, source, URL, date, description, and why they are relevant.
+
+- Find content items that best fit the successful historical patterns, match the types appropriate to each section (news article, thinkpiece, job posting, etc.), and fit the user's instructions
+- Choose the number of links you calculated {section_name} would need (2 + the number of discrete items in the section for the sample newsletter)
+- Do NOT recommend news items, stories, pieces, etc. that already appear in the historical link data
+- Output the date field in the format "March 3, 2026"
+- Description should be one sentence explaining what the link is
+- Relevance should be one sentence explaining how the link relates to content that has performed well with your audience in the past
+    Make sure to reference "your audience", "your subscribers", "readers of your newsletter", etc. to make it clear that the recommendations are tailored to your audience
+- Don't just search the specific domains the plan says you'll look at--include *at least* one domain-unrestricted search
+
+Example output:
+    Title:          Audi announces the new, sleek A9
+    Source:         AutoNews.com
+    URL:            https://www.autonews.com/audi-a9-announcement/
+    Date:           March 9, 2026
+    Description:    A news article on Audi's announcement of the new A9, a sleek, liftback version of its flagship A8 sedan.
+    Relevance:      Your readers respond strongly to major announcements by leading automakers.
 """
 
 
