@@ -16,6 +16,73 @@
         animation: coach-mark-pulse 1.2s ease-in-out infinite;
         border-radius: 0.375rem;
     }
+
+    /* Custom post picker — native <select> can't style individual options */
+    .fancy-select { position: relative; }
+    .fancy-select > select { display: none; }
+    .fancy-select-btn {
+        text-align: left;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.5rem;
+        width: 100%;
+    }
+    .fancy-select-btn .fancy-select-label {
+        flex: 1 1 auto;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+    .fancy-select-btn.is-placeholder .fancy-select-label { color: #6c757d; }
+    .fancy-select-menu {
+        position: absolute;
+        top: calc(100% + 4px);
+        left: 0;
+        right: 0;
+        z-index: 1050;
+        background: #fff;
+        border: 1px solid #dee2e6;
+        border-radius: 0.375rem;
+        box-shadow: 0 0.5rem 1rem rgba(0, 0, 0, 0.12);
+        overflow: hidden;
+    }
+    .fancy-select-menu[hidden] { display: none; }
+    .fancy-select-menu-scroll {
+        max-height: 320px;
+        overflow-y: auto;
+        overscroll-behavior: contain;
+        padding: 0.25rem 0;
+        background: #fff;
+    }
+    .fancy-select-item {
+        display: flex;
+        align-items: baseline;
+        gap: 0.75rem;
+        padding: 0.5rem 0.75rem;
+        cursor: pointer;
+        font-size: 0.9375rem;
+    }
+    .fancy-select-item:hover,
+    .fancy-select-item.is-active { background-color: rgba(40, 167, 69, 0.08); }
+    .fancy-select-item-title {
+        flex: 1 1 auto;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        color: #212529;
+    }
+    .fancy-select-item-meta {
+        flex: 0 0 auto;
+        color: #868e96;
+        font-size: 0.8125rem;
+        font-variant-numeric: tabular-nums;
+    }
+    .fancy-select-empty {
+        padding: 0.5rem 0.75rem;
+        color: #6c757d;
+        font-size: 0.875rem;
+    }
 </style>
 {% endblock %}
 
@@ -362,6 +429,134 @@
 {% block extra_js %}
 <script>
     // =========================================================================
+    // FancySelect — custom dropdown that wraps a native <select>, rendering
+    // each option as "{title} ........ {relative date}" with a muted date.
+    // Backed by the real <select> so existing .value / change listeners work.
+    // =========================================================================
+    function formatRelativeDate(isoDate) {
+        if (!isoDate) return '';
+        const then = new Date(isoDate + 'T00:00:00');
+        if (isNaN(then.getTime())) return '';
+        const now = new Date();
+        const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        const days = Math.round((today - then) / 86400000);
+        if (days < 0) return 'Scheduled';
+        if (days === 0) return 'Today';
+        if (days === 1) return 'Yesterday';
+        if (days < 7) return `${days}d ago`;
+        if (days < 30) return `${Math.round(days / 7)}w ago`;
+        if (days < 365) return `${Math.round(days / 30)}mo ago`;
+        return `${Math.round(days / 365)}y ago`;
+    }
+
+    function mountFancySelect(selectEl) {
+        if (!selectEl || selectEl.dataset.fancyMounted) return;
+        selectEl.dataset.fancyMounted = '1';
+
+        const wrap = document.createElement('div');
+        wrap.className = 'fancy-select';
+        selectEl.parentNode.insertBefore(wrap, selectEl);
+        wrap.appendChild(selectEl);
+
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'form-select fancy-select-btn';
+        btn.setAttribute('aria-haspopup', 'listbox');
+        btn.setAttribute('aria-expanded', 'false');
+        const label = document.createElement('span');
+        label.className = 'fancy-select-label';
+        btn.appendChild(label);
+        wrap.appendChild(btn);
+
+        const menu = document.createElement('div');
+        menu.className = 'fancy-select-menu';
+        menu.hidden = true;
+        const scroll = document.createElement('div');
+        scroll.className = 'fancy-select-menu-scroll';
+        scroll.setAttribute('role', 'listbox');
+        menu.appendChild(scroll);
+        wrap.appendChild(menu);
+
+        function syncLabel() {
+            const opt = selectEl.selectedOptions[0];
+            if (!opt || !opt.value) {
+                label.textContent = selectEl.options[0] ? selectEl.options[0].textContent : '';
+                btn.classList.add('is-placeholder');
+            } else {
+                label.textContent = opt.textContent;
+                btn.classList.remove('is-placeholder');
+            }
+        }
+
+        function rebuildMenu() {
+            scroll.innerHTML = '';
+            const realOptions = Array.from(selectEl.options).filter(o => o.value);
+            if (realOptions.length === 0) {
+                const empty = document.createElement('div');
+                empty.className = 'fancy-select-empty';
+                empty.textContent = 'No posts available';
+                scroll.appendChild(empty);
+                return;
+            }
+            realOptions.forEach(opt => {
+                const item = document.createElement('div');
+                item.className = 'fancy-select-item';
+                item.setAttribute('role', 'option');
+                item.dataset.value = opt.value;
+                if (opt.value === selectEl.value) item.classList.add('is-active');
+
+                const title = document.createElement('span');
+                title.className = 'fancy-select-item-title';
+                title.textContent = opt.textContent;
+                item.appendChild(title);
+
+                const iso = opt.dataset.date;
+                if (iso) {
+                    const meta = document.createElement('span');
+                    meta.className = 'fancy-select-item-meta';
+                    meta.textContent = formatRelativeDate(iso);
+                    meta.title = new Date(iso + 'T00:00:00').toLocaleDateString('en-US',
+                        { year: 'numeric', month: 'short', day: 'numeric' });
+                    item.appendChild(meta);
+                }
+
+                item.addEventListener('click', () => {
+                    selectEl.value = opt.value;
+                    selectEl.dispatchEvent(new Event('change', { bubbles: true }));
+                    close();
+                });
+                scroll.appendChild(item);
+            });
+        }
+
+        function open() {
+            rebuildMenu();
+            menu.hidden = false;
+            btn.setAttribute('aria-expanded', 'true');
+            document.addEventListener('mousedown', onDocDown, true);
+            document.addEventListener('keydown', onKeyDown);
+        }
+        function close() {
+            menu.hidden = true;
+            btn.setAttribute('aria-expanded', 'false');
+            document.removeEventListener('mousedown', onDocDown, true);
+            document.removeEventListener('keydown', onKeyDown);
+        }
+        function toggle() { menu.hidden ? open() : close(); }
+        function onDocDown(e) { if (!wrap.contains(e.target)) close(); }
+        function onKeyDown(e) { if (e.key === 'Escape') close(); }
+
+        btn.addEventListener('click', toggle);
+
+        // Re-render when the underlying <select> changes (programmatic repopulation)
+        const mo = new MutationObserver(() => { syncLabel(); if (!menu.hidden) rebuildMenu(); });
+        mo.observe(selectEl, { childList: true, subtree: true, attributes: true, attributeFilter: ['value'] });
+        selectEl.addEventListener('change', syncLabel);
+
+        syncLabel();
+    }
+
+    // =========================================================================
     // Learning / Updating flow
     // =========================================================================
     (function () {
@@ -600,8 +795,9 @@
     document.getElementById('selectTemplateBtn').addEventListener('click', function() {
         document.getElementById('getContentOverlay').style.display = 'none';
         var select = document.getElementById('cfPostSelect');
-        select.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        select.focus();
+        var focusTarget = select.parentElement.querySelector('.fancy-select-btn') || select;
+        focusTarget.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        focusTarget.focus();
     });
 
     // Show coach mark 2 after user selects a template post (one-time)
@@ -938,15 +1134,17 @@
 
     // Load processed posts into dropdown
     (async function loadContentFinderPosts() {
+        const select = document.getElementById('cfPostSelect');
+        mountFancySelect(select);
         try {
             const resp = await fetch('/insights/content-finder/posts/');
             const data = await resp.json();
             if (data.success && data.posts.length > 0) {
-                const select = document.getElementById('cfPostSelect');
                 data.posts.forEach(p => {
                     const opt = document.createElement('option');
                     opt.value = p.post_id;
-                    opt.textContent = `${p.title} (${p.publish_date})`;
+                    opt.textContent = p.title;
+                    if (p.publish_date_iso) opt.dataset.date = p.publish_date_iso;
                     select.appendChild(opt);
                 });
             }
@@ -1239,7 +1437,8 @@
             const opt = document.createElement('option');
             opt.value = p.post_id;
             const statusIcon = p.status === 'Draft' ? '🟡 ' : p.status === 'Scheduled' ? '🔵 ' : '🟢 ';
-            opt.textContent = `${statusIcon}${p.title} (${p.date})`;
+            opt.textContent = `${statusIcon}${p.title}`;
+            if (p.date_iso) opt.dataset.date = p.date_iso;
             select.appendChild(opt);
         });
         // Reset selection state
@@ -1249,6 +1448,7 @@
 
     // Load all posts into dropdown
     (async function loadImprovementTipsPosts() {
+        mountFancySelect(document.getElementById('itPostSelect'));
         try {
             const resp = await fetch('/insights/improvement-tips/posts/');
             const data = await resp.json();

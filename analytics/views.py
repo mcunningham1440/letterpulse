@@ -833,19 +833,16 @@ def content_finder_posts(request):
         posts = []
         for pp in processed:
             post = pp.post
-            date_display = '-'
-            if post.publish_date:
-                try:
-                    date_display = post.publish_date.strftime('%b %d, %Y')
-                except Exception:
-                    date_display = str(post.publish_date)
             posts.append({
                 'post_id': post.post_id,
                 'title': post.title or '',
-                'publish_date': date_display,
+                'publish_date_iso': post.publish_date.date().isoformat() if post.publish_date else None,
+                'publish_date_ts': post.publish_date.timestamp() if post.publish_date else 0,
             })
 
-        posts.sort(key=lambda p: p['publish_date'], reverse=True)
+        posts.sort(key=lambda p: p['publish_date_ts'], reverse=True)
+        for p in posts:
+            p.pop('publish_date_ts', None)
 
         return JsonResponse({'success': True, 'posts': posts})
     except Exception as e:
@@ -1034,17 +1031,11 @@ def improvement_tips_posts(request):
 
         posts = []
         for post in all_posts:
-            date_display = '-'
             date_val = post.publish_date or post.creation_date
-            if date_val:
-                try:
-                    date_display = date_val.strftime('%b %d, %Y')
-                except Exception:
-                    date_display = str(date_val)
             posts.append({
                 'post_id': post.post_id,
                 'title': post.title or '',
-                'date': date_display,
+                'date_iso': date_val.date().isoformat() if date_val else None,
                 'status': post.status or 'Published',
             })
 
