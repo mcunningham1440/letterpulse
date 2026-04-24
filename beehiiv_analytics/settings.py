@@ -256,7 +256,8 @@ PROGRESS_DURATIONS = {
     'extract_content': 12,      # empirical
     'generate_report': 35,      # empirical
     'process_posts': 20,        # empirical
-    'content_search': 45,       # empirical
+    'content_search_plan': 30,  # stage 1: plan the search
+    'content_search_run': 60,   # stages 2+3: dispatch + parallel agents
     'learning_fetch': 30,       # full Beehiiv fetch during initial learning
 }
 
@@ -288,6 +289,9 @@ SITE_URL = os.environ.get('SITE_URL', 'https://letterpulse.com')
 # =============================================================================
 PERPLEXITY_API_KEY = os.environ.get("PERPLEXITY_API_KEY", "")
 CREDITS_PER_CONTENT_SEARCH = 1
+CONTENT_FINDER_PLAN_MODEL = "gpt-5.4"
+CONTENT_FINDER_PLAN_REASONING = "medium"
+CONTENT_FINDER_DISPATCH_MAX_SECTIONS = 6
 CONTENT_FINDER_MODEL = "gpt-5.4-mini"
 CONTENT_FINDER_REASONING = "medium"
 CONTENT_FINDER_MAX_ROUNDS = 3       # Max search round-trips per section before forcing final answer

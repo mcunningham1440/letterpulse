@@ -833,19 +833,16 @@ def content_finder_posts(request):
         posts = []
         for pp in processed:
             post = pp.post
-            date_display = '-'
-            if post.publish_date:
-                try:
-                    date_display = post.publish_date.strftime('%b %d, %Y')
-                except Exception:
-                    date_display = str(post.publish_date)
             posts.append({
                 'post_id': post.post_id,
                 'title': post.title or '',
-                'publish_date': date_display,
+                'publish_date_iso': post.publish_date.date().isoformat() if post.publish_date else None,
+                'publish_date_ts': post.publish_date.timestamp() if post.publish_date else 0,
             })
 
-        posts.sort(key=lambda p: p['publish_date'], reverse=True)
+        posts.sort(key=lambda p: p['publish_date_ts'], reverse=True)
+        for p in posts:
+            p.pop('publish_date_ts', None)
 
         return JsonResponse({'success': True, 'posts': posts})
     except Exception as e:
@@ -853,26 +850,10 @@ def content_finder_posts(request):
 
 
 @login_required
-@require_GET
-@require_valid_api_credentials
-def content_finder_sections(request):
-    """Return section names for a given post."""
-    post_id = request.GET.get('post_id')
-    if not post_id:
-        return JsonResponse({'success': False, 'error': 'post_id required'}, status=400)
-
-    sections = Section.objects.filter(
-        post__post_id=post_id, user=request.user
-    ).order_by('start_line').values_list('section_name', flat=True)
-
-    return JsonResponse({'success': True, 'sections': list(sections)})
-
-
-@login_required
 @require_POST
 @require_valid_api_credentials
 def run_content_finder(request):
-    """Start a content finder background task."""
+    """Start a content finder background task (Stage 1: planning)."""
     import threading
     from .models import Publication
     from .utils import charge_credits, NotEnoughCredits, run_content_finder_background
@@ -883,59 +864,41 @@ def run_content_finder(request):
         return JsonResponse({'success': False, 'error': 'Invalid JSON'}, status=400)
 
     post_id = data.get('post_id')
-    mode = data.get('mode', 'auto')
-    selected_sections = data.get('selected_sections', [])
 
     if not post_id:
         return JsonResponse({'success': False, 'error': 'post_id required'}, status=400)
-    if mode not in ('auto', 'manual'):
-        return JsonResponse({'success': False, 'error': 'mode must be auto or manual'}, status=400)
 
     if not settings.PERPLEXITY_API_KEY:
         return JsonResponse({'success': False, 'error': 'Content Finder is not configured. Please contact support.'}, status=500)
 
-    # Look up the post
     try:
         post = Post.objects.get(post_id=post_id, user=request.user)
     except Post.DoesNotExist:
         return JsonResponse({'success': False, 'error': 'Post not found'}, status=404)
 
-    # Verify sections exist
-    section_qs = Section.objects.filter(post=post, user=request.user)
-    if not section_qs.exists():
+    if not Section.objects.filter(post=post, user=request.user).exists():
         return JsonResponse({'success': False, 'error': 'No sections found for this post'}, status=400)
 
-    if mode == 'manual':
-        if not selected_sections:
-            return JsonResponse({'success': False, 'error': 'Select at least one section'}, status=400)
-        existing = set(section_qs.values_list('section_name', flat=True))
-        invalid = set(selected_sections) - existing
-        if invalid:
-            return JsonResponse({'success': False, 'error': f'Invalid sections: {", ".join(invalid)}'}, status=400)
-
-    # Charge credits
     try:
         charge_credits(request.user, settings.CREDITS_PER_CONTENT_SEARCH)
     except NotEnoughCredits:
         return JsonResponse({'success': False, 'error': 'Not enough credits'}, status=400)
 
-    # Get publication
     _, beehiiv_pub_id, _ = get_user_api_credentials(request.user)
     try:
         publication = Publication.objects.get(pub_id=beehiiv_pub_id)
     except Publication.DoesNotExist:
         publication = None
 
-    # Create task
     task = PendingContentSearch.objects.create(
         user=request.user,
         publication=publication,
         post=post,
-        mode=mode,
-        selected_sections=selected_sections if mode == 'manual' else [],
+        mode='auto',
+        selected_sections=[],
+        status='planning',
     )
 
-    # Spawn background thread
     threading.Thread(
         target=run_content_finder_background,
         args=(task.task_id,),
@@ -943,6 +906,41 @@ def run_content_finder(request):
     ).start()
 
     return JsonResponse({'success': True, 'task_id': str(task.task_id)})
+
+
+@login_required
+@require_POST
+@require_valid_api_credentials
+def confirm_content_finder_plan(request, task_id):
+    """Stage 2/3 kickoff: record the user's plan feedback and spawn dispatch + search."""
+    import threading
+    from .utils import run_content_finder_background
+
+    try:
+        task = PendingContentSearch.objects.get(task_id=task_id, user=request.user)
+    except PendingContentSearch.DoesNotExist:
+        return JsonResponse({'success': False, 'error': 'Task not found'}, status=404)
+
+    if task.status != 'awaiting_feedback':
+        return JsonResponse({'success': False, 'error': f'Task not ready for confirmation (status={task.status})'}, status=400)
+
+    try:
+        data = json.loads(request.body) if request.body else {}
+    except json.JSONDecodeError:
+        return JsonResponse({'success': False, 'error': 'Invalid JSON'}, status=400)
+
+    feedback = (data.get('feedback') or '').strip()
+    task.user_feedback = feedback
+    task.status = 'dispatching'
+    task.save(update_fields=['user_feedback', 'status'])
+
+    threading.Thread(
+        target=run_content_finder_background,
+        args=(task.task_id,),
+        daemon=True,
+    ).start()
+
+    return JsonResponse({'success': True})
 
 
 @login_required
@@ -962,7 +960,9 @@ def poll_content_finder(request, task_id):
         'credits_quota': usage.monthly_quota,
     }
 
-    if task.status == 'complete':
+    if task.status == 'awaiting_feedback':
+        resp['plan_text'] = task.plan_text
+    elif task.status == 'complete':
         resp['result_data'] = task.result_data
         if settings.ENVIRONMENT == 'local' and task.dev_panel_data:
             resp['dev_panel'] = task.dev_panel_data
@@ -1031,17 +1031,11 @@ def improvement_tips_posts(request):
 
         posts = []
         for post in all_posts:
-            date_display = '-'
             date_val = post.publish_date or post.creation_date
-            if date_val:
-                try:
-                    date_display = date_val.strftime('%b %d, %Y')
-                except Exception:
-                    date_display = str(date_val)
             posts.append({
                 'post_id': post.post_id,
                 'title': post.title or '',
-                'date': date_display,
+                'date_iso': date_val.date().isoformat() if date_val else None,
                 'status': post.status or 'Published',
             })
 

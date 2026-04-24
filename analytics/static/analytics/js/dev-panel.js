@@ -90,8 +90,7 @@ const DevPanel = (function () {
             </div>
             <div id="${id}" style="display:none;margin-top:6px;">
                 <div style="margin-bottom:4px;"><b style="color:#c586c0;">Model:</b> ${esc(call.model)}</div>
-                ${_collapsible(id + '_sys', 'System Prompt', _pre(call.system_prompt))}
-                ${_collapsible(id + '_usr', 'User Prompt', _pre(call.user_prompt))}
+                ${_collapsible(id + '_inputs', 'Input Messages', _renderInputMessages(call, id))}
                 <div style="margin-bottom:4px;"><b style="color:#c586c0;">Runtime:</b> ${fmtTime(call.runtime_seconds)}</div>
                 ${_collapsible(id + '_out', 'Output', _pre(call.output_text))}
                 ${_collapsible(id + '_in_usage', 'Input Usage & Cost', _usageBlock(call.input_usage, 'input'))}
@@ -99,6 +98,26 @@ const DevPanel = (function () {
                 <div style="margin-top:4px;"><b style="color:#4ec9b0;">Total Cost:</b> ${fmt$(call.total_cost)}</div>
             </div>
         </div>`;
+    }
+
+    function _renderInputMessages(call, idBase) {
+        // Back-compat with old dev-panel JSON dumps that stored system/user separately.
+        if (Array.isArray(call.input_messages)) {
+            const items = call.input_messages;
+            if (!items.length) return '<span style="color:#666;">(empty)</span>';
+            return items.map(function (item, i) {
+                const label = (item.label || 'item');
+                return '<div style="margin-bottom:6px;">' +
+                    '<div style="color:#dcdcaa;font-size:11px;margin-bottom:2px;">' +
+                    '[' + (i + 1) + '] ' + esc(label) + '</div>' +
+                    _pre(item.text || '') +
+                    '</div>';
+            }).join('');
+        }
+        return _pre(
+            (call.system_prompt ? '[system]\n' + call.system_prompt + '\n\n' : '') +
+            (call.user_prompt ? '[user]\n' + call.user_prompt : '')
+        );
     }
 
     function _renderTotals() {

@@ -127,11 +127,19 @@ class SectionAdmin(admin.ModelAdmin):
 
 @admin.register(PendingContentSearch)
 class PendingContentSearchAdmin(admin.ModelAdmin):
-    list_display = ('task_id', 'user', 'post', 'mode', 'status', 'created_at')
-    list_filter = ('status', 'mode', 'created_at')
+    list_display = ('task_id', 'user', 'post', 'status', 'dispatch_section_count', 'created_at')
+    list_filter = ('status', 'created_at')
     search_fields = ('user__email', 'post__title')
     ordering = ('-created_at',)
-    readonly_fields = ('task_id', 'created_at')
+    readonly_fields = (
+        'task_id', 'created_at', 'plan_text', 'plan_messages',
+        'user_feedback', 'dispatch_messages', 'dispatch_sections',
+        'result_data', 'dev_panel_data', 'error_message',
+    )
+
+    def dispatch_section_count(self, obj):
+        return len(obj.dispatch_sections or [])
+    dispatch_section_count.short_description = 'dispatched'
 
 
 @admin.register(PendingLearningTask)
