@@ -256,8 +256,7 @@ PROGRESS_DURATIONS = {
     'extract_content': 12,      # empirical
     'generate_report': 35,      # empirical
     'process_posts': 20,        # empirical
-    'content_search': 45,       # empirical (legacy, retained for compatibility)
-    'content_search_plan': 25,  # stage 1: plan the search
+    'content_search_plan': 30,  # stage 1: plan the search
     'content_search_run': 60,   # stages 2+3: dispatch + parallel agents
     'learning_fetch': 30,       # full Beehiiv fetch during initial learning
 }

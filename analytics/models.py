@@ -532,7 +532,7 @@ class PendingContentSearch(models.Model):
     user_feedback = models.TextField(blank=True, default='')
     dispatch_messages = models.JSONField(default=list, blank=True)
     dispatch_sections = models.JSONField(default=list, blank=True)
-    result_data = models.JSONField(default=dict, blank=True)
+    result_data = models.JSONField(default=list, blank=True)
     error_message = models.TextField(blank=True)
     dev_panel_data = models.JSONField(default=dict, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)

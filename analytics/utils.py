@@ -3,6 +3,7 @@ Utility functions for the Django analytics app.
 Adapted from the original utils.py for Streamlit.
 """
 
+import hashlib
 import json
 import math
 from collections import Counter
@@ -371,7 +372,7 @@ def wipe_user_publication_data(user, pub_id):
             usage.save(update_fields=['initial_fetched_pub_ids'])
 
 
-async def llm_call(function_name, messages, model, reasoning_level, response_format=None, tools=None, tool_choice=None, user=None, store=False, previous_response_id=None, timeout=90.0):
+async def llm_call(function_name, messages, model, reasoning_level, response_format=None, tools=None, tool_choice=None, user=None, store=False, previous_response_id=None, prompt_cache_key=None, prompt_cache_retention=None, timeout=90.0):
     """
     Make an async call to OpenAI API and log the request.
 
@@ -386,6 +387,10 @@ async def llm_call(function_name, messages, model, reasoning_level, response_for
         user: Django user object for logging (optional)
         store: If True, OpenAI stores the response server-side for reasoning continuity
         previous_response_id: ID of a stored response to thread reasoning context from
+        prompt_cache_key: Routing-stickiness key so requests sharing a long prefix
+            land on the same machine and reuse cached KV state.
+        prompt_cache_retention: "in_memory" (default) or "24h" for extended caching
+            on supported models (gpt-5.x, gpt-4.1).
 
     Returns:
         OpenAI API response object
@@ -410,6 +415,10 @@ async def llm_call(function_name, messages, model, reasoning_level, response_for
         kwargs["store"] = True
     if previous_response_id is not None:
         kwargs["previous_response_id"] = previous_response_id
+    if prompt_cache_key is not None:
+        kwargs["prompt_cache_key"] = prompt_cache_key
+    if prompt_cache_retention is not None:
+        kwargs["prompt_cache_retention"] = prompt_cache_retention
 
     try:
         if asyncio.get_event_loop().is_running():
@@ -1138,13 +1147,34 @@ def build_all_sections_user_prompt(sections, max_links=60, max_url_len=75):
 def _serialize_response_output(response):
     """Serialize response.output items to JSON-safe dicts so they can be appended
     to a growing input message list on subsequent LLM calls. Each successive agent
-    (plan → dispatch → search) carries forward the full conversation verbatim."""
+    (plan → dispatch → search) carries forward the full conversation verbatim.
+
+    responses.parse() returns ParsedResponseOutputText content items that carry a
+    SDK-local `parsed` field alongside `text`. The API input schema doesn't accept
+    it and serializing it against the ResponseOutputText|Refusal union triggers
+    noisy Pydantic warnings, so we suppress those warnings during the dump and
+    strip `parsed` from each content item before returning.
+    """
+    import warnings as _warnings
+
     serialized = []
     for item in response.output:
         try:
-            serialized.append(item.model_dump(mode='json', exclude_none=True))
+            with _warnings.catch_warnings():
+                _warnings.filterwarnings(
+                    'ignore',
+                    message=r'Pydantic serializer warnings:',
+                    category=UserWarning,
+                )
+                data = item.model_dump(mode='json', exclude_none=True)
         except AttributeError:
-            serialized.append(dict(item))
+            data = dict(item)
+
+        for content_piece in (data.get('content') or []):
+            if isinstance(content_piece, dict):
+                content_piece.pop('parsed', None)
+
+        serialized.append(data)
     return serialized
 
 
@@ -1191,6 +1221,8 @@ async def run_plan_stage(task, sections):
         settings.CONTENT_FINDER_PLAN_MODEL,
         settings.CONTENT_FINDER_PLAN_REASONING,
         store=True,
+        prompt_cache_key=f"cf_plan_{task.task_id}",
+        prompt_cache_retention="24h",
         timeout=90.0,
     )
 
@@ -1220,6 +1252,8 @@ async def run_dispatch_stage(task):
         settings.CONTENT_FINDER_PLAN_REASONING,
         response_format=ContentFinderDispatchList,
         store=True,
+        prompt_cache_key=f"cf_plan_{task.task_id}",
+        prompt_cache_retention="24h",
         timeout=60.0,
     )
 
@@ -1235,7 +1269,7 @@ async def run_dispatch_stage(task):
     return dispatch_sections, dispatch_messages
 
 
-async def run_search_agent(section_name, dispatch_messages, historical_urls, max_rounds=3):
+async def run_search_agent(section_name, dispatch_messages, historical_urls, task_id, max_rounds=3):
     """
     Per-section search agent. Starts from the full dispatch_messages list,
     appends user(SEARCH_PROMPT), runs `max_rounds` of tool-call turns (each
@@ -1249,6 +1283,14 @@ async def run_search_agent(section_name, dispatch_messages, historical_urls, max
 
     model = settings.CONTENT_FINDER_MODEL
     reasoning = settings.CONTENT_FINDER_REASONING
+    # Same key across every call this agent makes so its rounds + final output
+    # all route to the same machine and reuse the cached prefix from one call to
+    # the next. Per-section keys (rather than per-task) keep parallel agents
+    # under the ~15 RPM-per-key routing budget. The OpenAI API caps
+    # prompt_cache_key at 64 chars; UUID(36) + long section names overflow,
+    # so the section component is hashed.
+    section_slug = hashlib.md5(section_name.encode('utf-8')).hexdigest()[:8]
+    cache_key = f"cf_search_{task_id}_{section_slug}"
 
     messages = list(dispatch_messages) + [
         {"role": "user", "content": CONTENT_FINDER_SEARCH_PROMPT.format(section_name=section_name)},
@@ -1263,6 +1305,8 @@ async def run_search_agent(section_name, dispatch_messages, historical_urls, max
             tools=[CONTENT_FINDER_SEARCH_TOOL],
             tool_choice="required",
             store=True,
+            prompt_cache_key=cache_key,
+            prompt_cache_retention="24h",
             timeout=45.0,
         )
 
@@ -1300,6 +1344,8 @@ async def run_search_agent(section_name, dispatch_messages, historical_urls, max
         reasoning,
         response_format=ContentFinderAllLinks,
         store=True,
+        prompt_cache_key=cache_key,
+        prompt_cache_retention="24h",
         timeout=60.0,
     )
 
@@ -1340,7 +1386,10 @@ async def run_all_searches(task):
     dispatch_messages = task.dispatch_messages or []
 
     agents = [
-        run_search_agent(section_name, dispatch_messages, historical_urls, max_rounds=max_rounds)
+        run_search_agent(
+            section_name, dispatch_messages, historical_urls,
+            str(task.task_id), max_rounds=max_rounds,
+        )
         for section_name in (task.dispatch_sections or [])
     ]
     return await asyncio.gather(*agents)
@@ -1378,7 +1427,7 @@ def run_content_finder_background(task_id):
             )
             if not sections:
                 task.status = 'complete'
-                task.result_data = {}
+                task.result_data = []
                 task.save(update_fields=['status', 'result_data'])
                 return
 
@@ -1411,7 +1460,7 @@ def run_content_finder_background(task_id):
 
             if not dispatch_sections:
                 task.status = 'complete'
-                task.result_data = {}
+                task.result_data = []
                 if settings.ENVIRONMENT == 'local':
                     task.dev_panel_data = finish_tracking() or task.dev_panel_data
                     task.save(update_fields=['status', 'result_data', 'dev_panel_data'])
@@ -1422,10 +1471,15 @@ def run_content_finder_background(task_id):
             raw_results = async_to_sync(run_all_searches)(task)
             close_old_connections()
 
-            result_data = {}
-            for section_name, links in raw_results:
-                if links is not None:
-                    result_data[section_name] = links
+            # Preserve dispatch output order. JSONB doesn't guarantee dict key
+            # order, so we store an explicit list keyed by `section` instead of
+            # a {section_name: links} dict.
+            links_by_section = {name: links for name, links in raw_results if links is not None}
+            result_data = [
+                {'section': name, 'links': links_by_section[name]}
+                for name in dispatch_sections
+                if name in links_by_section
+            ]
 
             task.status = 'complete'
             task.result_data = result_data

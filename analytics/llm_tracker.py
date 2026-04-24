@@ -112,8 +112,7 @@ def record_call(function_name, model, messages, response, duration, start_ts=Non
     if calls is None:
         return
 
-    system_prompt = _extract_by_role(messages, 'system')
-    user_prompt = _extract_by_role(messages, 'user')
+    input_messages = _serialize_input_messages(messages)
     output_text = _extract_output(response)
 
     pricing = settings.LLM_PRICING.get(model, {})
@@ -124,8 +123,7 @@ def record_call(function_name, model, messages, response, duration, start_ts=Non
     calls.append({
         'function_name': function_name,
         'model': model,
-        'system_prompt': system_prompt,
-        'user_prompt': user_prompt,
+        'input_messages': input_messages,
         'runtime_seconds': round(duration, 3),
         'output_text': output_text,
         'input_usage': {
@@ -251,27 +249,55 @@ def _token_cost(token_count, price_per_million):
     return (token_count / 1_000_000) * price_per_million
 
 
-def _extract_by_role(messages, role):
+def _serialize_input_messages(messages):
     """
-    Extract and concatenate content from messages matching the given role.
-    Handles plain string content and list-of-dicts content.
+    Serialize the input messages list into normalized dicts the dev panel
+    can render. Each entry has a `label` (role / item type) and a `text`
+    body. Items the model produces (function_call / function_call_output
+    and prior assistant messages) are kept in order so the panel reflects
+    the full growing conversation. Reasoning items are skipped — they're
+    encrypted/opaque and not useful to display.
     """
-    parts = []
-    for msg in messages:
+    out = []
+    for msg in messages or []:
         if not isinstance(msg, dict):
+            out.append({'label': 'raw', 'text': str(msg)})
             continue
-        if msg.get('role') != role:
+
+        item_type = msg.get('type')
+        if item_type == 'reasoning':
             continue
-        content = msg.get('content', '')
-        if isinstance(content, str):
-            parts.append(content)
-        elif isinstance(content, list):
-            for item in content:
-                if isinstance(item, dict) and item.get('type') == 'text':
-                    parts.append(item.get('text', ''))
-                elif isinstance(item, str):
-                    parts.append(item)
-    return '\n\n'.join(parts) if parts else ''
+
+        role = msg.get('role')
+        label = role or item_type or 'item'
+        text = ''
+
+        if 'content' in msg:
+            content = msg.get('content')
+            if isinstance(content, str):
+                text = content
+            elif isinstance(content, list):
+                parts = []
+                for piece in content:
+                    if isinstance(piece, dict):
+                        t = piece.get('text') or piece.get('input_text') or piece.get('output_text') or ''
+                        if t:
+                            parts.append(t)
+                        elif piece.get('type'):
+                            parts.append(f"[{piece.get('type')}]")
+                    elif isinstance(piece, str):
+                        parts.append(piece)
+                text = '\n'.join(parts)
+
+        if item_type == 'function_call':
+            name = msg.get('name', '')
+            args = msg.get('arguments', '')
+            text = f"name: {name}\narguments: {args}"
+        elif item_type == 'function_call_output':
+            text = msg.get('output', '') or text
+
+        out.append({'label': label, 'text': text})
+    return out
 
 
 def _extract_output(response):

@@ -90,18 +90,58 @@ Second, add up the number of items to find for each section. This should be 2 + 
 
 Third, total up the number of items to find for the whole newsletter. If it is less than or equal to 10, you will need to find additional content, so users don't feel disappointed by the small number of links.
 
-Finally, make the search plan. Tell the user which sections you plan on searching for content for, and for each...
-- What websites you'll prioritize
-- What date ranges you'll search for
+Finally, make the search plan, following the example below. Keep each section's plan to a similar length as the ones in the example.
 
 If you will also be searching for additional links, as specified above, mention that you will also search for other content that would be relevant to the user's audience, referencing something specific about them, like "readers of a newsletter on the auto industry",
 and what websites and date ranges you will prioritize. If no sections met the "requires new external content" criterion, this should be your entire search plan.
 
-Include a maximum of 6 sections in your search plan. If more than 6 meet the criterion for requiring new external content, exclude ones which will require the *fewest* links. 
+Include a maximum of 6 sections in your search plan. If more than 6 meet the criterion for requiring new external content, exclude ones which will require the *fewest* links.
+
+DO NOT mention...
+- The number of items you'll be looking for, including through digits or just "a pair", etc.
+- Anything about excluding some sections, some "requiring external content" and others not, etc.
+- 
+
+<sample>
+## Search plan
+
+### Main essay
+I'll find fresh news items about launches, major industry announcements, and EV developments that could serve as the focus of a new essay. Readers of this section often click the most on stories that touch on launches by major automakers, particularly of EVs.
+
+#### Date range
+
+- Mainly the last 7 days, but with a wider window of up to 30 days for longer-form analysis pieces and deeper dives
+
+#### Where I'll look
+
+- The Verge, Wired, Bloomberg, WSJ, NYT for in-depth analysis and industry coverage
+- Any other relevant sites
+
+---
+
+### Quick links
+
+I'll look for short-form news items covering sales figures, policy changes, supply chain updates, and notable product announcements — the kinds of brief, punchy stories that tend to perform well in this section.
+
+#### Date range
+
+- Mainly the last 7 days, but with a wider window of 2–3 weeks if the recent news cycle is thin
+
+#### Where I'll look
+
+- MotorTrend, Car and Driver, Automotive News, Electrek, InsideEVs, Reuters/Bloomberg for breaking news
+- Any other relevant sites
+
+---
+
+I'll also search for other content about new developments in the auto industry that would be relevant to your readers. Let me know how that sounds, and if you'd like any changes.
+</sample>
 """
 
 
-CONTENT_FINDER_DISPATCH_PROMPT = """Given the plan and the user's feedback, output a list of the discrete sections to find content for. If you are also searching for additional content, include one called "Other Interesting Links"."""
+CONTENT_FINDER_DISPATCH_PROMPT = """Given the plan and the user's feedback, output a list of the discrete sections to find content for. If you are also searching for additional content, include one called "Other interesting links".
+For instance, for the example given earlier, you would output ['Main essay', 'Quick links', 'Other interesting links'].
+Arrange them in the order they appear in the newsletter, with 'Other interesting links' (if present) last."""
 
 
 CONTENT_FINDER_SEARCH_PROMPT = """Now your task is to run the search for section {section_name}.
@@ -137,7 +177,8 @@ Output your response as a series of links, each with their own title, source, UR
 - Output the date field in the format "March 3, 2026"
 - Description should be one sentence explaining what the link is
 - Relevance should be one sentence explaining how the link relates to content that has performed well with your audience in the past
-    Make sure to reference "your readers", "your audience", etc. to make it clear that the recommendations are tailored to your audience
+    Make sure to reference "your audience", "your subscribers", "readers of your newsletter", etc. to make it clear that the recommendations are tailored to your audience
+- Don't just search the specific domains the plan says you'll look at--include *at least* one domain-unrestricted search
 
 Example output:
     Title:          Audi announces the new, sleek A9

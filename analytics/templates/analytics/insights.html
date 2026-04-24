@@ -82,13 +82,13 @@
     </div>
 </div>
 
-<!-- Coach mark 2: Run Content Search (shown after post selected) -->
+<!-- Coach mark 2: Start Content Search (shown after post selected) -->
 <div class="confirm-overlay" id="runSearchOverlay" style="display: none;">
     <div class="confirm-modal">
-        <h5 class="mb-3">Run Content Search</h5>
+        <h5 class="mb-3">Start Content Search</h5>
         <p>Let's find stories to write about for your new issue.</p>
         <p>LetterPulse can automatically detect which sections in your newsletter need new content, or you can select them yourself. For now, we'll detect them automatically.</p>
-        <p class="mb-4"><b>Close this window and click <i class="bi bi-search"></i> Run Content Search</b></p>
+        <p class="mb-4"><b>Close this window and click <i class="bi bi-search"></i> Start Content Search</b></p>
         <div class="d-flex justify-content-end">
             <button type="button" class="btn btn-primary" id="closeSearchCoachBtn">Close</button>
         </div>
@@ -187,7 +187,7 @@
                     <!-- Run button -->
                     <div class="d-flex align-items-center gap-2">
                         <button id="cfRunBtn" class="btn btn-success" disabled>
-                            <i class="bi bi-search"></i> Run Content Search
+                            <i class="bi bi-search"></i> Start Content Search
                         </button>
                         <small class="text-muted">Uses <strong>{{ credits_per_search }}</strong> credit</small>
                     </div>
@@ -202,7 +202,7 @@
                     <div id="cfPlanBody" class="mb-3" style="max-height: 40vh; overflow-y: auto; white-space: pre-wrap; font-size: 0.9rem;"></div>
                     <div class="mb-3">
                         <label class="form-label" for="cfPlanFeedback">Any changes? (optional)</label>
-                        <textarea class="form-control" id="cfPlanFeedback" rows="3" placeholder="E.g. 'Skip the sponsor section' or 'Focus the tech news search on open-source releases.'"></textarea>
+                        <textarea class="form-control" id="cfPlanFeedback" rows="3" placeholder='E.g. "Skip the essay section" or "Focus the tech news search on open-source releases."'></textarea>
                     </div>
                     <div class="d-flex justify-content-end gap-2">
                         <button type="button" class="btn btn-secondary" id="cfPlanCancelBtn">Cancel</button>
@@ -1112,15 +1112,18 @@
         const accordion = document.getElementById('cfResultsAccordion');
         accordion.innerHTML = '';
 
-        const sectionNames = Object.keys(resultData);
-        if (sectionNames.length === 0) {
+        // Backend emits an ordered list of {section, links} so dispatch order
+        // is preserved (JSONB would have dropped dict key order).
+        const sections = Array.isArray(resultData) ? resultData : [];
+        if (sections.length === 0) {
             accordion.innerHTML = '<p class="text-muted">No content recommendations were generated. All sections were either dismissed or had no historical link data.</p>';
             document.getElementById('cfResults').style.display = 'block';
             return;
         }
 
-        sectionNames.forEach((sectionName, idx) => {
-            const links = resultData[sectionName];
+        sections.forEach((entry, idx) => {
+            const sectionName = entry.section;
+            const links = entry.links || [];
             const collapseId = `cfCollapse_${idx}`;
             const headerId = `cfHeader_${idx}`;
             const isFirst = idx === 0;
