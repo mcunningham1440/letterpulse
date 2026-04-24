@@ -3,8 +3,10 @@ Utility functions for the Django analytics app.
 Adapted from the original utils.py for Streamlit.
 """
 
+import difflib
 import json
 import math
+import re
 from collections import Counter
 from openai import AsyncOpenAI, OpenAI, BadRequestError
 from pydantic import BaseModel
@@ -2451,6 +2453,66 @@ class AllImprovementTips(BaseModel):
     content_tips: List[ContentTip]
 
 
+_INLINE_TAGS_FOR_ANCHOR = frozenset({
+    'a', 'span', 'strong', 'em', 'b', 'i', 'u', 'code', 'kbd', 'mark',
+    'small', 'sub', 'sup', 'abbr', 'cite', 'q', 'time', 'img', 'br',
+    'wbr', 's', 'del', 'ins', 'font', 'label',
+})
+
+
+def _insert_tip_anchor(soup, line, anchor_tag):
+    """Insert an inline anchor tag at ~the given prettified sourceline.
+
+    For block elements, the anchor is placed at the start of the block's text
+    flow so the block renders as a single paragraph. For inline elements, the
+    anchor is placed immediately before them.
+    """
+    best = None
+    best_line = -1
+    for el in soup.find_all(True):
+        sl = el.sourceline
+        if sl is None or sl > line:
+            continue
+        if sl > best_line:
+            best = el
+            best_line = sl
+    if best is None:
+        (soup.body or soup).append(anchor_tag)
+        return
+    if best.name in _INLINE_TAGS_FOR_ANCHOR:
+        best.insert_before(anchor_tag)
+        return
+    first_text = next(
+        (c for c in best.descendants
+         if isinstance(c, NavigableString) and c.strip()),
+        None,
+    )
+    if first_text is not None:
+        first_text.insert_before(anchor_tag)
+    else:
+        best.insert(0, anchor_tag)
+
+
+def _render_new_text_with_diff(old_text: str, new_text: str) -> str:
+    """HTML-escape new_text and wrap word-level insertions/replacements vs old_text in <mark class="diff-new">."""
+    new_tokens = re.split(r'(\s+)', new_text)
+    if not old_text:
+        return html_module.escape(new_text)
+    old_tokens = re.split(r'(\s+)', old_text)
+    matcher = difflib.SequenceMatcher(a=old_tokens, b=new_tokens, autojunk=False)
+    parts = []
+    for tag, _i1, _i2, j1, j2 in matcher.get_opcodes():
+        segment = ''.join(new_tokens[j1:j2])
+        if not segment:
+            continue
+        escaped = html_module.escape(segment)
+        if tag == 'equal':
+            parts.append(escaped)
+        elif tag in ('replace', 'insert'):
+            parts.append(f'<mark class="diff-new">{escaped}</mark>')
+    return ''.join(parts)
+
+
 async def generate_improvement_tips_html(post, user, publication, beehiiv_token, beehiiv_pub_id):
     """
     Generate annotated two-column HTML with improvement tips for a post.
@@ -2478,57 +2540,11 @@ async def generate_improvement_tips_html(post, user, publication, beehiiv_token,
     if not html:
         raise RuntimeError(f"Failed to fetch HTML for post {post.post_id}")
 
-    # --- 2) Build numbered text lines with HTML line mapping ---
+    # --- 2) Build numbered HTML for the LLM ---
     pretty_html = BeautifulSoup(html, 'html.parser').prettify()
     html_lines = pretty_html.split('\n')
-
-    # Re-parse prettified HTML so element.sourceline == prettified line numbers
-    soup2 = BeautifulSoup(pretty_html, 'html.parser')
-
-    # Record sourceline for each <a> before replacement
-    a_lines = {id(a): a.sourceline for a in soup2.find_all('a', href=True)}
-
-    # Do <a> replacement while tracking source lines
-    replacement_lines = {}
-    for a in list(soup2.find_all('a', href=True)):
-        src = a_lines.get(id(a))
-        link_text = a.get_text(strip=True)
-        href = a['href']
-        if len(href) > 50:
-            href = href[:47] + "..."
-        replacement = f"{link_text} ({href})" if link_text else href
-        new_node = NavigableString(replacement)
-        a.replace_with(new_node)
-        replacement_lines[id(new_node)] = src
-
-    # Walk all NavigableString nodes, collecting (text, sourceline)
-    text_source_pairs = []
-    for node in soup2.descendants:
-        if isinstance(node, NavigableString):
-            text = node.strip()
-            if not text:
-                continue
-            src = replacement_lines.get(id(node))
-            if src is None and node.parent:
-                src = node.parent.sourceline
-            text_source_pairs.append((text, src))
-
-    # Build text output
-    post_text = soup2.get_text(separator='\n', strip=True)
-    text_lines = [line for line in post_text.split('\n') if line.strip()]
-
-    # Map each text line -> prettified HTML line via source pairs
-    text_to_html_line = {}
-    pair_cursor = 0
-    for text_num, text_line in enumerate(text_lines, 1):
-        for p in range(pair_cursor, len(text_source_pairs)):
-            piece_text, piece_src = text_source_pairs[p]
-            if piece_text in text_line and piece_src:
-                text_to_html_line[text_num] = piece_src
-                pair_cursor = p + 1
-                break
-
-    numbered_text = "\n".join(f"{i+1}\t{line}" for i, line in enumerate(text_lines))
+    post_html_length = len(html_lines)
+    numbered_html = "\n".join(f"{i+1}: {line}" for i, line in enumerate(html_lines))
 
     # --- 3) Link history with sample titles for every section ---
     def _build_link_history():
@@ -2590,7 +2606,7 @@ async def generate_improvement_tips_html(post, user, publication, beehiiv_token,
     # --- 4) Call LLM for tips ---
     messages = [
         {"role": "user", "content": f"<link_history>\n{link_history_str}\n</link_history>"},
-        {"role": "user", "content": f"<post title=\"{post.title}\">\n{numbered_text}\n</post>"},
+        {"role": "user", "content": f"<post title=\"{post.title}\">\n{numbered_html}\n</post>"},
         {"role": "system", "content": IMPROVEMENT_TIP_PROMPT},
     ]
 
@@ -2620,34 +2636,34 @@ async def generate_improvement_tips_html(post, user, publication, beehiiv_token,
         + [('content', t) for t in tips.content_tips]
     )
 
-    # For each tip, map the (start_line, end_line) text span to HTML source lines
-    # and pick the midpoint so the anchor lands in the body of a multi-line span,
-    # not at its start. Drop tips whose span doesn't resolve to any HTML line.
+    # Tips' start_line/end_line now refer directly to HTML lines. Take the midpoint
+    # so the anchor lands in the body of a multi-line span, not at its start.
     tips_with_anchors = []
     for tip_kind, t in typed_tips:
-        start_src = text_to_html_line.get(t.start_line)
-        end_src = text_to_html_line.get(t.end_line)
-        if start_src is None and end_src is None:
+        lo, hi = sorted((t.start_line, t.end_line))
+        lo = max(1, lo)
+        hi = min(post_html_length, hi)
+        if hi < lo:
             continue
-        if start_src is None:
-            mid = end_src
-        elif end_src is None:
-            mid = start_src
-        else:
-            lo, hi = (start_src, end_src) if start_src <= end_src else (end_src, start_src)
-            mid = (lo + hi) // 2
+        mid = (lo + hi) // 2
         tips_with_anchors.append((tip_kind, t, mid))
 
     tips_with_anchors.sort(key=lambda tup: tup[2])
 
-    # Insert anchor spans (reverse order to preserve indices)
-    annotated_lines = list(html_lines)
-    for i, (tip_kind, tip, mid) in enumerate(reversed(tips_with_anchors)):
-        marker_id = f"tip-target-{len(tips_with_anchors) - 1 - i}"
-        anchor = f'<span id="{marker_id}" data-tip-anchor="true" data-tip-type="{tip_kind}"></span>'
-        annotated_lines.insert(mid - 1, anchor)
+    # Insert anchor spans via DOM manipulation so logically-continuous paragraphs
+    # that are physically split across many prettified lines (by inline elements
+    # like <a>) stay grouped in the rendered output.
+    soup_render = BeautifulSoup(pretty_html, 'html.parser')
+    for i, (tip_kind, tip, mid) in enumerate(tips_with_anchors):
+        marker_id = f"tip-target-{i}"
+        anchor = soup_render.new_tag("span", attrs={
+            "id": marker_id,
+            "data-tip-anchor": "true",
+            "data-tip-type": tip_kind,
+        })
+        _insert_tip_anchor(soup_render, mid, anchor)
 
-    newsletter_html = '\n'.join(annotated_lines)
+    newsletter_html = str(soup_render)
 
     copy_icon_svg = (
         '<svg class="copy-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" '
@@ -2675,18 +2691,24 @@ async def generate_improvement_tips_html(post, user, publication, beehiiv_token,
             has_old = bool(tip.old_text and tip.old_text.strip())
             has_new = bool(tip.new_text and tip.new_text.strip())
             if has_old or has_new:
-                old_html = f'<div class="old-text">{html_module.escape(tip.old_text)}</div>' if has_old else ''
-                new_html = f'<div class="new-text copy-source">{html_module.escape(tip.new_text)}</div>' if has_new else ''
+                old_block = (
+                    f'<div class="old-box"><div class="old-text">{html_module.escape(tip.old_text)}</div></div>'
+                    if has_old else ''
+                )
                 copy_btn = (
                     f'<button type="button" class="copy-btn" title="Copy to clipboard" '
                     f'aria-label="Copy suggested text">{copy_icon_svg}</button>'
                 ) if has_new else ''
+                new_rendered = _render_new_text_with_diff(tip.old_text or '', tip.new_text)
+                new_block = (
+                    f'<div class="new-box">'
+                    f'<div class="new-text copy-source">{new_rendered}</div>'
+                    f'{copy_btn}'
+                    f'</div>'
+                ) if has_new else ''
                 change_block = f"""
         <div style="font-weight: bold; margin-bottom: 4px; margin-top: 10px; color: {header_color};">Suggested change</div>
-        <div class="suggested-row">
-            <div class="suggested-text-stack">{old_html}{new_html}</div>
-            {copy_btn}
-        </div>"""
+        <div class="suggested-change">{old_block}{new_block}</div>"""
             if tip.why and tip.why.strip() and tip.why.lower() != 'none':
                 safe_why = html_module.escape(tip.why)
                 why_block = f"""
@@ -2786,20 +2808,24 @@ async def generate_improvement_tips_html(post, user, publication, beehiiv_token,
         border-radius: 4px;
         box-shadow: 0 1px 3px rgba(0,0,0,0.1);
     }}
-    .suggested-row {{
+    .suggested-change {{
         display: flex;
-        align-items: flex-start;
-        gap: 8px;
+        flex-direction: column;
+        gap: 6px;
+    }}
+    .old-box {{
         background-color: rgba(0,0,0,0.04);
         border-radius: 4px;
         padding: 8px 10px;
     }}
-    .suggested-text-stack {{
-        flex: 1 1 auto;
-        min-width: 0;
+    .new-box {{
         display: flex;
-        flex-direction: column;
-        gap: 4px;
+        align-items: flex-start;
+        gap: 8px;
+        background-color: rgba(46,125,50,0.08);
+        border-left: 3px solid #2e7d32;
+        border-radius: 4px;
+        padding: 8px 10px;
     }}
     .old-text {{
         text-decoration: line-through;
@@ -2808,8 +2834,16 @@ async def generate_improvement_tips_html(post, user, publication, beehiiv_token,
         word-break: break-word;
     }}
     .new-text {{
+        flex: 1 1 auto;
+        min-width: 0;
         white-space: pre-wrap;
         word-break: break-word;
+    }}
+    .new-text mark.diff-new {{
+        background-color: #FFF59D;
+        color: inherit;
+        padding: 0 2px;
+        border-radius: 2px;
     }}
     .copy-btn {{
         flex: 0 0 auto;

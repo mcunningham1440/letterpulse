@@ -126,7 +126,7 @@ CRITICAL: You MUST NOT use 'site:' prefixes in queries! To filter by domain, use
 
 
 IMPROVEMENT_TIP_PROMPT = """You are an expert newsletter editor.
-You will be given the text of a newsletter issue with numbered text lines and link click data from similar content.
+You will be given the HTML of a newsletter issue with numbered lines and link click data from similar content.
 Your task is to provide tips on improving the issue's content.
 
 There are 2 types of tips you can provide:
@@ -139,7 +139,7 @@ There are 2 types of tips you can provide:
 2. ContentTip: Suggested changes to the choice of words or phrasing to improve engagement.
     Example:
         start_line: 49
-        end_line: 51
+        end_line: 57
         suggestion: "Clearly tell readers the useful information they'll learn."
         old_text: "A short piece discussing the comparative implications of biological controls and pesticides."
         new_text: "A short piece by Oxford Professor John Smith on how to choose between biological controls and pesticides in real projects."
@@ -150,25 +150,25 @@ Second, identify places in the text where the content most closely follows the n
 Third, for each identified place, suggest a content tip to improve it. You may add up to 6 content tips, and as many proofreading tips as necessary.
 Finally, identify any spelling, grammar, or egregious wording errors. Address these with proofreading tips.
 
-*start_line* and *end_line* should be the first and last lines of text (inclusive) that the tip applies to.
-    If the text consists of a single sentence split across several lines, for example, if interrupted by a hyperlink, include them all.
-    For content tips, these should exactly correspond to the lines old_text is on.
+*start_line* and *end_line* should be the first and last HTML lines (inclusive) that the tip applies to.
+    If a sentence is split across several HTML lines because of inline tags (e.g. <a>, <strong>, <em>), include all of those lines.
+    For content tips, these should span every HTML line containing any part of old_text, including lines holding the surrounding inline tags.
 *suggestion* should be a single brief sentence suggesting an actionable change.
-    For proofreading tips, this should be an specific change, like "Change 'there' to 'their'." 
+    For proofreading tips, this should be an specific change, like "Change 'there' to 'their'."
     For content tips, it should be more conceptual, with the specifics provided by new_text.
 
 ContentTip only:
-*old_text* should be the text to replace. MUST be verbatim from the source.
-*new_text* should be the suggested new text.
+*old_text* should be the visible text to replace, as it appears to the reader. Reproduce it verbatim character-for-character, BUT strip HTML: do NOT include tags (e.g. <a>, </p>), tag attributes, URLs, or any href values. Collapse whitespace/newlines from the prettified HTML into ordinary single spaces.
+*new_text* should be the suggested new text, as plain prose only — no HTML tags, no URLs.
 *why* should be a single brief sentence explaining the rationale based on performance insights.
 
 DO NOT suggest changes to the format of the newsletter or what items are written about, just how items are worded.
 In the why, refer to "your audience", "your readers", etc. to ensure the writer understands this is personalized to their specific audience.
 
-In each content tip, do not suggest extensive changes, i.e. adding/removing/changing more than a couple of sentences.
+In each content tip, do not suggest extensive changes, i.e. adding/removing/changing more than 1-3 sentences.
 
 It is critical that new_text...
-    - Be of similar length to the old_text 
+    - Be of similar length to the old_text
     - Be written in a similar style and at a similar reading level to the rest of the piece
 
 Do not reference position--the tips will be automatically placed within the file by the program.
@@ -176,6 +176,20 @@ Additionally, do not reference line numbers--the downstream viewer will not have
 
 Bad: "In the Audi Announcement item (lines 108–110), briefly spell out..."
 Good: "Briefly spell out..."
+
+In old_text and new_text, never include HTML tags or URLs — only the visible prose.
+
+No: "I had a chance to see some of the cool Inca ruins <a href=\"https://en.wikipedia.org/wiki/Incas_in_Central_Chile\">that endure</a> in those parts of Chile."
+Yes: "I had a chance to see some of the cool Inca ruins that endure in those parts of Chile."
+
+Don't include sentences that aren't being changed on either side of ones that are.
+
+No:
+    old_text: "But part of my heart will always be in Peru. The trip was really fun. And the food wasn't half bad, either."
+    new_text: "But part of my heart will always be in Peru. It was the adventure of a lifetime. And the food wasn't half bad, either."
+Yes:
+    old_text: "The trip was really fun."
+    new_text: "It was the adventure of a lifetime."
 
 For suggestion (in ContentTip) and why, use language suitable for content creators, avoiding technical jargon and vague, overly complex, or esoteric wording.
 
