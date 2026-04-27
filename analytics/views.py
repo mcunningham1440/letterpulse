@@ -324,6 +324,10 @@ def account_view(request):
             else:
                 messages.error(request, "Invalid publication selected.")
 
+            # Picking a publication (from coach or main selector) is the
+            # explicit confirmation we wait for before showing the
+            # "Go to Write" coach.
+            request.session['publication_coach_dismissed'] = True
             return redirect('analytics:account')
 
     from .utils import TIMEZONE_CHOICES
@@ -394,6 +398,16 @@ def account_view(request):
         ).exists() if publication is not None else False
         show_api_validated_coach = (not initial_done) and (not task_running)
 
+    # When the user has more than one publication, prompt them to confirm
+    # which one to use before sending them to Write. Suppressed once they
+    # explicitly pick (or re-confirm) a pub via the coach or main selector
+    # (session flag set in the switch_publication action / dismiss endpoint).
+    show_select_publication_coach = (
+        show_api_validated_coach
+        and len(usage.available_publications or []) > 1
+        and not request.session.get('publication_coach_dismissed', False)
+    )
+
     context = {
         'usage': usage,
         'timezone_choices': TIMEZONE_CHOICES,
@@ -405,14 +419,59 @@ def account_view(request):
         'total_posts_count': total_posts_count,
         'processed_posts_count': processed_posts_count,
         'show_api_validated_coach': show_api_validated_coach,
+        'show_select_publication_coach': show_select_publication_coach,
     }
 
     return render(request, 'analytics/account.html', context)
 
 
+@login_required
+@require_POST
+def dismiss_publication_coach(request):
+    """
+    Mark the multi-publication selection coach as dismissed for this session.
+    Called via fetch when the user clicks Confirm in the coach without
+    changing publication (the change-pub case goes through switch_publication,
+    which sets the same flag).
+    """
+    request.session['publication_coach_dismissed'] = True
+    return JsonResponse({'success': True})
+
+
 # Import timezone for account_view
 from django.utils import timezone
 from datetime import timedelta
+
+
+def _resolve_publication(user, beehiiv_pub_id):
+    """
+    Return the Publication for the user's selected Beehiiv pub, creating the
+    row from UsageAccount.available_publications if it's missing. Returns
+    None if no metadata for the pub_id is available (caller should 400).
+    """
+    from .models import Publication
+    pub = Publication.objects.filter(pub_id=beehiiv_pub_id).first()
+    if pub is not None:
+        return pub
+    try:
+        usage = UsageAccount.objects.get(user=user)
+    except UsageAccount.DoesNotExist:
+        return None
+    pub_data = next(
+        (p for p in (usage.available_publications or [])
+         if p.get('id') == beehiiv_pub_id),
+        None,
+    )
+    if not pub_data:
+        return None
+    pub, _ = Publication.objects.update_or_create(
+        pub_id=beehiiv_pub_id,
+        defaults={
+            'name': pub_data.get('name', 'Unknown'),
+            'organization_name': pub_data.get('organization_name', ''),
+        },
+    )
+    return pub
 
 
 def _sweep_stale_learning_tasks(user):
@@ -659,14 +718,12 @@ def start_learning_task(request):
     user/publication.
     """
     import threading
-    from .models import Publication
 
     _sweep_stale_learning_tasks(request.user)
 
     _, beehiiv_pub_id, _ = get_user_api_credentials(request.user)
-    try:
-        publication = Publication.objects.get(pub_id=beehiiv_pub_id)
-    except Publication.DoesNotExist:
+    publication = _resolve_publication(request.user, beehiiv_pub_id)
+    if publication is None:
         return JsonResponse(
             {'success': False, 'error': 'Publication not found.'}, status=400,
         )
@@ -711,14 +768,12 @@ def start_update_task(request):
     task" as defense-in-depth.
     """
     import threading
-    from .models import Publication
 
     _sweep_stale_learning_tasks(request.user)
 
     _, beehiiv_pub_id, _ = get_user_api_credentials(request.user)
-    try:
-        publication = Publication.objects.get(pub_id=beehiiv_pub_id)
-    except Publication.DoesNotExist:
+    publication = _resolve_publication(request.user, beehiiv_pub_id)
+    if publication is None:
         return JsonResponse(
             {'success': False, 'error': 'Publication not found.'}, status=400,
         )

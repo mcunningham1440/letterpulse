@@ -19,8 +19,30 @@
 <!-- Coach mark dim overlay (backdrop only) -->
 <div class="confirm-overlay" id="apiSetupOverlay" style="display: none;"></div>
 
+{% if show_select_publication_coach %}
+<div class="confirm-overlay" id="selectPublicationOverlay" style="display: flex;">
+    <div class="confirm-modal">
+        <h5 class="mb-3">Select your publication</h5>
+        <p class="mb-3">Your Beehiiv account has multiple publications. Choose the one you plan to use LetterPulse for.</p>
+        <div class="mb-4">
+            <select class="form-select" id="selectPublicationDropdown">
+                {% for pub in usage.available_publications %}
+                <option value="{{ pub.id }}" {% if pub.id == usage.beehiiv_pub_id %}selected{% endif %}>
+                    {{ pub.name }}
+                </option>
+                {% endfor %}
+            </select>
+            <div class="form-text">You can switch publications later from this page.</div>
+        </div>
+        <div class="d-flex justify-content-end gap-2">
+            <button type="button" class="btn btn-primary" id="selectPublicationConfirmBtn">Confirm</button>
+        </div>
+    </div>
+</div>
+{% endif %}
+
 {% if show_api_validated_coach %}
-<div class="confirm-overlay" id="apiValidatedOverlay" style="display: flex;">
+<div class="confirm-overlay" id="apiValidatedOverlay" style="display: {% if show_select_publication_coach %}none{% else %}flex{% endif %};">
     <div class="confirm-modal">
         <h5 class="mb-3">API Key Validated</h5>
         <p class="mb-4">Your API key works! Head to the Write tab to start using LetterPulse.</p>
@@ -272,6 +294,33 @@ document.addEventListener('DOMContentLoaded', function() {
     if (apiValidatedOverlay && apiValidatedStayBtn) {
         apiValidatedStayBtn.addEventListener('click', function() {
             apiValidatedOverlay.style.display = 'none';
+        });
+    }
+
+    // "Select your publication" coach: when user has multiple pubs, prompt
+    // them to confirm before the "Go to Write" coach. If they pick a
+    // different pub, the publication form submission handles the dismissal
+    // server-side (and reloads the page). If they keep the current pub, we
+    // dismiss via fetch and reveal the existing "Go to Write" coach.
+    const selectPubOverlay = document.getElementById('selectPublicationOverlay');
+    const selectPubConfirmBtn = document.getElementById('selectPublicationConfirmBtn');
+    const selectPubDropdown = document.getElementById('selectPublicationDropdown');
+    if (selectPubOverlay && selectPubConfirmBtn && selectPubDropdown) {
+        const initialPubId = selectPubDropdown.value;
+        selectPubConfirmBtn.addEventListener('click', async function() {
+            const chosenPubId = selectPubDropdown.value;
+            if (chosenPubId !== initialPubId) {
+                // Reuse the existing publication form (which posts to the
+                // switch_publication action and reloads the page).
+                document.getElementById('beehiiv_pub_id').value = chosenPubId;
+                document.getElementById('publicationForm').submit();
+                return;
+            }
+            try {
+                await postJSON('{% url "analytics:dismiss_publication_coach" %}', {});
+            } catch (e) { /* non-fatal: coach will reappear on reload */ }
+            selectPubOverlay.style.display = 'none';
+            if (apiValidatedOverlay) apiValidatedOverlay.style.display = 'flex';
         });
     }
 

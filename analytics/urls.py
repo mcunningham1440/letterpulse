@@ -7,6 +7,7 @@ urlpatterns = [
     path('', views.index, name='index'),
     path('mobile/', views.mobile_notice, name='mobile_notice'),
     path('account/', views.account_view, name='account'),
+    path('account/dismiss-publication-coach/', views.dismiss_publication_coach, name='dismiss_publication_coach'),
     path('insights/', views.insights_view, name='insights'),
     path('insights/learning/start/', views.start_learning_task, name='start_learning_task'),
     path('insights/learning/update/', views.start_update_task, name='start_update_task'),
