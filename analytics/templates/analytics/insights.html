@@ -256,9 +256,9 @@
             <div class="card-body">
                 <!-- Template Post dropdown -->
                 <div class="mb-3">
-                    <label for="cfPostSelect" class="form-label">Select a template post</label>
+                    <label for="cfPostSelect" class="form-label">Select a template post with the same format as the new post you want to write</label>
                     <select id="cfPostSelect" class="form-select">
-                        <option value="">Select a processed post...</option>
+                        <option value="">Select a post...</option>
                     </select>
                 </div>
 
@@ -376,9 +376,14 @@
         <!-- Write your post Card (feedback) -->
         <div class="card mb-3 mt-3" id="writePostCard">
             <div class="card-header">
-                <h5 class="mb-0">2. Write your post</h5>
+                <div class="d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0">2. Write your post</h5>
+                    <button type="button" class="btn btn-link btn-sm p-0 text-decoration-none text-body" id="writePostToggleBtn" aria-controls="writePostCardBody" aria-expanded="{% if has_used_write_post_poll %}false{% else %}true{% endif %}" aria-label="Toggle section">
+                        <i class="bi {% if has_used_write_post_poll %}bi-chevron-down{% else %}bi-chevron-up{% endif %}" id="writePostToggleIcon"></i>
+                    </button>
+                </div>
             </div>
-            <div class="card-body">
+            <div class="card-body" id="writePostCardBody" {% if has_used_write_post_poll %}style="display:none;"{% endif %}>
                 <p class="mb-1"><strong>LetterPulse doesn't do this for you...yet.</strong></p>
                 <p class="mb-3">Would a feature that drafts new issues for your newsletter be valuable to you?</p>
                 <div class="d-flex gap-2" id="writePostFeedbackBtns">
@@ -397,7 +402,6 @@
             <div class="card-body">
                 <!-- Post dropdown -->
                 <div class="mb-3">
-                    <label for="itPostSelect" class="form-label">Select a post to improve</label>
                     <select id="itPostSelect" class="form-select">
                         <option value="">Select a post...</option>
                     </select>
@@ -939,6 +943,28 @@
     // =========================================================================
     // Write Post Feedback
     // =========================================================================
+    // Toggle "2. Write your post" card body open/closed.
+    (function() {
+        var toggleBtn = document.getElementById('writePostToggleBtn');
+        var body = document.getElementById('writePostCardBody');
+        var icon = document.getElementById('writePostToggleIcon');
+        if (!toggleBtn || !body || !icon) return;
+        toggleBtn.addEventListener('click', function() {
+            var isHidden = body.style.display === 'none';
+            if (isHidden) {
+                body.style.display = '';
+                icon.classList.remove('bi-chevron-down');
+                icon.classList.add('bi-chevron-up');
+                toggleBtn.setAttribute('aria-expanded', 'true');
+            } else {
+                body.style.display = 'none';
+                icon.classList.remove('bi-chevron-up');
+                icon.classList.add('bi-chevron-down');
+                toggleBtn.setAttribute('aria-expanded', 'false');
+            }
+        });
+    })();
+
     function highlightFeedbackBtn(response) {
         document.querySelectorAll('.write-post-feedback-btn').forEach(b => {
             if (b.dataset.response === response) {

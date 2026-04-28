@@ -157,7 +157,7 @@
                             {% endfor %}
                         </select>
                         <div class="form-text">
-                            Select the publication to analyze
+                            Select a publication
                         </div>
                     </div>
                 </form>
@@ -174,7 +174,7 @@
             </div>
             <div class="card-body">
                 <div class="d-flex justify-content-between align-items-center mb-2">
-                    <span class="text-muted">AI Credits Used This Month</span>
+                    <span class="text-muted">AI credits used this month</span>
                     <span class="fw-bold">{{ usage.used_this_period }} / {{ usage.monthly_quota }}</span>
                 </div>
                 <div class="progress" style="height: 12px;">
@@ -187,7 +187,7 @@
                 </div>
                 <div class="mt-2 text-muted small">
                     <i class="bi bi-arrow-repeat me-1"></i>
-                    Credits renew {{ usage.next_renewal_date|date:"F j, Y" }}
+                    Renews {{ usage.next_renewal_date|date:"F j, Y" }}
                 </div>
             </div>
         </div>
