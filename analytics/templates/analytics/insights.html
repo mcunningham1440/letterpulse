@@ -614,9 +614,6 @@
     // Learning / Updating flow
     // =========================================================================
     (function () {
-        const LEARNING_FETCH_DURATION = {{ progress_durations.learning_fetch|default:30 }};
-        const UPDATE_FETCH_DURATION = {{ progress_durations.refresh_posts|default:10 }};
-        const PROCESS_PER_POST_SECONDS = 12;  // empirical per-post estimate
         const UPDATE_TTL_MS = 15 * 60 * 1000;
         const PUB_ID = "{{ beehiiv_pub_id|default_if_none:'' }}";
         const TTL_KEY = "incrementalRefreshLastRun:" + PUB_ID;
@@ -628,15 +625,6 @@
         let activeKind = null;
         let lastPhase = null;
         let pollTimer = null;
-
-        function estimateProcessDuration(count) {
-            if (!count) return PROCESS_PER_POST_SECONDS;
-            const seqSlots = Math.min(count, 2);
-            const parallelSlots = Math.max(count - 2, 0);
-            // First 2 posts sequential, remainder in parallel groups of 3.
-            return seqSlots * PROCESS_PER_POST_SECONDS
-                + Math.ceil(parallelSlots / 3) * PROCESS_PER_POST_SECONDS;
-        }
 
         function setCopy(kind, phase, targetCount) {
             if (kind === 'initial') {
@@ -668,16 +656,9 @@
         function startPhase(kind, phase, targetCount) {
             setCopy(kind, phase, targetCount);
             ProgressBar.forceClose({ containerId: PROGRESS_CONTAINER_ID });
-            let duration;
-            if (phase === 'fetch') {
-                duration = kind === 'initial' ? LEARNING_FETCH_DURATION : UPDATE_FETCH_DURATION;
-            } else {
-                duration = estimateProcessDuration(targetCount);
-            }
             ProgressBar.start({
                 containerId: PROGRESS_CONTAINER_ID,
-                expectedDuration: duration,
-                subtext: '',
+                mode: 'spinner',
             });
         }
 
