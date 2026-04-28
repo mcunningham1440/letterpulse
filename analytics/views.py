@@ -1087,7 +1087,9 @@ def improvement_tips_posts(request):
 
         posts = []
         for post in all_posts:
-            date_val = post.publish_date or post.creation_date
+            # Use creation_date uniformly: this dropdown spans Drafts/Scheduled/Published,
+            # so a single field keeps the relative date ("1w ago") consistent across statuses.
+            date_val = post.creation_date
             posts.append({
                 'post_id': post.post_id,
                 'title': post.title or '',

@@ -65,12 +65,26 @@
     }
     .fancy-select-item:hover,
     .fancy-select-item.is-active { background-color: rgba(40, 167, 69, 0.08); }
-    .fancy-select-item-title {
+    .fancy-select-item-titlegroup {
         flex: 1 1 auto;
+        min-width: 0;
+        display: flex;
+        align-items: baseline;
+        gap: 0.4rem;
+        overflow: hidden;
+    }
+    .fancy-select-item-title {
+        flex: 0 1 auto;
+        min-width: 0;
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
         color: #212529;
+    }
+    .fancy-select-item-status {
+        flex: 0 0 auto;
+        font-size: 0.8125rem;
+        font-weight: 600;
     }
     .fancy-select-item-meta {
         flex: 0 0 auto;
@@ -242,7 +256,7 @@
             <div class="card-body">
                 <!-- Template Post dropdown -->
                 <div class="mb-3">
-                    <label for="cfPostSelect" class="form-label">Template Post</label>
+                    <label for="cfPostSelect" class="form-label">Select a template post</label>
                     <select id="cfPostSelect" class="form-select">
                         <option value="">Select a processed post...</option>
                     </select>
@@ -383,14 +397,11 @@
             <div class="card-body">
                 <!-- Post dropdown -->
                 <div class="mb-3">
-                    <label for="itPostSelect" class="form-label">Select a post</label>
+                    <label for="itPostSelect" class="form-label">Select a post to improve</label>
                     <select id="itPostSelect" class="form-select">
                         <option value="">Select a post...</option>
                     </select>
-                    <div class="mt-1 d-flex align-items-center gap-3">
-                        <div id="itLegend" class="small text-muted">
-                            🟡 Draft &nbsp;&nbsp; 🔵 Scheduled &nbsp;&nbsp; 🟢 Published
-                        </div>
+                    <div class="mt-1">
                         <div class="form-check form-check-inline small mb-0">
                             <input class="form-check-input" type="checkbox" id="itDraftsOnly">
                             <label class="form-check-label text-muted" for="itDraftsOnly">Drafts only</label>
@@ -448,6 +459,12 @@
         return `${Math.round(days / 365)}y ago`;
     }
 
+    const STATUS_COLORS = {
+        'Draft': '#cc9a00',
+        'Scheduled': '#0d6efd',
+        'Published': '#198754',
+    };
+
     function mountFancySelect(selectEl) {
         if (!selectEl || selectEl.dataset.fancyMounted) return;
         selectEl.dataset.fancyMounted = '1';
@@ -477,13 +494,27 @@
         wrap.appendChild(menu);
 
         function syncLabel() {
+            label.innerHTML = '';
             const opt = selectEl.selectedOptions[0];
             if (!opt || !opt.value) {
                 label.textContent = selectEl.options[0] ? selectEl.options[0].textContent : '';
                 btn.classList.add('is-placeholder');
+                return;
+            }
+            btn.classList.remove('is-placeholder');
+
+            const status = opt.dataset.status;
+            if (status) {
+                const titleSpan = document.createElement('span');
+                titleSpan.textContent = opt.textContent;
+                label.appendChild(titleSpan);
+                const statusSpan = document.createElement('span');
+                statusSpan.textContent = ' · ' + status;
+                statusSpan.style.color = STATUS_COLORS[status] || '';
+                statusSpan.style.fontWeight = '600';
+                label.appendChild(statusSpan);
             } else {
                 label.textContent = opt.textContent;
-                btn.classList.remove('is-placeholder');
             }
         }
 
@@ -497,23 +528,43 @@
                 scroll.appendChild(empty);
                 return;
             }
-            realOptions.forEach(opt => {
+            realOptions.forEach((opt, idx) => {
                 const item = document.createElement('div');
                 item.className = 'fancy-select-item';
                 item.setAttribute('role', 'option');
                 item.dataset.value = opt.value;
                 if (opt.value === selectEl.value) item.classList.add('is-active');
 
+                const status = opt.dataset.status;
+                const iso = opt.dataset.date;
+
+                // Title + colored status badge sit together on the left so the
+                // status abuts the title rather than the date.
+                const titleGroup = document.createElement('span');
+                titleGroup.className = 'fancy-select-item-titlegroup';
+
                 const title = document.createElement('span');
                 title.className = 'fancy-select-item-title';
                 title.textContent = opt.textContent;
-                item.appendChild(title);
+                titleGroup.appendChild(title);
 
-                const iso = opt.dataset.date;
+                if (status) {
+                    const statusSpan = document.createElement('span');
+                    statusSpan.className = 'fancy-select-item-status';
+                    statusSpan.textContent = '· ' + status;
+                    statusSpan.style.color = STATUS_COLORS[status] || '';
+                    titleGroup.appendChild(statusSpan);
+                }
+                item.appendChild(titleGroup);
+
                 if (iso) {
+                    const rel = formatRelativeDate(iso);
                     const meta = document.createElement('span');
                     meta.className = 'fancy-select-item-meta';
-                    meta.textContent = formatRelativeDate(iso);
+                    // Prefix "Published " on the first item only when there's
+                    // no status badge already conveying it (i.e. the
+                    // template-post dropdown).
+                    meta.textContent = (idx === 0 && !status) ? `Published ${rel}` : rel;
                     meta.title = new Date(iso + 'T00:00:00').toLocaleDateString('en-US',
                         { year: 'numeric', month: 'short', day: 'numeric' });
                     item.appendChild(meta);
@@ -1454,9 +1505,9 @@
         posts.forEach(p => {
             const opt = document.createElement('option');
             opt.value = p.post_id;
-            const statusIcon = p.status === 'Draft' ? '🟡 ' : p.status === 'Scheduled' ? '🔵 ' : '🟢 ';
-            opt.textContent = `${statusIcon}${p.title}`;
+            opt.textContent = p.title;
             if (p.date_iso) opt.dataset.date = p.date_iso;
+            opt.dataset.status = p.status || 'Published';
             select.appendChild(opt);
         });
         // Reset selection state
@@ -1481,12 +1532,9 @@
 
     // Drafts only checkbox
     document.getElementById('itDraftsOnly').addEventListener('change', function() {
-        const legend = document.getElementById('itLegend');
         if (this.checked) {
-            legend.style.display = 'none';
             populateItDropdown(itAllPosts.filter(p => p.status === 'Draft'));
         } else {
-            legend.style.display = '';
             populateItDropdown(itAllPosts);
         }
     });
