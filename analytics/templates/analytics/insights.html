@@ -162,7 +162,7 @@
 </div>
 {% endif %}
 
-{% if has_processed_data and not has_used_write_post_poll %}
+{% if has_processed_data and not has_seen_write_post_poll %}
 <!-- Coach mark 3: Content Found (shown after content fetch completes) -->
 <div class="confirm-overlay" id="contentFoundOverlay" style="display: none;">
     <div class="confirm-modal">
@@ -177,7 +177,7 @@
 {% endif %}
 
 {% if has_processed_data and not has_used_write_post_poll %}
-<!-- Coach mark: Future Feature (shown when "Next feature" is clicked) -->
+<!-- Coach mark: Future Feature (poll — shown after "Next feature" is clicked, and on every Write page load until answered) -->
 <div class="confirm-overlay" id="futureFeatureOverlay" style="display: none;">
     <div class="confirm-modal">
         <h5 class="mb-3">Future Feature</h5>
@@ -282,7 +282,7 @@
                 <h6 class="mb-3">Results</h6>
                 <div class="accordion" id="cfResultsAccordion">
                 </div>
-                {% if not has_used_write_post_poll %}
+                {% if not has_seen_write_post_poll %}
                 <div id="nextFeatureContainer" class="mt-3" style="display:none;">
                     <button type="button" class="btn btn-success" id="nextFeatureBtn">Next feature <i class="bi bi-arrow-right"></i></button>
                 </div>
@@ -356,8 +356,8 @@
             </div>
         </div>
 
-        <!-- Sections 2 & 3: hidden until user has answered the write post poll -->
-        <div id="writeAndImproveContainer" style="{% if not has_used_write_post_poll %}display:none;{% endif %}">
+        <!-- Sections 2 & 3: hidden until user has been shown the write post poll (i.e., clicked "Next feature" once) -->
+        <div id="writeAndImproveContainer" style="{% if not has_seen_write_post_poll %}display:none;{% endif %}">
 
         <!-- Write your post Card (feedback) -->
         <div class="card mb-3 mt-3" id="writePostCard">
@@ -813,16 +813,34 @@
     });
     {% endif %}
 
-    {% if has_processed_data and not has_used_write_post_poll %}
+    {% if has_processed_data and not has_seen_write_post_poll %}
     // Coach mark 3: "Check them out" dismiss
     document.getElementById('checkThemOutBtn').addEventListener('click', function() {
         document.getElementById('contentFoundOverlay').style.display = 'none';
     });
 
-    // "Next feature" button → show Future Feature coach with poll
-    document.getElementById('nextFeatureBtn').addEventListener('click', function() {
+    // "Next feature" button → mark as seen, reveal sections 2 & 3 permanently,
+    // hide the button forever, show Future Feature poll coach.
+    document.getElementById('nextFeatureBtn').addEventListener('click', async function() {
+        try {
+            await postJSON("{% url 'analytics:submit_feedback' %}", { feature: 'seen_write_post_poll', response: 'shown' });
+        } catch (err) {
+            // Continue even if save fails — the user still gets the in-page reveal
+        }
+        var container = document.getElementById('nextFeatureContainer');
+        if (container) container.style.display = 'none';
+        document.getElementById('writeAndImproveContainer').style.display = '';
         document.getElementById('futureFeatureOverlay').style.display = 'flex';
     });
+    {% endif %}
+
+    {% if has_processed_data and not has_used_write_post_poll %}
+    // Auto-show the Future Feature poll on every Write page load until the
+    // user has answered it. Only fires once they've already clicked "Next
+    // feature" (otherwise the button click handler shows it).
+    {% if has_seen_write_post_poll %}
+    document.getElementById('futureFeatureOverlay').style.display = 'flex';
+    {% endif %}
 
     // Future Feature coach poll buttons → submit feedback, close coach, show Thank You
     document.querySelectorAll('.coach-poll-btn').forEach(function(btn) {
@@ -842,12 +860,11 @@
         });
     });
 
-    // Thank You "Next feature" → reveal sections 2 & 3, show Review Your Draft
+    // Thank You "Next feature" → dismiss; show Review Your Draft coach.
+    // (Sections 2 & 3 are already revealed at this point — they were unhidden
+    // when the user first clicked "Next feature".)
     document.getElementById('thankYouNextBtn').addEventListener('click', function() {
         document.getElementById('thankYouOverlay').style.display = 'none';
-        // Reveal sections 2 & 3
-        document.getElementById('writeAndImproveContainer').style.display = '';
-        // Show Review Your Draft coach
         var reviewOverlay = document.getElementById('reviewDraftOverlay');
         if (reviewOverlay) reviewOverlay.style.display = 'flex';
     });
@@ -1192,7 +1209,7 @@
                     if (typeof DevPanel !== 'undefined' && data.dev_panel) {
                         DevPanel.show(data.dev_panel, 'Content Finder');
                     }
-                    {% if not has_used_write_post_poll %}
+                    {% if not has_seen_write_post_poll %}
                     var contentFoundOverlay = document.getElementById('contentFoundOverlay');
                     if (contentFoundOverlay) contentFoundOverlay.style.display = 'flex';
                     var nextBtn = document.getElementById('nextFeatureContainer');
@@ -1341,6 +1358,7 @@
                             <div class="mt-1">${escapeHtml(link.description)}</div>
                             <div class="mt-1 fst-italic text-muted small">${escapeHtml(link.relevance)}</div>
                         </div>
+                        <!--
                         <div class="d-flex flex-column align-items-center ms-3" style="min-width:32px; gap:0.5rem;">
                             <button class="btn btn-sm p-0 cf-fb-btn" data-fb="up" data-url="${escapeHtml(link.url)}"
                                     data-title="${escapeHtml(link.title)}" data-source="${escapeHtml(link.source)}"
@@ -1353,6 +1371,7 @@
                                     data-relevance="${escapeHtml(link.relevance)}"
                                     title="Thumbs down" style="color:#dc3545;"><span class="material-symbols-outlined" style="font-size:1.4rem;">thumb_down</span></button>
                         </div>
+                        -->
                     </div>
                 `;
             });

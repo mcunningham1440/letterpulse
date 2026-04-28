@@ -230,6 +230,15 @@ ContentTip only:
 DO NOT suggest changes to the format of the newsletter or what items are written about, just how items are worded.
 In the why, refer to "your audience", "your readers", etc. to ensure the writer understands this is personalized to their specific audience.
 
+DO NOT suggest modifying external quotations except where it makes sense to shorten them.
+
+Unacceptable: 
+    old_text: "'There's no end in sight to the conflict. The two sides aren't even close to compromising,' the general was reported as saying."
+    new_text: "'There's no end in sight to the conflict, as the two sides aren't even close to compromising,' the general was reported as saying."
+Acceptable: 
+    old_text: "'There's no end in sight to the conflict. The two sides aren't even close to compromising,' the general was reported as saying."
+    new_text: "'The two sides aren't even close to compromising,' the general was reported as saying."
+
 In each content tip, do not suggest extensive changes, i.e. adding/removing/changing more than 1-3 sentences.
 
 It is critical that new_text...

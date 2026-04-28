@@ -538,7 +538,7 @@ def insights_view(request):
     used_features = set(
         Feedback.objects.filter(
             user=request.user,
-            feature__in=['used_content_finder', 'used_write_post_poll', 'used_post_improvement']
+            feature__in=['used_content_finder', 'seen_write_post_poll', 'used_write_post_poll', 'used_post_improvement']
         ).values_list('feature', flat=True)
     )
 
@@ -583,6 +583,7 @@ def insights_view(request):
         'credits_per_improvement_tips': settings.CREDITS_PER_IMPROVEMENT_TIPS,
         'write_post_feedback_response': write_post_feedback.response if write_post_feedback else '',
         'has_used_content_finder': 'used_content_finder' in used_features,
+        'has_seen_write_post_poll': ('seen_write_post_poll' in used_features) or ('used_write_post_poll' in used_features),
         'has_used_write_post_poll': 'used_write_post_poll' in used_features,
         'has_used_post_improvement': 'used_post_improvement' in used_features,
         'beehiiv_pub_id': beehiiv_pub_id,
