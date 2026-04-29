@@ -240,6 +240,55 @@ async def fetch_subscriber_count(beehiiv_token: str, beehiiv_pub_id: str) -> int
         return 0
 
 
+async def fetch_publication_stats(beehiiv_token: str, beehiiv_pub_id: str) -> dict:
+    """
+    Fetch publication-level stats (subscribers, average open/click rate).
+
+    Uses GET /v2/publications/{id}?expand=stats. Returns a dict with keys:
+      - 'active_subscriptions' (int or None)
+      - 'average_open_rate'    (float in percentage points, e.g. 51.16 for
+                                51.16%, or None)
+      - 'average_click_rate'   (float in percentage points, or None)
+
+    Each value is None when the field is missing on the response or the
+    request fails — callers should render a "—" placeholder rather than
+    gating behavior. (Soft-fallback flagged per the project's policy on
+    assumptions: a failed stats fetch should not break the page.)
+    """
+    url = f"https://api.beehiiv.com/v2/publications/{beehiiv_pub_id}?expand=stats"
+    headers = {"Authorization": beehiiv_token}
+
+    out = {
+        'active_subscriptions': None,
+        'average_open_rate': None,
+        'average_click_rate': None,
+    }
+
+    timeout = aiohttp.ClientTimeout(total=30)
+    try:
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.get(url, headers=headers) as response:
+                if response.status != 200:
+                    logger.error(f"fetch_publication_stats status: {response.status}")
+                    return out
+                data = await response.json()
+                stats = ((data.get('data') or {}).get('stats')) or {}
+                # Beehiiv returns each stat as either a number or `false` when
+                # not enabled for the publication; coerce non-numeric values
+                # to None so the caller can render a placeholder.
+                subs = stats.get('active_subscriptions')
+                if isinstance(subs, (int, float)) and not isinstance(subs, bool):
+                    out['active_subscriptions'] = int(subs)
+                for key in ('average_open_rate', 'average_click_rate'):
+                    v = stats.get(key)
+                    if isinstance(v, (int, float)) and not isinstance(v, bool):
+                        out[key] = float(v)
+                return out
+    except Exception:
+        logger.exception("fetch_publication_stats failed")
+        return out
+
+
 PROCESSABLE_PLATFORMS = ('email', 'both')
 PROCESSABLE_PUBLISHED_AGE_SECONDS = 48 * 3600
 INITIAL_LEARNING_RECIPIENT_MULTIPLIER = 15

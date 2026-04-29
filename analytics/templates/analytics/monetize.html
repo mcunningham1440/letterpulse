@@ -1,0 +1,1081 @@
+{% extends 'analytics/base.html' %}
+
+{% block title %}Monetize - LetterPulse{% endblock %}
+
+{% block extra_css %}
+<style>
+    /* ---- Newsletter profile pills ---- */
+    .profile-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 1.25rem;
+        background: #f8f9fa;
+        border: 1px solid #e9ecef;
+        border-radius: 0.5rem;
+        padding: 1.1rem 1.25rem;
+    }
+    .profile-stat.full { grid-column: 1 / -1; }
+    .profile-stat-label {
+        font-size: 0.75rem;
+        font-weight: 600;
+        color: #6c757d;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        margin-bottom: 0.35rem;
+    }
+    .profile-stat-value {
+        font-size: 0.9375rem;
+        font-weight: 600;
+        color: #212529;
+    }
+    .pp-pills { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+    .pp-pill {
+        padding: 0.2rem 0.65rem;
+        border-radius: 999px;
+        background: #fff;
+        color: #495057;
+        font-size: 0.8125rem;
+        font-weight: 500;
+        border: 1px solid #dee2e6;
+    }
+    .pp-pill.strong {
+        background: rgba(40, 167, 69, 0.12);
+        color: #1e7e34;
+        border-color: transparent;
+    }
+
+    /* ---- Profile edit mode ---- */
+    .profile-edit-input { max-width: 18rem; }
+    .topic-edit-list {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.4rem;
+    }
+    .topic-edit-row {
+        display: inline-flex;
+        align-items: center;
+        background: #fff;
+        border: 1px solid #ced4da;
+        border-radius: 999px;
+        padding: 0.1rem 0.25rem 0.1rem 0.6rem;
+        gap: 0.15rem;
+    }
+    .topic-edit-row:focus-within {
+        border-color: var(--primary-green);
+        box-shadow: 0 0 0 0.15rem rgba(40, 167, 69, 0.15);
+    }
+    .topic-edit-input {
+        border: none;
+        background: transparent;
+        font-size: 0.8125rem;
+        padding: 0.15rem 0.1rem;
+        width: 9rem;
+        color: #212529;
+    }
+    .topic-edit-input:focus { outline: none; }
+    .topic-remove-btn {
+        border: none;
+        background: transparent;
+        color: #adb5bd;
+        padding: 0.05rem 0.35rem;
+        line-height: 1;
+        cursor: pointer;
+        font-size: 0.75rem;
+    }
+    .topic-remove-btn:hover { color: #dc3545; }
+
+    /* ---- Section sub-heading ---- */
+    .section-subhead {
+        font-size: 0.9375rem;
+        font-weight: 600;
+        color: #212529;
+        margin-bottom: 0.35rem;
+    }
+
+    /* ---- Email sequence tabs ---- */
+    .seq-explainer {
+        font-size: 0.8125rem;
+        color: #495057;
+        background: #eff6ff;
+        border: 1px solid #dbeafe;
+        padding: 0.65rem 0.9rem;
+        border-radius: 0.5rem;
+        margin-bottom: 0.9rem;
+        display: flex;
+        gap: 0.6rem;
+        align-items: flex-start;
+    }
+    .seq-explainer .bi { color: #2563eb; flex-shrink: 0; margin-top: 2px; }
+
+    .seq-tabs {
+        display: flex;
+        gap: 0;
+        border-bottom: 1px solid #dee2e6;
+        margin-bottom: 0;
+    }
+    .seq-tab {
+        padding: 0.6rem 1rem;
+        cursor: pointer;
+        font-size: 0.8125rem;
+        font-weight: 500;
+        color: #6c757d;
+        border-bottom: 2px solid transparent;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        margin-bottom: -1px;
+        background: transparent;
+        border-top: none; border-left: none; border-right: none;
+    }
+    .seq-tab:hover { color: #212529; }
+    .seq-tab.active {
+        color: #1e7e34;
+        border-bottom-color: var(--primary-green);
+    }
+    .seq-tab .seq-num {
+        width: 20px; height: 20px; border-radius: 50%;
+        background: #e9ecef; color: #495057;
+        display: flex; align-items: center; justify-content: center;
+        font-size: 0.6875rem; font-weight: 700;
+    }
+    .seq-tab.active .seq-num {
+        background: rgba(40, 167, 69, 0.15);
+        color: #1e7e34;
+    }
+    .seq-tab .lock { color: #adb5bd; }
+
+    .seq-pane { display: none; padding-top: 1.1rem; }
+    .seq-pane.active { display: block; }
+
+    .seq-locked-banner {
+        display: flex;
+        gap: 0.55rem;
+        align-items: center;
+        padding: 0.6rem 0.9rem;
+        background: #f1f3f5;
+        border-radius: 0.45rem;
+        margin-bottom: 0.85rem;
+        font-size: 0.8125rem;
+        color: #495057;
+    }
+    .seq-locked-banner .bi { color: #6c757d; flex-shrink: 0; }
+
+    /* ---- Pitch preview ---- */
+    .pitch-preview {
+        background: #f8f9fa;
+        border: 1px solid #e9ecef;
+        border-radius: 0.5rem;
+        padding: 1.1rem 1.15rem;
+    }
+    .pitch-row {
+        padding: 0.45rem 0;
+        border-bottom: 1px solid #e9ecef;
+        display: flex;
+        gap: 0.75rem;
+        font-size: 0.8125rem;
+    }
+    .pitch-row:last-of-type { border-bottom: none; }
+    .pitch-row .label {
+        font-weight: 600;
+        color: #6c757d;
+        min-width: 64px;
+        font-size: 0.6875rem;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        padding-top: 3px;
+    }
+    .pitch-row .value { flex: 1; color: #212529; }
+    .pitch-body {
+        padding: 0.85rem 0 0;
+        white-space: pre-wrap;
+        font-size: 0.8125rem;
+        color: #495057;
+        line-height: 1.6;
+    }
+    .pitch-body mark, .pitch-row mark {
+        background: rgba(40, 167, 69, 0.18);
+        color: #155724;
+        padding: 1px 4px;
+        border-radius: 3px;
+        font-weight: 500;
+    }
+    .pitch-helper {
+        display: flex;
+        gap: 0.55rem;
+        margin-top: 0.85rem;
+        padding: 0.6rem 0.75rem;
+        background: #fff;
+        border: 1px solid #dee2e6;
+        border-radius: 0.45rem;
+        font-size: 0.75rem;
+        color: #6c757d;
+        align-items: flex-start;
+    }
+    .pitch-helper .bi { color: #adb5bd; flex-shrink: 0; margin-top: 2px; }
+    .pitch-helper strong { color: #212529; font-weight: 600; }
+
+    /* ---- Volume tier cards ---- */
+    .volume-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 0.75rem;
+    }
+    .volume-card {
+        padding: 1.1rem;
+        border: 2px solid #dee2e6;
+        border-radius: 0.6rem;
+        background: #fff;
+        cursor: pointer;
+        position: relative;
+        transition: all .15s;
+    }
+    .volume-card:hover { border-color: #ced4da; }
+    .volume-card.selected {
+        border-color: var(--primary-green);
+        background: rgba(40, 167, 69, 0.05);
+    }
+    .volume-card.selected::after {
+        content: '';
+        position: absolute;
+        top: 0.85rem; right: 0.85rem;
+        width: 18px; height: 18px;
+        border-radius: 50%;
+        background: var(--primary-green);
+        background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='white'%3E%3Cpath d='M6.5 11.5L3 8l1-1 2.5 2.5L12 4l1 1z'/%3E%3C/svg%3E");
+        background-repeat: no-repeat;
+        background-position: center;
+    }
+    .volume-card .vol-label {
+        font-size: 0.6875rem;
+        font-weight: 700;
+        color: #6c757d;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        margin-bottom: 0.5rem;
+    }
+    .volume-card.selected .vol-label { color: #1e7e34; }
+    .volume-card .vol {
+        font-size: 1.5rem;
+        font-weight: 800;
+        letter-spacing: -0.02em;
+    }
+    .volume-card .per-week {
+        font-size: 0.75rem;
+        color: #6c757d;
+        margin-bottom: 0.75rem;
+    }
+    .volume-card .price {
+        font-size: 0.8125rem;
+        font-weight: 600;
+        color: #212529;
+    }
+
+    /* ---- Status: idle ---- */
+    .status-idle-inner {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 1.25rem;
+        flex-wrap: wrap;
+    }
+    .status-idle-copy h4 { font-size: 1rem; font-weight: 600; margin: 0; }
+    .status-idle-copy p { font-size: 0.8125rem; color: #6c757d; margin-top: 0.1rem; margin-bottom: 0; }
+
+    /* ---- Status: preparing (timeline) ---- */
+    .prep-block { text-align: center; padding: 1.1rem 0.5rem 0.4rem; }
+    .prep-check {
+        width: 60px; height: 60px;
+        border-radius: 50%;
+        background: rgba(40, 167, 69, 0.15);
+        color: #1e7e34;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin: 0 auto 1.1rem;
+        font-size: 1.7rem;
+    }
+    .prep-block h2 {
+        font-size: 1.35rem;
+        font-weight: 700;
+        letter-spacing: -0.018em;
+        margin-bottom: 0.4rem;
+    }
+    .prep-eta {
+        font-size: 0.875rem;
+        color: #6c757d;
+        margin-bottom: 1.6rem;
+    }
+    .prep-eta strong { color: #212529; font-weight: 600; }
+
+    .prep-timeline {
+        display: flex;
+        align-items: flex-start;
+        justify-content: center;
+        gap: 0;
+        margin-bottom: 1.6rem;
+    }
+    .prep-step {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 0.5rem;
+        flex: 0 0 auto;
+        min-width: 100px;
+    }
+    .prep-step .dot {
+        width: 28px; height: 28px;
+        border-radius: 50%;
+        background: #f1f3f5;
+        color: #adb5bd;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-weight: 600;
+        font-size: 0.8125rem;
+        border: 2px solid #dee2e6;
+    }
+    .prep-step.done .dot {
+        background: var(--primary-green);
+        color: #fff;
+        border-color: var(--primary-green);
+    }
+    .prep-step.current .dot {
+        background: #fff;
+        color: #1e7e34;
+        border-color: var(--primary-green);
+        box-shadow: 0 0 0 4px rgba(40, 167, 69, 0.15);
+    }
+    .prep-step .lbl {
+        font-size: 0.75rem;
+        color: #6c757d;
+        font-weight: 500;
+    }
+    .prep-step.current .lbl, .prep-step.done .lbl {
+        color: #212529;
+        font-weight: 600;
+    }
+    .prep-bar {
+        flex: 1;
+        height: 2px;
+        background: #dee2e6;
+        max-width: 60px;
+        margin: 0 -2px;
+        align-self: flex-start;
+        margin-top: 13px;
+    }
+    .prep-bar.filled { background: var(--primary-green); }
+
+    .prep-note {
+        background: #f8f9fa;
+        border: 1px solid #e9ecef;
+        border-radius: 0.5rem;
+        padding: 0.85rem 1rem;
+        font-size: 0.8125rem;
+        color: #6c757d;
+        line-height: 1.55;
+        text-align: left;
+        margin-bottom: 1.1rem;
+    }
+    .prep-actions { display: flex; align-items: center; justify-content: center; }
+
+    /* ---- Status: active ---- */
+    .active-status-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 1rem;
+        flex-wrap: wrap;
+        margin-bottom: 1.1rem;
+    }
+    .status-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.5rem;
+        padding: 0.35rem 0.75rem;
+        background: rgba(40, 167, 69, 0.08);
+        border: 1px solid rgba(40, 167, 69, 0.2);
+        border-radius: 999px;
+        font-size: 0.8125rem;
+        font-weight: 500;
+        color: #155724;
+    }
+    .status-dot {
+        width: 8px; height: 8px;
+        border-radius: 50%;
+        background: var(--primary-green);
+        box-shadow: 0 0 0 3px rgba(40, 167, 69, 0.18);
+        animation: monetize-pulse 2s ease-in-out infinite;
+    }
+    @keyframes monetize-pulse {
+        0%, 100% { box-shadow: 0 0 0 3px rgba(40, 167, 69, 0.18); }
+        50%      { box-shadow: 0 0 0 6px rgba(40, 167, 69, 0.10); }
+    }
+
+    .replies-callout {
+        background: linear-gradient(135deg, var(--primary-green), var(--hover-green));
+        color: #fff;
+        padding: 1.4rem 1.5rem;
+        border-radius: 0.75rem;
+        margin-bottom: 1.1rem;
+        display: flex;
+        align-items: center;
+        gap: 1.1rem;
+        box-shadow: 0 4px 16px rgba(40, 167, 69, 0.18);
+    }
+    .replies-callout .replies-badge {
+        width: 50px; height: 50px;
+        border-radius: 0.6rem;
+        background: rgba(255, 255, 255, 0.18);
+        display: flex; align-items: center; justify-content: center;
+        flex-shrink: 0;
+        font-size: 1.4rem;
+    }
+    .replies-callout h4 {
+        font-size: 1.0625rem;
+        font-weight: 700;
+        letter-spacing: -0.01em;
+        margin: 0 0 0.15rem;
+    }
+    .replies-callout p {
+        font-size: 0.8125rem;
+        color: rgba(255, 255, 255, 0.85);
+        margin: 0;
+    }
+
+    .stats-strip {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        background: #fff;
+        border: 1px solid #e9ecef;
+        border-radius: 0.6rem;
+        margin-bottom: 1.1rem;
+        overflow: hidden;
+    }
+    .stat-cell { padding: 1.05rem 1.25rem; border-right: 1px solid #f1f3f5; }
+    .stat-cell:last-child { border-right: none; }
+    .stat-cell .stat-label {
+        font-size: 0.6875rem;
+        font-weight: 600;
+        color: #6c757d;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        margin-bottom: 0.35rem;
+    }
+    .stat-cell .stat-value {
+        font-size: 1.5rem;
+        font-weight: 700;
+        letter-spacing: -0.02em;
+        color: #212529;
+    }
+    .stat-cell .stat-sub {
+        font-size: 0.75rem;
+        color: #6c757d;
+        margin-top: 0.1rem;
+    }
+
+    /* ---- Status: cancelled ---- */
+    .cancelled-block {
+        text-align: center;
+        padding: 1.4rem 0.5rem 0.5rem;
+    }
+    .cancelled-icon {
+        width: 60px; height: 60px;
+        border-radius: 50%;
+        background: #f1f3f5;
+        color: #6c757d;
+        display: flex; align-items: center; justify-content: center;
+        margin: 0 auto 1rem;
+        font-size: 1.6rem;
+    }
+    .cancelled-block h2 {
+        font-size: 1.25rem;
+        font-weight: 700;
+        margin-bottom: 0.4rem;
+    }
+    .cancelled-block p {
+        font-size: 0.875rem;
+        color: #6c757d;
+        margin-bottom: 1.1rem;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+
+        <!-- ============ SECTION 1: Newsletter profile ============ -->
+        <div class="card mb-3" id="newsletterProfileCard">
+            <div class="card-header">
+                <div class="d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0">Newsletter profile</h5>
+                    <div class="d-flex gap-2">
+                        <button type="button" class="btn btn-outline-secondary btn-sm" id="profileEditBtn">Edit profile</button>
+                        <button type="button" class="btn btn-outline-secondary btn-sm" id="profileCancelBtn" hidden>Cancel</button>
+                        <button type="button" class="btn btn-primary btn-sm" id="profileSaveBtn" hidden>Save</button>
+                    </div>
+                </div>
+            </div>
+            <div class="card-body">
+                <p class="text-muted mb-3" style="font-size: 0.8125rem;">
+                    How we describe <strong>{{ newsletter_name }}</strong> to sponsors.
+                </p>
+                <div class="profile-grid">
+                    <div class="profile-stat">
+                        <div class="profile-stat-label">Niche</div>
+                        <div class="profile-stat-value">
+                            <span class="pp-pill strong" id="nichePill">AI &amp; developer tools</span>
+                            <input type="text" class="form-control form-control-sm profile-edit-input" id="nicheInput" maxlength="80" hidden>
+                        </div>
+                    </div>
+                    <div class="profile-stat">
+                        <div class="profile-stat-label">Audience</div>
+                        <div class="profile-stat-value">{{ subscriber_count_display }} subscribers · {{ open_rate_display }} open rate · {{ click_rate_display }} click rate</div>
+                    </div>
+                    <div class="profile-stat full">
+                        <div class="profile-stat-label">Readers click most on</div>
+                        <div class="profile-stat-value">
+                            <div class="pp-pills" id="topicsView">
+                                <span class="pp-pill">Agentic frameworks</span>
+                                <span class="pp-pill">Model evals</span>
+                                <span class="pp-pill">Dev productivity</span>
+                                <span class="pp-pill">RAG pipelines</span>
+                                <span class="pp-pill">Open-source LLMs</span>
+                            </div>
+                            <div id="topicsEdit" hidden>
+                                <div class="topic-edit-list" id="topicEditList"></div>
+                                <div class="d-flex align-items-center gap-2 mt-2">
+                                    <button type="button" class="btn btn-outline-secondary btn-sm" id="addTopicBtn">
+                                        <i class="bi bi-plus-lg"></i> Add topic
+                                    </button>
+                                    <small class="text-muted" id="topicLimitHint">Up to 5 topics.</small>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <template id="topicRowTemplate">
+                    <div class="topic-edit-row">
+                        <input type="text" class="topic-edit-input" maxlength="40" placeholder="Topic">
+                        <button type="button" class="topic-remove-btn" aria-label="Remove topic">
+                            <i class="bi bi-x-lg"></i>
+                        </button>
+                    </div>
+                </template>
+            </div>
+        </div>
+
+        <!-- ============ SECTION 2: Campaign settings ============ -->
+        <div class="card mb-3" id="campaignSettingsCard">
+            <div class="card-header">
+                <h5 class="mb-0">Campaign settings</h5>
+            </div>
+            <div class="card-body">
+
+                <!-- ---- Email sequence ---- -->
+                <div class="d-flex justify-content-between align-items-center mb-1">
+                    <div class="section-subhead">Your email sequence</div>
+                    <button type="button" class="btn btn-outline-secondary btn-sm" id="editEmail1Btn">Edit pitch</button>
+                </div>
+
+                <div class="seq-explainer">
+                    <i class="bi bi-info-circle"></i>
+                    <div>We send up to 3 emails to each sponsor over 10 days. The pitch is your intro — the follow-ups are gentle nudges we wrote, sent only if there's no reply.</div>
+                </div>
+
+                <div class="seq-tabs">
+                    <button type="button" class="seq-tab active" data-seq="1">
+                        <span class="seq-num">1</span> Pitch
+                    </button>
+                    <button type="button" class="seq-tab" data-seq="2">
+                        <span class="seq-num">2</span> Follow-up
+                        <i class="bi bi-lock-fill lock"></i>
+                    </button>
+                    <button type="button" class="seq-tab" data-seq="3">
+                        <span class="seq-num">3</span> Final follow-up
+                        <i class="bi bi-lock-fill lock"></i>
+                    </button>
+                </div>
+
+                <!-- Email 1 -->
+                <div class="seq-pane active" id="seq-1">
+                    <div class="pitch-preview">
+                        <div class="pitch-row">
+                            <div class="label">From</div>
+                            <div class="value">Akshay · {{ newsletter_name }}</div>
+                        </div>
+                        <div class="pitch-row">
+                            <div class="label">Subject</div>
+                            <div class="value"><mark>Sarah</mark> — 14k AI engineers reading on evals this month</div>
+                        </div>
+                        <div class="pitch-body">Hi <mark>Sarah</mark>,
+
+I run sponsorships for <mark>{{ newsletter_name }}</mark> — a newsletter for <mark>14,200 AI engineers</mark> and ML practitioners.
+
+Our last three issues, readers clicked most on <mark>model evals and observability</mark> — which is exactly what <mark>Braintrust</mark> is building.
+
+Open to exploring a sponsorship? Happy to send our media kit.
+
+Thanks,
+Akshay</div>
+                    </div>
+                    <div class="pitch-helper">
+                        <i class="bi bi-info-circle"></i>
+                        <div><strong>Highlighted parts</strong> are filled in for each sponsor based on your newsletter data and their company.</div>
+                    </div>
+                </div>
+
+                <!-- Email 2 -->
+                <div class="seq-pane" id="seq-2">
+                    <div class="seq-locked-banner">
+                        <i class="bi bi-lock-fill"></i>
+                        Pre-built follow-up · sent 4 days after the pitch if there's no reply.
+                    </div>
+                    <div class="pitch-preview">
+                        <div class="pitch-row">
+                            <div class="label">Subject</div>
+                            <div class="value">Re: <mark>Sarah</mark> — 14k AI engineers reading on evals this month</div>
+                        </div>
+                        <div class="pitch-body">Hi <mark>Sarah</mark>,
+
+Bumping this up — wanted to make sure it didn't get buried.
+
+Quick recap: <mark>14,200 engineers</mark> reading <mark>{{ newsletter_name }}</mark>, with strong engagement on <mark>evals and observability</mark>. Feels like a natural fit for <mark>Braintrust</mark>.
+
+Worth a 15-min call this week?
+
+Thanks,
+Akshay</div>
+                    </div>
+                </div>
+
+                <!-- Email 3 -->
+                <div class="seq-pane" id="seq-3">
+                    <div class="seq-locked-banner">
+                        <i class="bi bi-lock-fill"></i>
+                        Pre-built follow-up · sent 6 days after the first follow-up if there's still no reply. Last touch.
+                    </div>
+                    <div class="pitch-preview">
+                        <div class="pitch-row">
+                            <div class="label">Subject</div>
+                            <div class="value">Closing the loop — <mark>{{ newsletter_name }}</mark></div>
+                        </div>
+                        <div class="pitch-body">Hi <mark>Sarah</mark>,
+
+Last note from me — figured it's better to ask once than guess.
+
+If sponsorships aren't on your roadmap right now, totally understand. If they are and the timing's just off, happy to circle back next quarter.
+
+Either way, thanks for the read.
+
+Akshay</div>
+                    </div>
+                </div>
+
+                <!-- ---- Weekly outreach volume ---- -->
+                <div class="mt-4">
+                    <div class="section-subhead">Weekly outreach volume</div>
+                    <div class="volume-grid">
+                        <div class="volume-card" data-vol="light">
+                            <div class="vol-label">Light</div>
+                            <div class="vol">250</div>
+                            <div class="per-week">emails / week</div>
+                            <div class="price">$79 / month</div>
+                        </div>
+                        <div class="volume-card selected" data-vol="recommended">
+                            <div class="vol-label">Recommended</div>
+                            <div class="vol">500</div>
+                            <div class="per-week">emails / week</div>
+                            <div class="price">$129 / month</div>
+                        </div>
+                        <div class="volume-card" data-vol="max">
+                            <div class="vol-label">Maximum reach</div>
+                            <div class="vol">1,000</div>
+                            <div class="per-week">emails / week</div>
+                            <div class="price">$199 / month</div>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+
+        <!-- ============ SECTION 3: Campaign status ============ -->
+        <div class="card mb-3" id="campaignStatusCard">
+            <div class="card-header">
+                <h5 class="mb-0">Campaign status</h5>
+            </div>
+            <div class="card-body">
+
+                <!-- IDLE: not yet launched -->
+                <div id="status-idle">
+                    <div class="status-idle-inner">
+                        <div class="status-idle-copy">
+                            <h4>Ready when you are.</h4>
+                            <p>Your first emails go out within 48 hours of launch.</p>
+                        </div>
+                        <button type="button" class="btn btn-primary btn-lg" id="launchBtn">
+                            Launch campaign
+                            <i class="bi bi-arrow-right ms-1"></i>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- PREPARING: launch_at is in the future -->
+                <div id="status-preparing" hidden>
+                    <div class="prep-block">
+                        <div class="prep-check"><i class="bi bi-check-lg"></i></div>
+                        <h2>Campaign submitted</h2>
+                        <div class="prep-eta" id="prepEta">Your first emails go out soon.</div>
+
+                        <div class="prep-timeline">
+                            <div class="prep-step done">
+                                <div class="dot"><i class="bi bi-check-lg"></i></div>
+                                <div class="lbl">Submitted</div>
+                            </div>
+                            <div class="prep-bar filled"></div>
+                            <div class="prep-step current">
+                                <div class="dot">2</div>
+                                <div class="lbl">Preparing</div>
+                            </div>
+                            <div class="prep-bar"></div>
+                            <div class="prep-step">
+                                <div class="dot">3</div>
+                                <div class="lbl">Live</div>
+                            </div>
+                        </div>
+
+                        <div class="prep-note">
+                            We're finalizing your sponsor list and warming up your outreach. You'll get an email the moment your first batch sends — and again every time a sponsor replies.
+                        </div>
+
+                        <div class="prep-actions">
+                            <button type="button" class="btn btn-link text-muted" id="cancelBtnPreparing">Cancel campaign</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ACTIVE: launch_at is in the past -->
+                <div id="status-active" hidden>
+                    <div class="active-status-row">
+                        <div class="status-chip">
+                            <span class="status-dot"></span>
+                            Campaign active · Week 3 · 500 emails/week
+                        </div>
+                        <button type="button" class="btn btn-outline-secondary btn-sm">Pause</button>
+                    </div>
+
+                    <div class="replies-callout">
+                        <div class="replies-badge"><i class="bi bi-envelope"></i></div>
+                        <div>
+                            <h4>12 sponsors replied this week — check your inbox.</h4>
+                            <p>We CC you on every reply. Just respond from your inbox to close the deal.</p>
+                        </div>
+                    </div>
+
+                    <div class="stats-strip">
+                        <div class="stat-cell">
+                            <div class="stat-label">Sent</div>
+                            <div class="stat-value">1,847</div>
+                            <div class="stat-sub">since launch</div>
+                        </div>
+                        <div class="stat-cell">
+                            <div class="stat-label">Opened</div>
+                            <div class="stat-value">1,103</div>
+                            <div class="stat-sub">59.7% open rate</div>
+                        </div>
+                        <div class="stat-cell">
+                            <div class="stat-label">Replied</div>
+                            <div class="stat-value">142</div>
+                            <div class="stat-sub">7.7% reply rate</div>
+                        </div>
+                    </div>
+
+                    <div class="prep-actions">
+                        <button type="button" class="btn btn-link text-muted" id="cancelBtnActive">Cancel campaign</button>
+                    </div>
+                </div>
+
+                <!-- CANCELLED -->
+                <div id="status-cancelled" hidden>
+                    <div class="cancelled-block">
+                        <div class="cancelled-icon"><i class="bi bi-x-lg"></i></div>
+                        <h2>Campaign cancelled</h2>
+                        <p>Your outreach has stopped. You can launch a new campaign whenever you're ready.</p>
+                        <button type="button" class="btn btn-primary" id="relaunchBtn">
+                            Start a new campaign
+                        </button>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+
+    </div>
+</div>
+
+<script>
+(function () {
+    const STORAGE_KEY = 'lp_monetize_campaign_state_v1';
+    // Persisted shape: { launch_at: ISO string | null, cancelled: boolean }
+    // The displayed state is *derived* from this:
+    //   cancelled === true                -> 'cancelled'
+    //   launch_at is null                  -> 'idle'
+    //   launch_at > now                    -> 'preparing'
+    //   launch_at <= now                   -> 'active'
+
+    function readState() {
+        try {
+            const raw = localStorage.getItem(STORAGE_KEY);
+            if (!raw) return { launch_at: null, cancelled: false };
+            const obj = JSON.parse(raw);
+            return {
+                launch_at: obj.launch_at || null,
+                cancelled: !!obj.cancelled,
+            };
+        } catch (e) {
+            // Corrupt JSON in localStorage — silently fall back to idle rather
+            // than erroring out, since this is a demo-only flag.
+            return { launch_at: null, cancelled: false };
+        }
+    }
+
+    function writeState(s) {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(s));
+    }
+
+    function deriveView(s) {
+        if (s.cancelled) return 'cancelled';
+        if (!s.launch_at) return 'idle';
+        const launchMs = Date.parse(s.launch_at);
+        if (isNaN(launchMs)) return 'idle';
+        return launchMs > Date.now() ? 'preparing' : 'active';
+    }
+
+    function renderEta(launchAtIso) {
+        const el = document.getElementById('prepEta');
+        if (!el) return;
+        const launchMs = Date.parse(launchAtIso);
+        if (isNaN(launchMs)) {
+            // Invalid timestamp — soft fallback message rather than erroring.
+            el.innerHTML = 'Your first emails go out soon.';
+            return;
+        }
+        const launch = new Date(launchMs);
+        const dateStr = launch.toLocaleDateString(undefined, {
+            weekday: 'long', month: 'long', day: 'numeric',
+        });
+        const timeStr = launch.toLocaleTimeString(undefined, {
+            hour: 'numeric', minute: '2-digit',
+        });
+        const diffMs = launchMs - Date.now();
+        let etaTail;
+        if (diffMs <= 0) {
+            etaTail = 'any moment now';
+        } else {
+            const hours = Math.round(diffMs / 3.6e6);
+            etaTail = `about ${hours} hour${hours === 1 ? '' : 's'} from now`;
+        }
+        el.innerHTML = `Your first emails go out by <strong>${dateStr} at ${timeStr}</strong> — ${etaTail}.`;
+    }
+
+    function applyView() {
+        const s = readState();
+        const view = deriveView(s);
+        ['idle', 'preparing', 'active', 'cancelled'].forEach(name => {
+            const node = document.getElementById('status-' + name);
+            if (node) node.hidden = (name !== view);
+        });
+        if (view === 'preparing') {
+            renderEta(s.launch_at);
+        }
+    }
+
+    // -- Email sequence tab switcher --
+    document.querySelectorAll('.seq-tab').forEach(tab => {
+        tab.addEventListener('click', () => {
+            const n = tab.getAttribute('data-seq');
+            document.querySelectorAll('.seq-tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.seq-pane').forEach(p => p.classList.remove('active'));
+            tab.classList.add('active');
+            const pane = document.getElementById('seq-' + n);
+            if (pane) pane.classList.add('active');
+            // Hide "Edit pitch" when not viewing the pitch tab.
+            const editBtn = document.getElementById('editEmail1Btn');
+            if (editBtn) editBtn.style.visibility = (n === '1') ? 'visible' : 'hidden';
+        });
+    });
+
+    // -- Volume tier select --
+    document.querySelectorAll('.volume-card').forEach(card => {
+        card.addEventListener('click', () => {
+            document.querySelectorAll('.volume-card').forEach(c => c.classList.remove('selected'));
+            card.classList.add('selected');
+        });
+    });
+
+    // -- Launch / Cancel / Relaunch --
+    const launchBtn = document.getElementById('launchBtn');
+    if (launchBtn) {
+        launchBtn.addEventListener('click', () => {
+            const launchAt = new Date(Date.now() + 48 * 3600 * 1000);
+            writeState({ launch_at: launchAt.toISOString(), cancelled: false });
+            applyView();
+        });
+    }
+
+    function cancelCampaign() {
+        writeState({ launch_at: null, cancelled: true });
+        applyView();
+    }
+    const cancelPrepBtn = document.getElementById('cancelBtnPreparing');
+    if (cancelPrepBtn) cancelPrepBtn.addEventListener('click', cancelCampaign);
+    const cancelActiveBtn = document.getElementById('cancelBtnActive');
+    if (cancelActiveBtn) cancelActiveBtn.addEventListener('click', cancelCampaign);
+
+    const relaunchBtn = document.getElementById('relaunchBtn');
+    if (relaunchBtn) {
+        relaunchBtn.addEventListener('click', () => {
+            writeState({ launch_at: null, cancelled: false });
+            applyView();
+        });
+    }
+
+    // Initial render based on persisted state.
+    applyView();
+
+    // ====================================================================
+    // -- Edit profile (Niche + Readers click most on) --
+    // Persisted in localStorage so edits survive reloads, mirroring the
+    // campaign-state pattern. Audience and click-topic counts on this page
+    // are demo-static; only these two fields are editable per spec.
+    // ====================================================================
+    const PROFILE_KEY = 'lp_monetize_profile_v1';
+    const MAX_TOPICS = 5;
+
+    const nichePill        = document.getElementById('nichePill');
+    const nicheInput       = document.getElementById('nicheInput');
+    const topicsView       = document.getElementById('topicsView');
+    const topicsEdit       = document.getElementById('topicsEdit');
+    const topicEditList    = document.getElementById('topicEditList');
+    const topicRowTemplate = document.getElementById('topicRowTemplate');
+    const addTopicBtn      = document.getElementById('addTopicBtn');
+    const topicLimitHint   = document.getElementById('topicLimitHint');
+    const editBtn          = document.getElementById('profileEditBtn');
+    const saveBtn          = document.getElementById('profileSaveBtn');
+    const cancelBtn        = document.getElementById('profileCancelBtn');
+
+    function readProfile() {
+        try {
+            const raw = localStorage.getItem(PROFILE_KEY);
+            if (!raw) return null;
+            const obj = JSON.parse(raw);
+            if (!obj || typeof obj !== 'object') return null;
+            return {
+                niche: typeof obj.niche === 'string' ? obj.niche : '',
+                topics: Array.isArray(obj.topics)
+                    ? obj.topics.filter(t => typeof t === 'string').slice(0, MAX_TOPICS)
+                    : [],
+            };
+        } catch (e) {
+            // Corrupt JSON — silently fall back to the rendered defaults.
+            return null;
+        }
+    }
+    function writeProfile(p) {
+        localStorage.setItem(PROFILE_KEY, JSON.stringify(p));
+    }
+
+    function renderTopicsView(topics) {
+        topicsView.innerHTML = '';
+        topics.forEach(t => {
+            const span = document.createElement('span');
+            span.className = 'pp-pill';
+            span.textContent = t;
+            topicsView.appendChild(span);
+        });
+    }
+
+    function getCurrentTopics() {
+        return Array.from(topicsView.querySelectorAll('.pp-pill'))
+            .map(el => el.textContent.trim())
+            .filter(Boolean);
+    }
+
+    function addTopicEditRow(value) {
+        const node = topicRowTemplate.content.firstElementChild.cloneNode(true);
+        node.querySelector('.topic-edit-input').value = value;
+        node.querySelector('.topic-remove-btn').addEventListener('click', () => {
+            node.remove();
+            updateAddTopicState();
+        });
+        topicEditList.appendChild(node);
+    }
+
+    function updateAddTopicState() {
+        const count = topicEditList.querySelectorAll('.topic-edit-row').length;
+        addTopicBtn.disabled = count >= MAX_TOPICS;
+        topicLimitHint.textContent = `${count} of ${MAX_TOPICS} topics.`;
+    }
+
+    function enterEditMode() {
+        nicheInput.value = nichePill.textContent.trim();
+        topicEditList.innerHTML = '';
+        getCurrentTopics().forEach(t => addTopicEditRow(t));
+        updateAddTopicState();
+        nichePill.hidden = true;
+        nicheInput.hidden = false;
+        topicsView.hidden = true;
+        topicsEdit.hidden = false;
+        editBtn.hidden = true;
+        saveBtn.hidden = false;
+        cancelBtn.hidden = false;
+        nicheInput.focus();
+        nicheInput.select();
+    }
+
+    function exitEditMode() {
+        nichePill.hidden = false;
+        nicheInput.hidden = true;
+        topicsView.hidden = false;
+        topicsEdit.hidden = true;
+        editBtn.hidden = false;
+        saveBtn.hidden = true;
+        cancelBtn.hidden = true;
+    }
+
+    if (editBtn) editBtn.addEventListener('click', enterEditMode);
+    if (cancelBtn) cancelBtn.addEventListener('click', exitEditMode);
+    if (saveBtn) saveBtn.addEventListener('click', () => {
+        const trimmedNiche = nicheInput.value.trim();
+        // If the user blanks the niche field, keep the prior value rather than
+        // saving an empty pill. Silently preserves prior state — flagged as a
+        // soft fallback per global instructions.
+        const newNiche = trimmedNiche || nichePill.textContent.trim();
+        const newTopics = Array.from(topicEditList.querySelectorAll('.topic-edit-input'))
+            .map(i => i.value.trim())
+            .filter(Boolean)
+            .slice(0, MAX_TOPICS);
+        nichePill.textContent = newNiche;
+        renderTopicsView(newTopics);
+        writeProfile({ niche: newNiche, topics: newTopics });
+        exitEditMode();
+    });
+    if (addTopicBtn) addTopicBtn.addEventListener('click', () => {
+        const count = topicEditList.querySelectorAll('.topic-edit-row').length;
+        if (count >= MAX_TOPICS) return;
+        addTopicEditRow('');
+        updateAddTopicState();
+        const inputs = topicEditList.querySelectorAll('.topic-edit-input');
+        if (inputs.length) inputs[inputs.length - 1].focus();
+    });
+
+    // On load: apply persisted profile (if any) over the rendered defaults.
+    const savedProfile = readProfile();
+    if (savedProfile) {
+        if (savedProfile.niche) nichePill.textContent = savedProfile.niche;
+        renderTopicsView(savedProfile.topics);
+    }
+})();
+</script>
+{% endblock %}

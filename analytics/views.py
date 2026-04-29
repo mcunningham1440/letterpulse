@@ -72,6 +72,7 @@ from .utils import (
     run_initial_learning_task,
     run_update_task,
     wipe_user_publication_data,
+    fetch_publication_stats,
 )
 
 
@@ -595,6 +596,66 @@ def insights_view(request):
     }
 
     return render(request, 'analytics/insights.html', context)
+
+
+@login_required
+@require_valid_api_credentials
+def monetize_view(request):
+    """
+    Frontend skeleton for the Monetize / sponsor-outreach campaign tab.
+    Resolves the current publication's name for the hero copy and pulls
+    live publication stats (subscribers / open rate / click rate) from
+    Beehiiv to display in the Newsletter profile card.
+    """
+    from .models import Publication
+
+    usage = UsageAccount.objects.get(user=request.user)
+    beehiiv_token, beehiiv_pub_id, _ = get_user_api_credentials(request.user)
+
+    # Resolve the newsletter name. We try the cached available_publications
+    # list first (matches what the user picked in the Account page), then
+    # fall back to the Publication row. The @require_valid_api_credentials
+    # decorator guarantees a pub_id exists, so the ultimate fallback
+    # ('your newsletter') is only reached if the Publication row is somehow
+    # missing — flagged as a silent fallback per global instructions.
+    newsletter_name = 'your newsletter'
+    pub = next(
+        (p for p in (usage.available_publications or [])
+         if p.get('id') == beehiiv_pub_id),
+        None,
+    )
+    if pub and pub.get('name'):
+        newsletter_name = pub['name']
+    else:
+        try:
+            newsletter_name = Publication.objects.get(pub_id=beehiiv_pub_id).name
+        except Publication.DoesNotExist:
+            pass
+
+    # Fetch publication stats from Beehiiv on every page load. No caching —
+    # the call is fast and the page is low-traffic. fetch_publication_stats
+    # returns None for any field that's missing or when the request fails;
+    # we render a "—" placeholder in those cases (silent fallback flagged
+    # per global instructions — a stats outage shouldn't break the page).
+    stats = async_to_sync(fetch_publication_stats)(beehiiv_token, beehiiv_pub_id)
+    subs = stats.get('active_subscriptions')
+    open_rate = stats.get('average_open_rate')
+    click_rate = stats.get('average_click_rate')
+
+    # Beehiiv returns average_open_rate / average_click_rate as percentage
+    # points (e.g. 51.16 == 51.16%), not as a 0-1 fraction — verified
+    # empirically against a live publication. We render directly without
+    # multiplying.
+    subscriber_count_display = f"{subs:,}" if subs is not None else "—"
+    open_rate_display = f"{open_rate:.1f}%" if open_rate is not None else "—"
+    click_rate_display = f"{click_rate:.1f}%" if click_rate is not None else "—"
+
+    return render(request, 'analytics/monetize.html', {
+        'newsletter_name': newsletter_name,
+        'subscriber_count_display': subscriber_count_display,
+        'open_rate_display': open_rate_display,
+        'click_rate_display': click_rate_display,
+    })
 
 
 @login_required

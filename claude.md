@@ -119,7 +119,18 @@ All models are in `analytics/models.py`. Key models and their relationships:
 - **Section/Link Data Tables**: Hidden by default, show all Sections and LinkData for current publication with CSV download
 - **Improvement Tips**: User selects any post (published or draft). Background task builds numbered prettified HTML, gathers link history, calls LLM with structured output (model returns tips referencing HTML line numbers), then inserts inline anchor `<span>`s into the live DOM (via BeautifulSoup) so logically-continuous paragraphs stay grouped even when split across many prettified lines by inline tags like `<a>`. Generates two-column annotated HTML with tip cards and SVG connectors. Downloaded as file
 
-### 2. Account Page (`/account/`)
+### 2. Monetize Page (`/monetize/`)
+- Frontend-only skeleton for sponsor-outreach campaigns. Backend (sponsor matching, email sending, billing) is **not** built. `monetize_view` resolves the current publication's name for the hero copy and pulls live publication stats (`active_subscriptions`, `average_open_rate`, `average_click_rate`) from Beehiiv via `fetch_publication_stats` (`GET /v2/publications/{id}?expand=stats`) on every page load — these populate the Audience line in the Newsletter profile card. Beehiiv returns the rate fields in percentage points (e.g. `51.16` == 51.16%), not as 0-1 fractions; the view formats them directly. A failed stats fetch silently falls back to "—" placeholders rather than erroring. Decorated with `@require_valid_api_credentials`, so users without configured Beehiiv creds are redirected to `/account/?setup=invalid`.
+- One page, three card sections (matching the Write page's section pattern but unnumbered): **Newsletter profile** (niche + audience + click-topic pills), **Campaign settings** (3-tab email sequence preview + 3 weekly-volume tier cards), **Campaign status** (state-dependent block).
+- "Edit profile" toggles the Newsletter profile card into edit mode: niche becomes a text input, click-topic pills become editable chips with × buttons + an "Add topic" button (capped at 5). Save persists to `localStorage['lp_monetize_profile_v1'] = { niche: string, topics: string[] }` and re-renders the read-only pills; Cancel reverts. Audience and the descriptive paragraph stay static.
+- Campaign status has 4 derived states. Persisted as `localStorage['lp_monetize_campaign_state_v1'] = { launch_at: ISO|null, cancelled: bool }`; the displayed state is computed from those two fields:
+  - `cancelled === true` → **cancelled** (cancellation message + "Start a new campaign" reset button)
+  - `launch_at === null` → **idle** ("Launch campaign" button)
+  - `launch_at > now` → **preparing** (Submitted→Preparing→Live timeline + ETA + Cancel link)
+  - `launch_at <= now` → **active** (status chip, replies callout, static stats strip with hardcoded Sent/Opened/Replied numbers, Pause + Cancel buttons)
+- "Launch campaign" sets `launch_at = now + 48h` and re-renders. "Cancel campaign" sets `cancelled: true`. All other buttons (Edit profile, Edit email 1, Pause, etc.) are visually present but inert. Email sequence tab switching and volume tier selection are interactive but not persisted.
+
+### 3. Account Page (`/account/`)
 - Single grid of cards: **Beehiiv API Credentials**, **AI Credits Usage**, **Account Information**, and (dev only) **Post Fetching** (last-fetch datetime, most-recent-published post, most-recent-processed post, and total/processed post counts). The Post Fetching card is hidden entirely in cloud/prod — it's a dev-only diagnostic.
 - No manual "Refresh Posts" or "Process Posts" controls exist anywhere; fetching and processing are fully automatic via the Learning/Update flows.
 
@@ -133,6 +144,7 @@ All routes use the `analytics:` namespace. See `analytics/urls.py` for the full 
 - **Learning / Update flow**: `/insights/learning/start/`, `/insights/learning/update/`, `/insights/learning/status/<uuid>/`, `/insights/learning/abandon/<uuid>/`
 - **Content Finder**: `/insights/content-finder/posts/`, `/insights/content-finder/run/`, `/insights/content-finder/confirm-plan/<uuid>/`, `/insights/content-finder/status/<uuid>/`, `/insights/content-finder/feedback/`
 - **Improvement Tips**: `/insights/improvement-tips/posts/`, `/insights/improvement-tips/run/`, `/insights/improvement-tips/status/<uuid>/`, `/insights/improvement-tips/download/<uuid>/`
+- **Monetize**: `/monetize/` (frontend-only — no API endpoints yet)
 - **Account**: `/account/`
 - **Feedback/Survey**: `/feedback/submit/`, `/survey/submit/`
 - **Cron**: `/cron/click-viz-status/`
