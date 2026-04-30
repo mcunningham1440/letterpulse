@@ -43,6 +43,17 @@
         color: #1e7e34;
         border-color: transparent;
     }
+    /* Empty-state pill for niche + topics: dashed muted chip prompting the
+       user to click "Edit profile" and fill the field in. Used both on first
+       visit (no processed posts, so no LLM analysis to seed defaults) and
+       whenever the user clears their saved value. */
+    .pp-pill.pp-pill-empty {
+        background: transparent;
+        color: #6c757d;
+        font-style: italic;
+        font-weight: 500;
+        border: 1px dashed #ced4da;
+    }
 
     /* ---- Profile edit mode ---- */
     .profile-edit-input { max-width: 18rem; }
@@ -520,11 +531,29 @@
                 <p class="text-muted mb-3" style="font-size: 0.8125rem;">
                     How we describe <strong>{{ newsletter_name }}</strong> to sponsors.
                 </p>
-                <div class="profile-grid">
+                <div class="profile-grid"
+                     data-niche-status="{{ niche_status }}"
+                     data-niche-task-id="{{ niche_task_id }}"
+                     id="profileGrid">
                     <div class="profile-stat">
                         <div class="profile-stat-label">Niche</div>
                         <div class="profile-stat-value">
-                            <span class="pp-pill strong" id="nichePill">AI &amp; developer tools</span>
+                            {% comment %}
+                                Niche pill server-side states:
+                                - status=running → "Analyzing…" placeholder (JS polls)
+                                - status=complete with non-empty niche → render the LLM niche
+                                - everything else (no LLM run, LLM returned empty, no processed
+                                  posts) → empty-state pill prompting the user to fill it in.
+                                  The empty pill is also re-rendered client-side whenever the
+                                  user saves a blank value.
+                            {% endcomment %}
+                            {% if niche_status == 'running' %}
+                                <span class="pp-pill strong" id="nichePill">Analyzing your newsletter…</span>
+                            {% elif niche_value %}
+                                <span class="pp-pill strong" id="nichePill">{{ niche_value }}</span>
+                            {% else %}
+                                <span class="pp-pill pp-pill-empty" id="nichePill" data-empty="true">Click 'Edit profile' to add your niche</span>
+                            {% endif %}
                             <input type="text" class="form-control form-control-sm profile-edit-input" id="nicheInput" maxlength="80" hidden>
                         </div>
                     </div>
@@ -536,11 +565,16 @@
                         <div class="profile-stat-label">Readers click most on</div>
                         <div class="profile-stat-value">
                             <div class="pp-pills" id="topicsView">
-                                <span class="pp-pill">Agentic frameworks</span>
-                                <span class="pp-pill">Model evals</span>
-                                <span class="pp-pill">Dev productivity</span>
-                                <span class="pp-pill">RAG pipelines</span>
-                                <span class="pp-pill">Open-source LLMs</span>
+                                {% if niche_status == 'running' %}
+                                    <span class="pp-pill">Analyzing topics…</span>
+                                {% elif content_types_value %}
+                                    {% for topic in content_types_value %}
+                                        <span class="pp-pill">{{ topic }}</span>
+                                    {% endfor %}
+                                {% else %}
+                                    {# Empty-state — same treatment as the niche pill. #}
+                                    <span class="pp-pill pp-pill-empty" data-empty="true">Click 'Edit profile' to add the topics readers click on most</span>
+                                {% endif %}
                             </div>
                             <div id="topicsEdit" hidden>
                                 <div class="topic-edit-list" id="topicEditList"></div>
@@ -612,7 +646,7 @@
 
 I run sponsorships for <mark>{{ newsletter_name }}</mark> — a newsletter for <mark>14,200 AI engineers</mark> and ML practitioners.
 
-Our last three issues, readers clicked most on <mark>model evals and observability</mark> — which is exactly what <mark>Braintrust</mark> is building.
+Our last three issues, readers clicked most on <mark>model evals and observability</mark> — which is exactly what <mark>AnyBiz</mark> is building.
 
 Open to exploring a sponsorship? Happy to send our media kit.
 
@@ -640,7 +674,7 @@ Akshay</div>
 
 Bumping this up — wanted to make sure it didn't get buried.
 
-Quick recap: <mark>14,200 engineers</mark> reading <mark>{{ newsletter_name }}</mark>, with strong engagement on <mark>evals and observability</mark>. Feels like a natural fit for <mark>Braintrust</mark>.
+Quick recap: <mark>14,200 engineers</mark> reading <mark>{{ newsletter_name }}</mark>, with strong engagement on <mark>evals and observability</mark>. Feels like a natural fit for <mark>AnyBiz</mark>.
 
 Worth a 15-min call this week?
 
@@ -676,23 +710,23 @@ Akshay</div>
                 <div class="mt-4">
                     <div class="section-subhead">Weekly outreach volume</div>
                     <div class="volume-grid">
-                        <div class="volume-card" data-vol="light">
-                            <div class="vol-label">Light</div>
-                            <div class="vol">250</div>
-                            <div class="per-week">emails / week</div>
-                            <div class="price">$79 / month</div>
-                        </div>
-                        <div class="volume-card selected" data-vol="recommended">
-                            <div class="vol-label">Recommended</div>
+                        <div class="volume-card" data-vol="starter">
+                            <div class="vol-label">Starter</div>
                             <div class="vol">500</div>
                             <div class="per-week">emails / week</div>
-                            <div class="price">$129 / month</div>
+                            <div class="price">$10 / month</div>
                         </div>
-                        <div class="volume-card" data-vol="max">
-                            <div class="vol-label">Maximum reach</div>
+                        <div class="volume-card selected" data-vol="pro">
+                            <div class="vol-label">Pro</div>
                             <div class="vol">1,000</div>
                             <div class="per-week">emails / week</div>
-                            <div class="price">$199 / month</div>
+                            <div class="price">$17 / month</div>
+                        </div>
+                        <div class="volume-card" data-vol="max">
+                            <div class="vol-label">Max</div>
+                            <div class="vol">5,000</div>
+                            <div class="per-week">emails / week</div>
+                            <div class="price">$60 / month</div>
                         </div>
                     </div>
                 </div>
@@ -746,7 +780,7 @@ Akshay</div>
                         </div>
 
                         <div class="prep-note">
-                            We're finalizing your sponsor list and warming up your outreach. You'll get an email the moment your first batch sends — and again every time a sponsor replies.
+                            We're finalizing your sponsor list and warming up your outreach. You'll get an email the moment your first batch sends, and again every time a sponsor replies.
                         </div>
 
                         <div class="prep-actions">
@@ -965,6 +999,9 @@ Akshay</div>
     const saveBtn          = document.getElementById('profileSaveBtn');
     const cancelBtn        = document.getElementById('profileCancelBtn');
 
+    const NICHE_EMPTY_TEXT  = "Click 'Edit profile' to add your niche";
+    const TOPICS_EMPTY_TEXT = "Click 'Edit profile' to add the topics readers click on most";
+
     function readProfile() {
         try {
             const raw = localStorage.getItem(PROFILE_KEY);
@@ -986,18 +1023,48 @@ Akshay</div>
         localStorage.setItem(PROFILE_KEY, JSON.stringify(p));
     }
 
+    function setNiche(niche) {
+        // Render the niche pill in either the value state (green ".strong"
+        // pill) or the empty state (dashed muted pill prompting the user to
+        // click "Edit profile"). The two states share id="nichePill" so
+        // outside references stay valid.
+        const trimmed = (niche || '').trim();
+        if (trimmed) {
+            nichePill.className = 'pp-pill strong';
+            nichePill.textContent = trimmed;
+            delete nichePill.dataset.empty;
+        } else {
+            nichePill.className = 'pp-pill pp-pill-empty';
+            nichePill.textContent = NICHE_EMPTY_TEXT;
+            nichePill.dataset.empty = 'true';
+        }
+    }
+
     function renderTopicsView(topics) {
         topicsView.innerHTML = '';
-        topics.forEach(t => {
+        if (topics && topics.length) {
+            topics.forEach(t => {
+                const span = document.createElement('span');
+                span.className = 'pp-pill';
+                span.textContent = t;
+                topicsView.appendChild(span);
+            });
+        } else {
             const span = document.createElement('span');
-            span.className = 'pp-pill';
-            span.textContent = t;
+            span.className = 'pp-pill pp-pill-empty';
+            span.dataset.empty = 'true';
+            span.textContent = TOPICS_EMPTY_TEXT;
             topicsView.appendChild(span);
-        });
+        }
+    }
+
+    function getCurrentNiche() {
+        return nichePill.dataset.empty === 'true' ? '' : nichePill.textContent.trim();
     }
 
     function getCurrentTopics() {
         return Array.from(topicsView.querySelectorAll('.pp-pill'))
+            .filter(el => el.dataset.empty !== 'true')
             .map(el => el.textContent.trim())
             .filter(Boolean);
     }
@@ -1019,7 +1086,7 @@ Akshay</div>
     }
 
     function enterEditMode() {
-        nicheInput.value = nichePill.textContent.trim();
+        nicheInput.value = getCurrentNiche();
         topicEditList.innerHTML = '';
         getCurrentTopics().forEach(t => addTopicEditRow(t));
         updateAddTopicState();
@@ -1047,18 +1114,21 @@ Akshay</div>
     if (editBtn) editBtn.addEventListener('click', enterEditMode);
     if (cancelBtn) cancelBtn.addEventListener('click', exitEditMode);
     if (saveBtn) saveBtn.addEventListener('click', () => {
-        const trimmedNiche = nicheInput.value.trim();
-        // If the user blanks the niche field, keep the prior value rather than
-        // saving an empty pill. Silently preserves prior state — flagged as a
-        // soft fallback per global instructions.
-        const newNiche = trimmedNiche || nichePill.textContent.trim();
+        // Empty values are intentionally allowed — they re-render the
+        // "Click 'Edit profile' to add" prompt pills. The act of saving (even
+        // an empty profile) commits the user to manual control: the niche
+        // analysis poll handler will not overwrite their choices afterward.
+        const newNiche = nicheInput.value.trim();
         const newTopics = Array.from(topicEditList.querySelectorAll('.topic-edit-input'))
             .map(i => i.value.trim())
             .filter(Boolean)
             .slice(0, MAX_TOPICS);
-        nichePill.textContent = newNiche;
+        setNiche(newNiche);
         renderTopicsView(newTopics);
         writeProfile({ niche: newNiche, topics: newTopics });
+        // Make subsequent poll completions respect the just-saved state, even
+        // if the LLM finishes after this save.
+        savedProfile = { niche: newNiche, topics: newTopics };
         exitEditMode();
     });
     if (addTopicBtn) addTopicBtn.addEventListener('click', () => {
@@ -1071,10 +1141,80 @@ Akshay</div>
     });
 
     // On load: apply persisted profile (if any) over the rendered defaults.
-    const savedProfile = readProfile();
+    // Empty saved values are honored — the helper functions render the
+    // empty-state prompt pills in that case. `let` (not `const`) because
+    // the save handler reassigns this on every save.
+    let savedProfile = readProfile();
     if (savedProfile) {
-        if (savedProfile.niche) nichePill.textContent = savedProfile.niche;
-        renderTopicsView(savedProfile.topics);
+        setNiche(savedProfile.niche || '');
+        renderTopicsView(savedProfile.topics || []);
+    }
+
+    // ====================================================================
+    // -- Niche analysis polling (Monetize-tab one-shot LLM call) --
+    // The server kicks off the analysis on first visit when the user has
+    // processed posts. While it runs, the niche pill and topics show
+    // "Analyzing…" placeholders. We poll until status flips to complete
+    // (or error) and replace the placeholders with the LLM result.
+    //
+    // Priority on completion: any saved profile > LLM result. Once the user
+    // has hit Save (even to clear everything), they own the profile state and
+    // the LLM result no longer overrides it.
+    // ====================================================================
+    const profileGrid = document.getElementById('profileGrid');
+    const initialNicheStatus = profileGrid ? profileGrid.dataset.nicheStatus : '';
+    const nicheTaskId = profileGrid ? profileGrid.dataset.nicheTaskId : '';
+
+    function userHasManualEdits() {
+        // True once the user has saved at least once. Empty-but-saved counts
+        // — clearing the field is itself a deliberate choice and shouldn't
+        // be overwritten by an in-flight analysis.
+        return savedProfile !== null;
+    }
+
+    async function pollNicheAnalysis() {
+        if (!nicheTaskId) return;
+        const url = `/monetize/niche-analysis/status/${nicheTaskId}/`;
+        // Cap the wait at ~3 minutes — the call is gpt-5.4 with medium
+        // reasoning and should complete in well under that. After the cap,
+        // we silently stop polling (flagged as soft fallback per global
+        // instructions): the placeholder remains and the user can refresh.
+        const MAX_ATTEMPTS = 60;  // 60 * 3s = 3 min
+        for (let i = 0; i < MAX_ATTEMPTS; i++) {
+            await new Promise(r => setTimeout(r, 3000));
+            let data;
+            try {
+                const resp = await fetch(url, {
+                    headers: { 'X-Requested-With': 'XMLHttpRequest' },
+                });
+                data = await resp.json();
+            } catch (e) {
+                // Transient network error — keep trying.
+                continue;
+            }
+            if (!data || !data.success) continue;
+            if (data.status === 'complete') {
+                if (userHasManualEdits()) return;
+                const llmNiche = (data.niche || '').trim();
+                const llmTypes = Array.isArray(data.content_types) ? data.content_types : [];
+                // setNiche / renderTopicsView swap into the empty-state pill
+                // prompt automatically when the LLM returned a blank value,
+                // so a no-content_types result still shows the right UI.
+                setNiche(llmNiche);
+                renderTopicsView(llmTypes);
+                return;
+            }
+            if (data.status === 'error') {
+                // Silently leave placeholders in place. This is a low-stakes
+                // background analysis; surfacing an error toast on a tab the
+                // user just landed on would be jarring.
+                return;
+            }
+        }
+    }
+
+    if (initialNicheStatus === 'running' && nicheTaskId) {
+        pollNicheAnalysis();
     }
 })();
 </script>

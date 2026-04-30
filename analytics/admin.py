@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Post, UsageAccount, Publication, ExecutionLog, LLMCall, SurveyResponse, ProcessedPost, LinkData, Section, ClickVizEmailLog, CronRunLog, PendingContentSearch, ContentSearchFeedback, PendingLearningTask
+from .models import Post, UsageAccount, Publication, ExecutionLog, LLMCall, SurveyResponse, ProcessedPost, LinkData, Section, ClickVizEmailLog, CronRunLog, PendingContentSearch, ContentSearchFeedback, PendingLearningTask, PendingNicheAnalysis
 
 
 @admin.register(UsageAccount)
@@ -151,6 +151,23 @@ class PendingLearningTaskAdmin(admin.ModelAdmin):
     search_fields = ('user__email', 'publication__name')
     ordering = ('-created_at',)
     readonly_fields = ('task_id', 'created_at', 'updated_at', 'last_heartbeat')
+
+
+@admin.register(PendingNicheAnalysis)
+class PendingNicheAnalysisAdmin(admin.ModelAdmin):
+    list_display = ('task_id', 'user', 'publication', 'status', 'niche',
+                    'content_type_count', 'created_at')
+    list_filter = ('status', 'created_at')
+    search_fields = ('user__email', 'publication__name', 'niche')
+    ordering = ('-created_at',)
+    readonly_fields = (
+        'task_id', 'created_at', 'niche', 'content_types',
+        'dev_panel_data', 'error_message',
+    )
+
+    def content_type_count(self, obj):
+        return len(obj.content_types or [])
+    content_type_count.short_description = 'types'
 
 
 @admin.register(SurveyResponse)

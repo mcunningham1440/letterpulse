@@ -305,6 +305,15 @@ IMPROVEMENT_TIPS_MODEL = "gpt-5.4-mini"
 IMPROVEMENT_TIPS_REASONING = "medium"
 
 # =============================================================================
+# Niche Analysis Configuration (Monetize tab first-visit setup)
+# =============================================================================
+NICHE_ANALYSIS_MODEL = "gpt-5.4"
+NICHE_ANALYSIS_REASONING = "medium"
+NICHE_ANALYSIS_RECENT_POSTS = 3       # Number of recent processed posts to feed in as text
+NICHE_ANALYSIS_LINK_HISTORY_ISSUES = 10  # Window of issues for the per-section link history
+NICHE_ANALYSIS_TOP_LINKS_PER_SECTION = 5  # Top-CTR links per section to include in the prompt
+
+# =============================================================================
 # LLM Pricing (per million tokens) — local dev panel only
 # =============================================================================
 LLM_PRICING = {
