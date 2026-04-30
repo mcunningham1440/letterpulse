@@ -635,6 +635,50 @@ class PendingLearningTask(models.Model):
         return f"PendingLearningTask {self.task_id} ({self.kind}/{self.status})"
 
 
+class PendingNicheAnalysis(models.Model):
+    """
+    Tracks the one-shot Monetize-tab niche analysis: an LLM call that reads the
+    text of the user's last 3 processed posts plus the best-performing links per
+    section over the last 10 issues, and returns a niche label + 5 highly-clicked
+    content types. Result rows act as the cache — the most recent 'complete' row
+    for (user, publication) is reused on subsequent visits.
+    """
+
+    task_id = models.UUIDField(default=uuid.uuid4, unique=True)
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='pending_niche_analyses',
+    )
+    publication = models.ForeignKey(
+        Publication,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
+    status = models.CharField(
+        max_length=20,
+        default='pending',
+        help_text="pending, running, complete, or error",
+    )
+    niche = models.CharField(max_length=255, blank=True, default='')
+    content_types = models.JSONField(default=list, blank=True)
+    error_message = models.TextField(blank=True)
+    dev_panel_data = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['user', 'publication', '-created_at']),
+        ]
+        verbose_name = "Pending Niche Analysis"
+        verbose_name_plural = "Pending Niche Analyses"
+
+    def __str__(self):
+        return f"PendingNicheAnalysis {self.task_id} ({self.status})"
+
+
 class SurveyResponse(models.Model):
     """Stores user responses to the signup survey"""
 

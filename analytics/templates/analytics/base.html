@@ -445,6 +445,13 @@
                 </a>
             </li>
             <li class="nav-item">
+                <a class="nav-link {% if request.resolver_match.url_name == 'monetize' %}active{% endif %}"
+                   href="{% url 'analytics:monetize' %}" title="Monetize">
+                    <i class="bi bi-cash-coin"></i>
+                    <span class="nav-link-text">Monetize</span>
+                </a>
+            </li>
+            <li class="nav-item">
                 <a class="nav-link {% if request.resolver_match.url_name == 'account' %}active{% endif %}"
                    href="{% url 'analytics:account' %}" title="Account">
                     <i class="bi bi-person-gear"></i>
