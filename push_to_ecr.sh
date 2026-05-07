@@ -2,7 +2,7 @@
 set -e
 
 AWS_REGION="us-east-1"
-AWS_ACCOUNT_ID="093239908030"
+AWS_ACCOUNT_ID="${AWS_ACCOUNT_ID:?AWS_ACCOUNT_ID env var must be set}"
 ECR_REPO="letterpulse"
 
 # Parse environment flag (default: dev)

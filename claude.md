@@ -165,7 +165,9 @@ source .venv/bin/activate && python manage.py runserver
 Or run via Docker: `./run_local.sh` (builds ARM64 image, runs on port 8000).
 
 ### Cloud Mode (AWS App Runner via ECR)
+Requires `AWS_ACCOUNT_ID` to be exported in the shell (the script errors out if unset).
 ```bash
+export AWS_ACCOUNT_ID=<12-digit-account-id>
 ./push_to_ecr.sh dev    # Pushes to letterpulse:dev-latest
 ./push_to_ecr.sh prod   # Pushes to letterpulse:prod-latest
 ./push_to_ecr.sh both   # Pushes to both
