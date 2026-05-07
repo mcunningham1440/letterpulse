@@ -291,9 +291,9 @@ def account_view(request):
                     email.send()
 
                     messages.success(request, f"Test email sent to {request.user.email}.")
-                except Exception as e:
-                    logger.error(f"Test click viz email failed: {e}", exc_info=True)
-                    messages.error(request, f"Failed to send test email: {str(e)}")
+                except Exception:
+                    logger.exception("Test click viz email failed")
+                    messages.error(request, "Failed to send test email.")
             return redirect('analytics:account')
 
         elif action == 'switch_publication':
@@ -766,8 +766,9 @@ def load_processed_data(request):
             'items': items,
         })
 
-    except Exception as e:
-        return JsonResponse({'success': False, 'error': str(e)}, status=500)
+    except Exception:
+        logger.exception("load_processed_data failed")
+        return JsonResponse({'success': False}, status=500)
 
 
 @login_required
@@ -821,8 +822,9 @@ def load_link_data(request):
             'items': items,
         })
 
-    except Exception as e:
-        return JsonResponse({'success': False, 'error': str(e)}, status=500)
+    except Exception:
+        logger.exception("load_link_data failed")
+        return JsonResponse({'success': False}, status=500)
 
 
 # =============================================================================
@@ -966,9 +968,14 @@ def abandon_learning_task(request, task_id):
     from the runner thread. If the runner thread is dead, the stale-sweep
     does the wipe when `last_heartbeat` ages out.
 
-    CSRF-exempt because `sendBeacon` cannot set custom headers; the view is
-    still session-authenticated and can only affect the caller's own tasks.
+    CSRF-exempt because `sendBeacon` cannot set custom headers. We instead
+    enforce that the request's Origin header matches one of our trusted
+    origins; sendBeacon always sends Origin, so legit beacons still pass.
     """
+    origin = request.META.get('HTTP_ORIGIN', '')
+    if origin not in settings.CSRF_TRUSTED_ORIGINS:
+        return JsonResponse({'success': False, 'error': 'Forbidden'}, status=403)
+
     try:
         task = PendingLearningTask.objects.get(task_id=task_id, user=request.user)
     except PendingLearningTask.DoesNotExist:
@@ -1021,8 +1028,9 @@ def content_finder_posts(request):
             p.pop('publish_date_ts', None)
 
         return JsonResponse({'success': True, 'posts': posts})
-    except Exception as e:
-        return JsonResponse({'success': False, 'error': str(e)}, status=500)
+    except Exception:
+        logger.exception("content_finder_posts failed")
+        return JsonResponse({'success': False}, status=500)
 
 
 @login_required
@@ -1173,13 +1181,13 @@ def submit_content_search_feedback(request):
     ContentSearchFeedback.objects.update_or_create(
         user=request.user,
         publication=publication,
-        url=url,
+        url=url[:2000],
         defaults={
             'title': data.get('title', '')[:500],
             'source': data.get('source', '')[:255],
             'pub_date': data.get('date', '')[:100],
-            'description': data.get('description', ''),
-            'relevance': data.get('relevance', ''),
+            'description': data.get('description', '')[:4096],
+            'relevance': data.get('relevance', '')[:4096],
             'feedback': feedback_val,
         },
     )
@@ -1218,8 +1226,9 @@ def improvement_tips_posts(request):
             })
 
         return JsonResponse({'success': True, 'posts': posts})
-    except Exception as e:
-        return JsonResponse({'success': False, 'error': str(e)}, status=500)
+    except Exception:
+        logger.exception("improvement_tips_posts failed")
+        return JsonResponse({'success': False}, status=500)
 
 
 @login_required
@@ -1355,6 +1364,9 @@ def poll_niche_analysis(request, task_id):
     return JsonResponse(resp)
 
 
+SUBMITTABLE_FEEDBACK_FEATURES = {'write_post', 'seen_write_post_poll'}
+
+
 @login_required
 @require_POST
 def submit_feedback(request):
@@ -1366,13 +1378,14 @@ def submit_feedback(request):
         response = data.get('response', '')
         if not feature or not response:
             return JsonResponse({'success': False, 'error': 'Missing fields'}, status=400)
+        if feature not in SUBMITTABLE_FEEDBACK_FEATURES:
+            return JsonResponse({'success': False, 'error': 'Invalid feature'}, status=400)
 
         Feedback.objects.update_or_create(
             user=request.user,
             feature=feature,
-            defaults={'response': response},
+            defaults={'response': str(response)[:255]},
         )
-        # Track write post poll usage for coach marks
         if feature == 'write_post':
             Feedback.objects.get_or_create(
                 user=request.user, feature='used_write_post_poll',
@@ -1380,6 +1393,7 @@ def submit_feedback(request):
             )
         return JsonResponse({'success': True})
     except Exception:
+        logger.exception("submit_feedback failed")
         return JsonResponse({'success': False}, status=500)
 
 
@@ -1392,8 +1406,8 @@ def submit_survey(request):
     try:
         # Parse the response
         beehiiv_inadequate = request.POST.get('beehiiv_inadequate')
-        missing_features = request.POST.get('missing_features', '').strip()
-        other_tools = request.POST.get('other_tools', '').strip()
+        missing_features = request.POST.get('missing_features', '').strip()[:4096]
+        other_tools = request.POST.get('other_tools', '').strip()[:4096]
 
         # Convert yes/no to boolean
         if beehiiv_inadequate == 'yes':
@@ -1426,11 +1440,9 @@ def submit_survey(request):
             'message': 'Survey submitted successfully!'
         })
 
-    except Exception as e:
-        return JsonResponse({
-            'success': False,
-            'error': str(e)
-        }, status=500)
+    except Exception:
+        logger.exception("submit_survey failed")
+        return JsonResponse({'success': False}, status=500)
 
 
 

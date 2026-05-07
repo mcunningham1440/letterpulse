@@ -4,9 +4,13 @@ Custom Django model fields for secure data storage.
 
 import base64
 import hashlib
+import logging
 from django.conf import settings
 from django.db import models
 from cryptography.fernet import Fernet, InvalidToken
+
+
+logger = logging.getLogger(__name__)
 
 
 def get_encryption_key() -> bytes:
@@ -54,10 +58,6 @@ class EncryptedCharField(models.CharField):
         if value is None or value == '':
             return value
 
-        # Don't re-encrypt if already encrypted
-        if self._is_encrypted(value):
-            return value
-
         fernet = self.get_fernet()
         encrypted = fernet.encrypt(value.encode('utf-8'))
         return encrypted.decode('utf-8')
@@ -67,9 +67,7 @@ class EncryptedCharField(models.CharField):
         if value is None or value == '':
             return value
 
-        # Check if this looks like encrypted data
         if not self._is_encrypted(value):
-            # Return as-is (might be legacy unencrypted data)
             return value
 
         try:
@@ -77,8 +75,10 @@ class EncryptedCharField(models.CharField):
             decrypted = fernet.decrypt(value.encode('utf-8'))
             return decrypted.decode('utf-8')
         except InvalidToken:
-            # If decryption fails, return empty string for safety
-            # This can happen if SECRET_KEY changed or data is corrupted
+            logger.error(
+                "EncryptedCharField: InvalidToken on decrypt for field=%s",
+                getattr(self, 'name', '?'),
+            )
             return ''
 
     def _is_encrypted(self, value: str) -> bool:

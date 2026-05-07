@@ -989,13 +989,15 @@
     // =========================================================================
     function truncateText(text, maxLength) {
         if (!text) return '';
-        if (text.length <= maxLength) return text;
+        if (text.length <= maxLength) return escapeHtml(text);
         const short = text.substring(0, maxLength);
+        const safeShort = escapeHtml(short);
+        const safeFull = escapeHtml(text);
         return '<span class="truncated-text" style="display:inline-flex;align-items:flex-start;gap:4px;">' +
             '<a href="#" class="text-toggle text-muted" onclick="toggleText(event, this)" style="font-size:0.75em;text-decoration:none;flex-shrink:0;line-height:1.5;">&#9654;</a>' +
             '<span>' +
-                '<span class="text-short">' + short + '</span>' +
-                '<span class="text-full" style="display:none;">' + text + '</span>' +
+                '<span class="text-short">' + safeShort + '</span>' +
+                '<span class="text-full" style="display:none;">' + safeFull + '</span>' +
             '</span>' +
             '</span>';
     }
@@ -1040,10 +1042,10 @@
         items.forEach(item => {
             const row = document.createElement('tr');
             row.innerHTML = `
-                <td>${item.post_title}</td>
-                <td data-order="${item.post_date_sortable}">${item.post_date_display}</td>
-                <td>${item.section_name}</td>
-                <td>${item.section_title || ''}</td>
+                <td>${escapeHtml(item.post_title)}</td>
+                <td data-order="${escapeHtml(item.post_date_sortable)}">${escapeHtml(item.post_date_display)}</td>
+                <td>${escapeHtml(item.section_name)}</td>
+                <td>${escapeHtml(item.section_title || '')}</td>
                 <td class="text-end">${item.start_line}</td>
                 <td class="text-end">${item.end_line}</td>
             `;
@@ -1074,9 +1076,9 @@
         items.forEach(item => {
             const row = document.createElement('tr');
             row.innerHTML = `
-                <td>${item.post_title}</td>
-                <td data-order="${item.post_date_sortable}">${item.post_date_display}</td>
-                <td>${item.section_name}</td>
+                <td>${escapeHtml(item.post_title)}</td>
+                <td data-order="${escapeHtml(item.post_date_sortable)}">${escapeHtml(item.post_date_display)}</td>
+                <td>${escapeHtml(item.section_name)}</td>
                 <td>${truncateText(item.raw_url, 60)}</td>
                 <td>${truncateText(item.description, 80)}</td>
                 <td class="text-end">${item.rank_in_section}</td>
@@ -1293,8 +1295,8 @@
         const confirmBtn = document.getElementById('cfPlanConfirmBtn');
         const cancelBtn = document.getElementById('cfPlanCancelBtn');
 
-        if (typeof marked !== 'undefined' && marked.parse) {
-            body.innerHTML = marked.parse(planText);
+        if (typeof marked !== 'undefined' && marked.parse && typeof DOMPurify !== 'undefined') {
+            body.innerHTML = DOMPurify.sanitize(marked.parse(planText));
             body.style.whiteSpace = 'normal';
         } else {
             body.textContent = planText;

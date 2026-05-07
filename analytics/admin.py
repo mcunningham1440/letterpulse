@@ -6,13 +6,18 @@ from .models import Post, UsageAccount, Publication, ExecutionLog, LLMCall, Surv
 class UsageAccountAdmin(admin.ModelAdmin):
     list_display = (
         'user', 'monthly_quota', 'used_this_period', 'period_start',
-        'beehiiv_token', 'beehiiv_pub_id', 'api_key_valid', 'survey_completed',
+        'masked_token_display', 'beehiiv_pub_id', 'api_key_valid', 'survey_completed',
         'auto_click_viz_email', 'created_at', 'updated_at'
     )
     list_filter = ('period_start', 'api_key_valid', 'survey_completed', 'auto_click_viz_email')
     search_fields = ('user__email', 'beehiiv_pub_id')
     ordering = ('-period_start',)
-    readonly_fields = ('remaining_display', 'created_at', 'updated_at')
+    exclude = ('beehiiv_token',)
+    readonly_fields = ('masked_token_display', 'remaining_display', 'created_at', 'updated_at')
+
+    def masked_token_display(self, obj):
+        return obj.masked_token or '—'
+    masked_token_display.short_description = 'Beehiiv Token'
 
     def remaining_display(self, obj):
         return f"{obj.remaining} credits remaining"

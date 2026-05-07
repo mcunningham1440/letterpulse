@@ -19,10 +19,8 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # SECURITY WARNING: keep the secret key used in production secret!
 SECRET_KEY = os.environ["SECRET_KEY"]
 
-# SECURITY WARNING: don't run with debug turned on in production!
-# ENVIRONMENT should be 'dev', 'prod', or 'local' (defaults to 'local' for local development)
 ENVIRONMENT = os.environ.get('ENVIRONMENT', 'local')
-DEBUG = ENVIRONMENT != 'prod'
+DEBUG = ENVIRONMENT == 'local'
 
 CSRF_TRUSTED_ORIGINS = [
     "https://qp4y3etffq.us-east-1.awsapprunner.com",
@@ -106,6 +104,9 @@ WSGI_APPLICATION = 'beehiiv_analytics.wsgi.application'
 
 db_secret = json.loads(os.environ["DATABASE_SECRET"])
 db_host = os.environ["DB_HOST"]
+_db_options = {}
+if 'rds.amazonaws.com' in (db_host or ''):
+    _db_options['sslmode'] = 'require'
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql',
@@ -114,6 +115,7 @@ DATABASES = {
         'PASSWORD': db_secret['password'],
         'HOST': db_host,
         'PORT': "5432",
+        'OPTIONS': _db_options,
     }
 }
 
@@ -172,6 +174,19 @@ LOGGING = {
 }
 
 
+if ENVIRONMENT != 'local':
+    SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
+    SECURE_SSL_REDIRECT = True
+    SECURE_HSTS_SECONDS = 60 * 60 * 24 * 365
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+    SECURE_HSTS_PRELOAD = False
+    SECURE_REFERRER_POLICY = 'same-origin'
+    SECURE_CONTENT_TYPE_NOSNIFF = True
+    SESSION_COOKIE_HTTPONLY = True
+
+
 # Default primary key field type
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
@@ -189,6 +204,15 @@ ACCOUNT_SESSION_REMEMBER = True
 ACCOUNT_UNIQUE_EMAIL = True
 ACCOUNT_ADAPTER = 'analytics.adapters.CustomAccountAdapter'
 ACCOUNT_FORMS = {'signup': 'analytics.forms.CustomSignupForm'}
+ACCOUNT_RATE_LIMITS = {
+    'login_failed': '5/5m',
+    'signup': '5/h',
+    'reset_password': '5/h',
+    'reset_password_email': '5/h',
+    'change_password': '5/h',
+    'manage_email': '10/h',
+    'confirm_email': '10/h',
+}
 
 # Email settings
 EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
