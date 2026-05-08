@@ -23,7 +23,6 @@ import html as html_module
 from bs4 import BeautifulSoup, NavigableString
 from django.conf import settings
 from django.db import transaction
-from django.db.models import F
 from Levenshtein import distance as levenshtein_distance
 from dotenv import load_dotenv
 from analytics.prompts import (
@@ -141,7 +140,10 @@ def charge_credits(user, credits_to_charge: int):
                 f"but this operation requires {credits_to_charge}."
             )
 
-        usage.used_this_period = F("used_this_period") + credits_to_charge
+        # Plain-int assignment (not F()) so an in-memory reset from
+        # ensure_current_period() actually persists. select_for_update() above
+        # already locks the row, so F()'s atomicity benefit is redundant.
+        usage.used_this_period = usage.used_this_period + credits_to_charge
         usage.save(update_fields=['used_this_period', 'period_start'])
 
 

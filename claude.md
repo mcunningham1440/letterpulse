@@ -175,7 +175,7 @@ Beehiiv API credentials are per-user (configured in Account page), not environme
 ## Key Architecture Notes
 
 ### Credit System
-Credit costs and configuration constants are in `settings.py` (search for `CREDITS_PER_*`, `DEFAULT_MONTHLY_CREDITS`). Credits charged at the view level before each AI operation. Billing resets on user's signup anniversary each month.
+Credit costs and configuration constants are in `settings.py` (search for `CREDITS_PER_*`, `DEFAULT_MONTHLY_CREDITS`). Credits charged at the view level before each AI operation via `utils.charge_credits`, which wraps a `select_for_update()` lock around `UsageAccount.ensure_current_period()` and the quota check. Billing resets on user's signup anniversary each month — `ensure_current_period()` lazily recalculates `period_start` and zeroes `used_this_period` on rollover, clamping the billing day to the last day of short months (e.g. Jan 31 signup → Feb 28 in non-leap years). Because the rollover mutates `used_this_period` in memory, `charge_credits` writes the new total as a plain Python int (NOT `F("used_this_period") + n`) so the reset actually persists.
 
 ### LLM Dev Panel (local mode only)
 When `ENVIRONMENT == 'local'`, a floating panel appears after LLM-powered workflows showing per-call details (model, prompts, runtime, tokens, costs). Architecture:
@@ -190,3 +190,21 @@ Content Finder and Improvement Tips both use the same pattern: create a Pending*
 
 - The `sandboxes/`, `testing_data/`, and `code_dump/` directories are for development/testing
 - Time zone is set to `America/Chicago` in settings
+
+### Automated tests
+
+Tests live in `analytics/tests/` (e.g. `test_credits.py`) and run against a dedicated test settings module that uses an in-memory SQLite DB so they never touch RDS.
+
+Run from the project root:
+```bash
+.venv/bin/python manage.py test analytics --settings=beehiiv_analytics.test_settings
+```
+
+`beehiiv_analytics/test_settings.py`:
+- Imports from `settings.py` and overrides `DATABASES` to SQLite `:memory:`.
+- Provides `os.environ.setdefault(...)` defaults for `SECRET_KEY`, `OPENAI_API_KEY`, `DATABASE_SECRET`, `DB_HOST`, `ENVIRONMENT` so tests run without a real `.env`.
+- Uses `EMAIL_BACKEND = locmem` and blanks `SIGNUP_NOTIFICATION_EMAIL` so the post_save signal on `User` doesn't try to send mail. Tests should additionally patch `analytics.signals._send_welcome_email` (see `_CreditTestBase` in `test_credits.py`) to suppress the welcome-email daemon thread.
+- Sets `MIGRATION_MODULES` to a sentinel that disables migrations — Django creates schema directly from models. This sidesteps `analytics/migrations/0022_update_site_domain.py`, which references the `sites` app via `apps.get_model("sites", "Site")` without declaring `("sites", "0001_initial")` as a dependency. Real migrations still run in deployed envs (the Dockerfile invokes `migrate`).
+- Switches `PASSWORD_HASHERS` to MD5 for speed.
+
+When adding new test files, prefer subclassing a base class that suppresses the welcome-email signal (or use `mock.patch("analytics.signals._send_welcome_email")` per test). The signal's daemon thread calls `user.refresh_from_db()` and can race with SQLite teardown.
