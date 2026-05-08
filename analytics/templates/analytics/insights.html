@@ -1132,75 +1132,46 @@
     {% endif %}
 
     // =========================================================================
-    // Download CSV
+    // Download CSVs (helper in static/analytics/js/csv.js)
     // =========================================================================
     document.getElementById('downloadCsvBtn')?.addEventListener('click', function() {
         if (!allItems || allItems.length === 0) {
             showToast('No data to download.', 'warning');
             return;
         }
-
-        const headers = ['Post Title', 'Post Date', 'Section Name', 'Section Title', 'Start Line', 'End Line'];
-        const rows = allItems.map(item => [
-            item.post_title || '',
-            item.post_date_display || '',
-            item.section_name || '',
-            item.section_title || '',
-            item.start_line || 0,
-            item.end_line || 0
-        ]);
-
-        let csv = headers.map(h => '"' + h.replace(/"/g, '""') + '"').join(',') + '\n';
-        rows.forEach(row => {
-            csv += row.map(val => '"' + String(val).replace(/"/g, '""') + '"').join(',') + '\n';
-        });
-
-        const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = 'section_data.csv';
-        document.body.appendChild(a);
-        a.click();
-        URL.revokeObjectURL(url);
-        document.body.removeChild(a);
+        downloadCsv(
+            'section_data.csv',
+            ['Post Title', 'Post Date', 'Section Name', 'Section Title', 'Start Line', 'End Line'],
+            allItems.map(item => [
+                item.post_title || '',
+                item.post_date_display || '',
+                item.section_name || '',
+                item.section_title || '',
+                item.start_line || 0,
+                item.end_line || 0,
+            ]),
+        );
     });
 
-    // =========================================================================
-    // Download Link CSV
-    // =========================================================================
     document.getElementById('downloadLinkCsvBtn')?.addEventListener('click', function() {
         if (!allLinkItems || allLinkItems.length === 0) {
             showToast('No link data to download.', 'warning');
             return;
         }
-
-        const headers = ['Post Title', 'Post Date', 'Section', 'URL', 'Description', 'Rank in Section', 'Mean CTR (%)', 'Mean Clicks'];
-        const rows = allLinkItems.map(item => [
-            item.post_title || '',
-            item.post_date_display || '',
-            item.section_name || '',
-            item.raw_url || '',
-            item.description || '',
-            item.rank_in_section || 0,
-            item.mean_ctr || 0,
-            item.mean_clicks || 0
-        ]);
-
-        let csv = headers.map(h => '"' + h.replace(/"/g, '""') + '"').join(',') + '\n';
-        rows.forEach(row => {
-            csv += row.map(val => '"' + String(val).replace(/"/g, '""') + '"').join(',') + '\n';
-        });
-
-        const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = 'link_data.csv';
-        document.body.appendChild(a);
-        a.click();
-        URL.revokeObjectURL(url);
-        document.body.removeChild(a);
+        downloadCsv(
+            'link_data.csv',
+            ['Post Title', 'Post Date', 'Section', 'URL', 'Description', 'Rank in Section', 'Mean CTR (%)', 'Mean Clicks'],
+            allLinkItems.map(item => [
+                item.post_title || '',
+                item.post_date_display || '',
+                item.section_name || '',
+                item.raw_url || '',
+                item.description || '',
+                item.rank_in_section || 0,
+                item.mean_ctr || 0,
+                item.mean_clicks || 0,
+            ]),
+        );
     });
 
     // =========================================================================
