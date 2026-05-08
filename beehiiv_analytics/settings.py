@@ -113,7 +113,7 @@ DATABASES = {
         'USER': db_secret['username'],
         'PASSWORD': db_secret['password'],
         'HOST': db_host,
-        'PORT': "5432",
+        'PORT': os.environ.get('DB_PORT', '5432'),
         'OPTIONS': _db_options,
     }
 }

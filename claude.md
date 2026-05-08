@@ -76,7 +76,8 @@ app/
 ├── requirements.txt
 ├── Dockerfile
 ├── push_to_ecr.sh              # Deployment script (builds and pushes to ECR)
-├── run_local.sh                # Local Docker development
+├── run_local.sh                # Local Docker development (full app in container, uses cloud DB)
+├── run_local_dev.sh            # Local dev runner (venv + Postgres-in-Docker on host port 5433)
 └── .env / .env.example
 ```
 
@@ -151,7 +152,7 @@ All routes use the `analytics:` namespace. See `analytics/urls.py` for the full 
 
 ## Deployment
 
-The app runs in **local** or **cloud** mode. Both connect to the same AWS RDS database.
+The app runs in **local** or **cloud** mode. By default, local mode connects to the same AWS RDS database as cloud — `run_local_dev.sh` is the exception, which points local Django at a Postgres-in-Docker instance for fully offline testing.
 
 ### Local Mode
 Reads environment variables from `.env` (via python-dotenv). A Python 3.11 venv exists at `.venv/`. The system default `python` is Python 3.8 (Anaconda) and does **not** have project dependencies. Use:
@@ -161,6 +162,20 @@ source .venv/bin/activate && python manage.py runserver
 ```
 
 Or run via Docker: `./run_local.sh` (builds ARM64 image, runs on port 8000).
+
+#### Fully-local dev DB (`run_local_dev.sh`)
+For offline development against a local Postgres instead of cloud RDS:
+
+```bash
+./run_local_dev.sh
+```
+
+The script:
+- Idempotently starts a `postgres:16` container named `letterpulse_pg` on **host port 5433** (not 5432, to avoid conflicts with any native Postgres on the dev machine — loopback bindings win over wildcard on macOS, which would otherwise silently misroute Django's connections), backed by Docker volume `letterpulse_pg_data`.
+- Exports `DB_HOST=localhost`, `DB_PORT=5433`, and a `DATABASE_SECRET` JSON literal in the shell only — `python-dotenv`'s `load_dotenv()` defaults to `override=False`, so these shell vars take precedence over the cloud values in `.env` without modifying the file.
+- Activates `.venv`, runs `migrate`, then `runserver`.
+
+`settings.py` reads `DB_PORT` via `os.environ.get('DB_PORT', '5432')` so the cloud path (where `DB_PORT` is unset) is unchanged.
 
 ### Cloud Mode (AWS App Runner via ECR)
 Requires `AWS_ACCOUNT_ID` to be exported in the shell (the script errors out if unset).
@@ -207,7 +222,7 @@ Run from the project root:
 - Imports from `settings.py` and overrides `DATABASES` to SQLite `:memory:`.
 - Provides `os.environ.setdefault(...)` defaults for `SECRET_KEY`, `OPENAI_API_KEY`, `DATABASE_SECRET`, `DB_HOST`, `ENVIRONMENT` so tests run without a real `.env`.
 - Uses `EMAIL_BACKEND = locmem` and blanks `SIGNUP_NOTIFICATION_EMAIL` so the post_save signal on `User` doesn't try to send mail. Tests should additionally patch `analytics.signals._send_welcome_email` (see `_CreditTestBase` in `test_credits.py`) to suppress the welcome-email daemon thread.
-- Sets `MIGRATION_MODULES` to a sentinel that disables migrations — Django creates schema directly from models. This sidesteps `analytics/migrations/0022_update_site_domain.py`, which references the `sites` app via `apps.get_model("sites", "Site")` without declaring `("sites", "0001_initial")` as a dependency. Real migrations still run in deployed envs (the Dockerfile invokes `migrate`).
+- Sets `MIGRATION_MODULES` to a sentinel that disables migrations — Django creates schema directly from models. This is purely for test-suite speed; real migrations run in both deployed envs (the Dockerfile invokes `migrate`) and the local-dev DB (`run_local_dev.sh` invokes `migrate`).
 - Switches `PASSWORD_HASHERS` to MD5 for speed.
 
 When adding new test files, prefer subclassing a base class that suppresses the welcome-email signal (or use `mock.patch("analytics.signals._send_welcome_email")` per test). The signal's daemon thread calls `user.refresh_from_db()` and can race with SQLite teardown.
