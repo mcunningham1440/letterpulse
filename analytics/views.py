@@ -59,7 +59,6 @@ def sanitize_filename(filename: str) -> str:
 
 
 from .utils import (
-    fetch_posts_html_and_clicks_parallel,
     NotEnoughCredits,
     charge_credits,
     validate_beehiiv_api_key,

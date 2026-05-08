@@ -247,9 +247,6 @@ CREDITS_PER_IMPROVEMENT_TIPS = 1  # Per post improvement tips generation
 # Silent cap on post processing per billing period (no credit charge).
 MAX_POSTS_PROCESSED_PER_PERIOD = 45
 
-# Section processing configuration
-SECTION_N_EXAMPLES = 5              # Number of nearby-post examples per section for context
-
 # Link processing configuration
 LINK_PROCESS_TOP_N = 60             # Total links to select across all sections
 LINK_PROCESS_MAX_RETRIES = 2        # Max LLM retries for link description count mismatch
@@ -269,11 +266,6 @@ EXECUTION_LOG_QUEUE_MAXSIZE = 2000   # Max entries in queue before overflow
 EXECUTION_LOG_BATCH_SIZE = 50        # Entries per bulk_create
 EXECUTION_LOG_FLUSH_INTERVAL = 1.0   # Seconds between flushes
 EXECUTION_LOG_ON_FULL = 'drop'       # 'drop' or 'sync' when queue is full
-
-# =============================================================================
-# Auto Click Visualization Email Configuration
-# =============================================================================
-SITE_URL = os.environ.get('SITE_URL', 'https://letterpulse.com')
 
 # =============================================================================
 # Content Finder Configuration
