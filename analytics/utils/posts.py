@@ -1,9 +1,14 @@
 import asyncio
+import datetime
 import logging
 
 import aiohttp
 import pandas as pd
+from asgiref.sync import sync_to_async
 from bs4 import BeautifulSoup
+from django.db import transaction
+
+from analytics.models import LinkData, Post, ProcessedPost, Section as SectionModel
 
 from .beehiiv_api import (
     fetch_all_posts,
@@ -33,9 +38,6 @@ async def process_post_full(session, post_id, user, beehiiv_token, beehiiv_pub_i
     Returns:
         Tuple of (sections, link_rows).
     """
-    from asgiref.sync import sync_to_async
-    from analytics.models import Post
-
     semaphore = asyncio.Semaphore(5)
     _, html = await fetch_post_html(session, post_id, semaphore, beehiiv_token, beehiiv_pub_id)
 
@@ -55,10 +57,6 @@ async def process_post_full(session, post_id, user, beehiiv_token, beehiiv_pub_i
 
 async def _save_post_full(post_id, sections, link_rows, user, publication):
     """Save section and link results to DB atomically and mark post as processed."""
-    from asgiref.sync import sync_to_async
-    from django.db import transaction
-    from analytics.models import Post, Section as SectionModel, LinkData, ProcessedPost
-
     post = await sync_to_async(Post.objects.get)(post_id=post_id, user=user)
 
     def _save_in_transaction():
@@ -134,9 +132,6 @@ async def process_posts_sections_sequential(post_ids, user, beehiiv_token, beehi
     Returns:
         Dict mapping post_id to list of section dicts.
     """
-    from asgiref.sync import sync_to_async
-    from analytics.models import Post, Section as SectionModel
-
     results_by_post = {}
 
     # Count posts with sections that WON'T be touched by this run.
@@ -245,7 +240,6 @@ def process_posts_data(posts_list):
 
     # Convert API status to simplified status: "Draft", "Scheduled", or "Published"
     # Beehiiv uses "confirmed" for both published and scheduled posts
-    import datetime
     now = datetime.datetime.now(datetime.timezone.utc)
 
     def get_display_status(row):
@@ -275,8 +269,6 @@ def save_posts_to_db(posts_df, user, publication):
     Upsert a posts DataFrame (output of process_posts_data) into the Post table
     for (user, publication). Returns (created_count, updated_count).
     """
-    from analytics.models import Post
-
     created_count = 0
     updated_count = 0
 

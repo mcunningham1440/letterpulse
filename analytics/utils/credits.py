@@ -1,5 +1,7 @@
 from django.db import transaction
 
+from analytics.models import UsageAccount
+
 
 class NotEnoughCredits(Exception):
     """Raised when a user doesn't have enough credits for an operation."""
@@ -17,8 +19,6 @@ def charge_credits(user, credits_to_charge: int):
     Raises:
         NotEnoughCredits: If user doesn't have enough credits
     """
-    from analytics.models import UsageAccount
-
     if user is None or not user.is_authenticated:
         raise NotEnoughCredits("You must be logged in to use AI features.")
 

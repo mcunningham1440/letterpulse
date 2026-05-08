@@ -6,10 +6,14 @@ import re
 from typing import List
 
 import aiohttp
+from asgiref.sync import async_to_sync, sync_to_async
 from bs4 import BeautifulSoup, NavigableString
 from django.conf import settings
+from django.db import close_old_connections, connection
 from pydantic import BaseModel
 
+from analytics.llm_tracker import finish_tracking, set_llm_context, start_tracking
+from analytics.models import Feedback, PendingImprovementTips, Section, UsageAccount
 from analytics.prompts import IMPROVEMENT_TIP_PROMPT
 
 from .beehiiv_api import fetch_post_html
@@ -117,8 +121,6 @@ async def generate_improvement_tips_html(post, user, publication, beehiiv_token,
     Returns:
         Complete annotated HTML string
     """
-    from analytics.models import Section
-
     # --- 1) Fetch post HTML from Beehiiv API ---
     sem = asyncio.Semaphore(5)
     async with aiohttp.ClientSession() as session:
@@ -186,7 +188,6 @@ async def generate_improvement_tips_html(post, user, publication, beehiiv_token,
 
         return "\n\n".join(parts)
 
-    from asgiref.sync import sync_to_async
     link_history_str = await sync_to_async(_build_link_history)()
 
     # --- 4) Call LLM for tips ---
@@ -594,16 +595,11 @@ def run_improvement_tips_background(task_id):
     Background thread entry point for generating improvement tips.
     Loads the PendingImprovementTips task, generates annotated HTML, saves result.
     """
-    from asgiref.sync import async_to_sync
-    from django.db import connection, close_old_connections
-    from analytics.models import PendingImprovementTips, UsageAccount
-
     try:
         task = PendingImprovementTips.objects.get(task_id=task_id)
         task.status = 'running'
         task.save(update_fields=['status'])
 
-        from analytics.llm_tracker import start_tracking, finish_tracking, set_llm_context
         set_llm_context(
             user_id=task.user_id,
             publication_id=task.publication_id,
@@ -642,7 +638,6 @@ def run_improvement_tips_background(task_id):
             task.save(update_fields=['status', 'result_html'])
 
         # Mark that the user has used post improvement
-        from analytics.models import Feedback
         Feedback.objects.get_or_create(
             user=task.user, feature='used_post_improvement',
             defaults={'response': 'completed'}

@@ -1,6 +1,18 @@
 import logging
+import threading
 
+from asgiref.sync import async_to_sync
 from django.conf import settings
+from django.db import connection
+from django.utils import timezone as dj_timezone
+
+from analytics.llm_tracker import set_llm_context
+from analytics.models import (
+    PendingLearningTask,
+    Post,
+    ProcessedPost,
+    UsageAccount,
+)
 
 from .beehiiv_api import fetch_subscriber_count
 from .post_selection import (
@@ -20,14 +32,12 @@ logger = logging.getLogger(__name__)
 
 def _heartbeat_task(task):
     """Refresh last_heartbeat on the task row (one-shot)."""
-    from django.utils import timezone as dj_timezone
     task.last_heartbeat = dj_timezone.now()
     task.save(update_fields=['last_heartbeat'])
 
 
 def _is_abandoned(task):
     """Re-read abandoned flag from DB. Returns True if task was marked abandoned."""
-    from analytics.models import PendingLearningTask
     try:
         fresh = PendingLearningTask.objects.only('abandoned').get(pk=task.pk)
         return bool(fresh.abandoned)
@@ -41,9 +51,6 @@ def _heartbeat_loop(task_id, stop_event, interval=5):
     runner thread is alive. Lets the stale-sweep detect a dead runner (crash,
     gunicorn restart) independently of client polling.
     """
-    from django.db import connection
-    from django.utils import timezone as dj_timezone
-    from analytics.models import PendingLearningTask
     try:
         while not stop_event.wait(interval):
             try:
@@ -69,14 +76,6 @@ def _run_learning_task_impl(task_id, kind):
       with >0 posts processed, so a zero-result or abandoned run lets the
       user hit the Learning coach again on their next visit.
     """
-    import threading
-    from asgiref.sync import async_to_sync
-    from django.db import connection
-    from django.utils import timezone as dj_timezone
-    from analytics.models import (
-        PendingLearningTask, Publication, UsageAccount, Post, ProcessedPost,
-    )
-
     task = None
     stop_heartbeat = threading.Event()
     hb_thread = threading.Thread(
@@ -92,7 +91,6 @@ def _run_learning_task_impl(task_id, kind):
         task.phase = 'fetch'
         _heartbeat_task(task)
 
-        from analytics.llm_tracker import set_llm_context
         set_llm_context(
             user_id=task.user_id,
             publication_id=task.publication_id,

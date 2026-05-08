@@ -9,6 +9,8 @@ from django.conf import settings
 from Levenshtein import distance as levenshtein_distance
 from pydantic import BaseModel
 
+from analytics.models import LinkData, Post
+
 from .beehiiv_api import fetch_post_clicks
 from .llm import llm_call
 from .text import truncate_url
@@ -164,8 +166,6 @@ def format_link_history(section, max_links=60, max_url_len=50):
 
     Returns (formatted_string, total_link_count).
     """
-    from analytics.models import LinkData
-
     links = LinkData.objects.filter(
         user=section.user,
         publication=section.publication,
@@ -237,8 +237,6 @@ async def process_post_links(session, post_id, user, beehiiv_token, beehiiv_pub_
         List of dicts with keys: post_id, raw_url, description, section_name,
         rank_in_section, mean_ctr, mean_clicks
     """
-    from analytics.models import Post
-
     post = await asyncio.to_thread(
         lambda: Post.objects.get(post_id=post_id, user=user)
     )
