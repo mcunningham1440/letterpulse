@@ -1,0 +1,57 @@
+# Timezone choices for user preferences - comprehensive list covering all major timezones
+TIMEZONE_CHOICES = [
+    # North America
+    ('America/New_York', 'Eastern Time (ET) - New York'),
+    ('America/Chicago', 'Central Time (CT) - Chicago'),
+    ('America/Denver', 'Mountain Time (MT) - Denver'),
+    ('America/Los_Angeles', 'Pacific Time (PT) - Los Angeles'),
+    ('America/Anchorage', 'Alaska Time (AKT)'),
+    ('Pacific/Honolulu', 'Hawaii Time (HST)'),
+    ('America/Phoenix', 'Arizona (MST - no DST)'),
+    ('America/Toronto', 'Eastern Time - Toronto'),
+    ('America/Vancouver', 'Pacific Time - Vancouver'),
+    ('America/Mexico_City', 'Mexico City (CST)'),
+    # South America
+    ('America/Sao_Paulo', 'São Paulo (BRT)'),
+    ('America/Buenos_Aires', 'Buenos Aires (ART)'),
+    ('America/Bogota', 'Bogotá (COT)'),
+    ('America/Santiago', 'Santiago (CLT)'),
+    # Europe
+    ('Europe/London', 'London (GMT/BST)'),
+    ('Europe/Paris', 'Paris (CET/CEST)'),
+    ('Europe/Berlin', 'Berlin (CET/CEST)'),
+    ('Europe/Amsterdam', 'Amsterdam (CET/CEST)'),
+    ('Europe/Madrid', 'Madrid (CET/CEST)'),
+    ('Europe/Rome', 'Rome (CET/CEST)'),
+    ('Europe/Zurich', 'Zurich (CET/CEST)'),
+    ('Europe/Stockholm', 'Stockholm (CET/CEST)'),
+    ('Europe/Warsaw', 'Warsaw (CET/CEST)'),
+    ('Europe/Athens', 'Athens (EET/EEST)'),
+    ('Europe/Moscow', 'Moscow (MSK)'),
+    ('Europe/Istanbul', 'Istanbul (TRT)'),
+    # Middle East & Africa
+    ('Asia/Dubai', 'Dubai (GST)'),
+    ('Asia/Jerusalem', 'Jerusalem (IST)'),
+    ('Africa/Cairo', 'Cairo (EET)'),
+    ('Africa/Johannesburg', 'Johannesburg (SAST)'),
+    ('Africa/Lagos', 'Lagos (WAT)'),
+    # Asia
+    ('Asia/Kolkata', 'India (IST)'),
+    ('Asia/Bangkok', 'Bangkok (ICT)'),
+    ('Asia/Singapore', 'Singapore (SGT)'),
+    ('Asia/Hong_Kong', 'Hong Kong (HKT)'),
+    ('Asia/Shanghai', 'Shanghai (CST)'),
+    ('Asia/Tokyo', 'Tokyo (JST)'),
+    ('Asia/Seoul', 'Seoul (KST)'),
+    ('Asia/Manila', 'Manila (PHT)'),
+    ('Asia/Jakarta', 'Jakarta (WIB)'),
+    # Oceania
+    ('Australia/Sydney', 'Sydney (AEST/AEDT)'),
+    ('Australia/Melbourne', 'Melbourne (AEST/AEDT)'),
+    ('Australia/Brisbane', 'Brisbane (AEST - no DST)'),
+    ('Australia/Perth', 'Perth (AWST)'),
+    ('Pacific/Auckland', 'Auckland (NZST/NZDT)'),
+    ('Pacific/Fiji', 'Fiji (FJT)'),
+    # UTC
+    ('UTC', 'UTC'),
+]

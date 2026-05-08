@@ -58,7 +58,10 @@ app/
 │   ├── models.py               # All database models
 │   ├── views.py                # All view logic (login-protected)
 │   ├── urls.py                 # App URL patterns (analytics namespace)
-│   ├── utils.py                # Core utility functions (API calls, AI extraction, credit charging)
+│   ├── utils/                  # Core utilities, split into topic submodules.
+│   │                           #   Submodules: credits, llm, text, beehiiv_api, post_selection,
+│   │                           #   links, sections, posts, content_finder, improvement_tips,
+│   │                           #   learning, niche, _constants (TIMEZONE_CHOICES).
 │   ├── llm_tracker.py          # Thread-local LLM call accumulator for dev panel
 │   ├── logsink.py              # Queue-based async logging system
 │   ├── logutils.py             # Logging middleware and decorators
