@@ -89,7 +89,6 @@ TEMPLATES = [
                 'django.contrib.auth.context_processors.auth',
                 'django.contrib.messages.context_processors.messages',
                 'analytics.context_processors.usage_context',
-                'analytics.context_processors.progress_context',
                 'analytics.context_processors.environment_context',
                 'analytics.context_processors.limited_data_context',
             ],
@@ -191,9 +190,6 @@ if ENVIRONMENT != 'local':
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
-# Data directories
-DATA_DIR = BASE_DIR / 'data'
-
 # django-allauth settings
 LOGIN_REDIRECT_URL = 'analytics:insights'
 LOGOUT_REDIRECT_URL = 'account_login'
@@ -246,7 +242,6 @@ MESSAGE_TAGS = {
 DEFAULT_MONTHLY_CREDITS = 75
 
 # Credit costs per operation
-CREDITS_PER_REPORT = 1          # Flat cost for generating insights
 CREDITS_PER_IMPROVEMENT_TIPS = 1  # Per post improvement tips generation
 
 # Silent cap on post processing per billing period (no credit charge).
@@ -259,40 +254,12 @@ SECTION_N_EXAMPLES = 5              # Number of nearby-post examples per section
 LINK_PROCESS_TOP_N = 60             # Total links to select across all sections
 LINK_PROCESS_MAX_RETRIES = 2        # Max LLM retries for link description count mismatch
 
-# Maximum items sent to the LLM for report generation. When exceeded, the
-# top and bottom performers from each section are sampled (middle omitted).
-MAX_REPORT_ITEMS = 150
-
-# Whether to show the signup survey modal to new users
-SIGNUP_SURVEY_ENABLED = False
-
 # Maximum new user signups allowed per rolling 24-hour window (None = unlimited)
 DAILY_SIGNUP_CAP = 5
-
-# =============================================================================
-# Progress Bar Expected Durations (seconds)
-# =============================================================================
-# Base durations for time-based progress bars. Actual duration may vary
-# based on number of posts selected.
-PROGRESS_DURATIONS = {
-    'refresh_posts': 10,        # empirical
-    'improvement_tips': 20,     # empirical
-    'extract_content': 12,      # empirical
-    'generate_report': 35,      # empirical
-    'process_posts': 20,        # empirical
-    'content_search_plan': 30,  # stage 1: plan the search
-    'content_search_run': 60,   # stages 2+3: dispatch + parallel agents
-    'learning_fetch': 30,       # full Beehiiv fetch during initial learning
-}
 
 # Stale-task sweep: if a running PendingLearningTask's last_heartbeat is older
 # than this, treat it as abandoned (backup for the pagehide beacon).
 LEARNING_TASK_STALE_SECONDS = 15
-
-# User-facing time warnings (minutes)
-EXPECTED_TIMES = {
-    'refresh_posts_first_load': 2,  # first-time post load warning
-}
 
 # =============================================================================
 # Execution Logging Configuration

@@ -27,6 +27,4 @@ urlpatterns = [
     path('insights/improvement-tips/status/<uuid:task_id>/', views.poll_improvement_tips, name='poll_improvement_tips'),
     path('insights/improvement-tips/download/<uuid:task_id>/', views.download_improvement_tips, name='download_improvement_tips'),
     path('feedback/submit/', views.submit_feedback, name='submit_feedback'),
-    path('survey/submit/', views.submit_survey, name='submit_survey'),
-    path('cron/click-viz-status/', views.cron_status, name='cron_status'),
 ]

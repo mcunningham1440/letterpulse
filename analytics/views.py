@@ -13,11 +13,10 @@ from django.views.decorators.csrf import csrf_exempt
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.conf import settings
-import pandas as pd
 import json
 from asgiref.sync import async_to_sync
 
-from .models import Post, UsageAccount, SurveyResponse, ProcessedPost, LinkData, Section, PendingContentSearch, PendingImprovementTips, ContentSearchFeedback, PendingLearningTask, PendingNicheAnalysis
+from .models import Post, UsageAccount, ProcessedPost, LinkData, Section, PendingContentSearch, PendingImprovementTips, ContentSearchFeedback, PendingLearningTask, PendingNicheAnalysis
 
 logger = logging.getLogger(__name__)
 
@@ -60,12 +59,7 @@ def sanitize_filename(filename: str) -> str:
 
 
 from .utils import (
-    load_posts_from_db,
     fetch_posts_html_and_clicks_parallel,
-    process_posts_sections_sequential,
-    refresh_posts_data,
-    incremental_refresh_posts_data,
-    save_posts_to_db,
     NotEnoughCredits,
     charge_credits,
     validate_beehiiv_api_key,
@@ -167,10 +161,6 @@ def account_view(request):
                     else:
                         usage.beehiiv_pub_id = ''
 
-                    # Reset click viz window on every successful validation
-                    if usage.auto_click_viz_email:
-                        usage.auto_click_viz_enabled_at = timezone.now()
-
                     usage.save()
 
                     # Ensure Publication record exists for the selected pub
@@ -220,80 +210,6 @@ def account_view(request):
                 messages.success(request, "Timezone updated successfully!")
             else:
                 messages.error(request, "Invalid timezone selected.")
-            return redirect('analytics:account')
-
-        elif action == 'toggle_click_viz_email':
-            if usage.api_key_valid:
-                if usage.auto_click_viz_email:
-                    # Disabling
-                    usage.auto_click_viz_email = False
-                    usage.auto_click_viz_enabled_at = None
-                    usage.save(update_fields=['auto_click_viz_email', 'auto_click_viz_enabled_at'])
-                else:
-                    # Enabling
-                    usage.auto_click_viz_email = True
-                    usage.auto_click_viz_enabled_at = timezone.now()
-                    usage.save(update_fields=['auto_click_viz_email', 'auto_click_viz_enabled_at'])
-            return redirect('analytics:account')
-
-        elif action == 'test_click_viz_email':
-            if usage.api_key_valid:
-                try:
-                    from .utils import (
-                        fetch_recent_published_posts,
-                        fetch_posts_html_and_clicks_parallel,
-                        generate_click_visualization_html,
-                        build_click_viz_email_html,
-                    )
-                    from django.core.mail import EmailMessage as DjangoEmailMessage
-
-                    # Fetch most recent published post
-                    recent_posts = async_to_sync(fetch_recent_published_posts)(
-                        usage.beehiiv_token, usage.beehiiv_pub_id, max_pages=1
-                    )
-                    if not recent_posts:
-                        messages.error(request, "No published posts found to generate a test email.")
-                        return redirect('analytics:account')
-
-                    post_data = recent_posts[0]
-                    post_id = post_data['id']
-                    post_title = post_data.get('title', 'Untitled')
-
-                    # Fetch HTML and clicks
-                    htmls, clicks_by_id = async_to_sync(fetch_posts_html_and_clicks_parallel)(
-                        [post_id], usage.beehiiv_token, usage.beehiiv_pub_id
-                    )
-
-                    html_filename = f"{post_id}.html"
-                    if html_filename not in htmls or post_id not in clicks_by_id:
-                        messages.error(request, "Failed to fetch post data from Beehiiv.")
-                        return redirect('analytics:account')
-
-                    stats = post_data.get('stats', {}).get('email', {})
-                    unique_email_opens = stats.get('unique_opens', 0)
-
-                    viz_html = generate_click_visualization_html(
-                        htmls[html_filename], clicks_by_id[post_id], unique_email_opens
-                    )
-
-                    site_url = getattr(settings, 'SITE_URL', 'https://letterpulse.com')
-                    email_html = build_click_viz_email_html(viz_html, post_title, site_url)
-
-                    bcc = [settings.SIGNUP_NOTIFICATION_EMAIL] if getattr(settings, 'SIGNUP_NOTIFICATION_EMAIL', '') else []
-                    email = DjangoEmailMessage(
-                        subject=f"[TEST] Click Visualization: {post_title}",
-                        body=email_html,
-                        from_email=settings.DEFAULT_FROM_EMAIL,
-                        to=[request.user.email],
-                        bcc=bcc,
-                    )
-                    email.content_subtype = 'html'
-                    email.send()
-
-                    messages.success(request, f"Test email sent to {request.user.email}.")
-                except Exception:
-                    logger.exception("Test click viz email failed")
-                    messages.error(request, "Failed to send test email.")
             return redirect('analytics:account')
 
         elif action == 'switch_publication':
@@ -1078,8 +994,6 @@ def run_content_finder(request):
         user=request.user,
         publication=publication,
         post=post,
-        mode='auto',
-        selected_sections=[],
         status='planning',
     )
 
@@ -1395,117 +1309,3 @@ def submit_feedback(request):
     except Exception:
         logger.exception("submit_feedback failed")
         return JsonResponse({'success': False}, status=500)
-
-
-@login_required
-@require_POST
-def submit_survey(request):
-    """
-    Submit the signup survey response.
-    """
-    try:
-        # Parse the response
-        beehiiv_inadequate = request.POST.get('beehiiv_inadequate')
-        missing_features = request.POST.get('missing_features', '').strip()[:4096]
-        other_tools = request.POST.get('other_tools', '').strip()[:4096]
-
-        # Convert yes/no to boolean
-        if beehiiv_inadequate == 'yes':
-            beehiiv_inadequate_bool = True
-        elif beehiiv_inadequate == 'no':
-            beehiiv_inadequate_bool = False
-        else:
-            beehiiv_inadequate_bool = None
-
-        # Create or update survey response
-        SurveyResponse.objects.update_or_create(
-            user=request.user,
-            defaults={
-                'beehiiv_analytics_inadequate': beehiiv_inadequate_bool,
-                'missing_features': missing_features,
-                'other_tools': other_tools,
-            }
-        )
-
-        # Mark survey as completed in UsageAccount
-        try:
-            usage = UsageAccount.objects.get(user=request.user)
-            usage.survey_completed = True
-            usage.save(update_fields=['survey_completed'])
-        except UsageAccount.DoesNotExist:
-            pass
-
-        return JsonResponse({
-            'success': True,
-            'message': 'Survey submitted successfully!'
-        })
-
-    except Exception:
-        logger.exception("submit_survey failed")
-        return JsonResponse({'success': False}, status=500)
-
-
-
-
-@login_required
-def cron_status(request):
-    """
-    Status page showing recent cron runs and click viz email logs.
-    Login-required so only authenticated users can view.
-    Only superusers can see all data; regular users see only their own.
-    """
-    from .models import CronRunLog, ClickVizEmailLog
-
-    is_superuser = request.user.is_superuser
-
-    # Recent cron runs (last 20) — superusers only
-    cron_runs = []
-    if is_superuser:
-        for run in CronRunLog.objects.all()[:20]:
-            cron_runs.append({
-                'command': run.command,
-                'started_at': run.started_at.isoformat(),
-                'finished_at': run.finished_at.isoformat() if run.finished_at else None,
-                'duration_ms': run.duration_ms,
-                'users_processed': run.users_processed,
-                'emails_sent': run.emails_sent,
-                'errors': run.errors,
-                'success': run.success,
-                'triggered_by': run.triggered_by,
-                'output': run.output,
-            })
-
-    # Recent email logs (last 50)
-    email_log_qs = ClickVizEmailLog.objects.select_related('user', 'publication')
-    if not is_superuser:
-        email_log_qs = email_log_qs.filter(user=request.user)
-
-    email_logs = []
-    for log in email_log_qs[:50]:
-        email_logs.append({
-            'user': log.user.email,
-            'post_id': log.post_id,
-            'post_title': log.post_title,
-            'sent_at': log.sent_at.isoformat(),
-            'success': log.success,
-            'error_message': log.error_message,
-        })
-
-    # Eligible users summary (superusers only)
-    eligible_users = []
-    if is_superuser:
-        for ua in UsageAccount.objects.filter(
-            auto_click_viz_email=True,
-            api_key_valid=True,
-            auto_click_viz_enabled_at__isnull=False,
-        ).select_related('user'):
-            eligible_users.append({
-                'email': ua.user.email,
-                'enabled_at': ua.auto_click_viz_enabled_at.isoformat(),
-            })
-
-    return JsonResponse({
-        'cron_runs': cron_runs,
-        'email_logs': email_logs,
-        'eligible_users': eligible_users,
-    }, json_dumps_params={'indent': 2})

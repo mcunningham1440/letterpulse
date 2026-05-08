@@ -69,7 +69,6 @@ app/
 │   ├── templates/analytics/    # HTML templates (base, posts, insights, account, about, mobile)
 │   ├── static/analytics/js/    # JS including dev-panel.js (local mode only)
 │   └── migrations/
-├── data/                       # Runtime data (LLM call logs)
 ├── manage.py
 ├── requirements.txt
 ├── Dockerfile
@@ -95,10 +94,7 @@ All models are in `analytics/models.py`. Key models and their relationships:
 - **ExecutionLog**: Low-overhead request/function logging with queue-based async writes via `logsink.py`
 - **LLMCall**: Per-call record for every OpenAI Responses API invocation made through `utils.llm_call`. Written asynchronously via the same `logsink.py` queue (routed by `_target='LLMCall'`). Stores timestamps, user, publication, function_name, model, token breakdowns (cached/new input, reasoning/response output), success/error, task_id + task_kind (for correlating with `PendingContentSearch` / `PendingImprovementTips` / `PendingLearningTask` / `PendingNicheAnalysis`), and a free-form `additional_info` JSONField (e.g. `{'section_name': ...}` for content finder calls). Does NOT store prompts or outputs — use the dev panel for those. Context (user/pub/task/section) flows in via `contextvars` set by `analytics.llm_tracker.set_llm_context` / `set_additional_info`, called from the background worker entry points
 - **Feedback**: Per-user feature feedback. Scoped to `(user, feature)`
-- **SurveyResponse**: Signup survey answers (survey currently disabled via `SIGNUP_SURVEY_ENABLED = False`)
-- **ClickVizEmailLog**: Log of auto-emailed click visualizations. Scoped to `(user, post_id)`
 - **ContentSearchFeedback**: Thumbs-up/down feedback on content finder results. Scoped to `(user, publication, url)`. Reviewed URLs are excluded from future content searches
-- **CronRunLog**: Management command execution log
 
 ## Authentication
 
@@ -148,8 +144,7 @@ All routes use the `analytics:` namespace. See `analytics/urls.py` for the full 
 - **Improvement Tips**: `/insights/improvement-tips/posts/`, `/insights/improvement-tips/run/`, `/insights/improvement-tips/status/<uuid>/`, `/insights/improvement-tips/download/<uuid>/`
 - **Monetize**: `/monetize/`, `/monetize/niche-analysis/status/<uuid>/`
 - **Account**: `/account/`
-- **Feedback/Survey**: `/feedback/submit/`, `/survey/submit/`
-- **Cron**: `/cron/click-viz-status/`
+- **Feedback**: `/feedback/submit/`
 
 ## Deployment
 
@@ -190,9 +185,6 @@ When `ENVIRONMENT == 'local'`, a floating panel appears after LLM-powered workfl
 
 ### Background Task Pattern
 Content Finder and Improvement Tips both use the same pattern: create a Pending* model row → spawn a background thread → frontend polls a status endpoint at 3s intervals → result stored on the model row.
-
-### Management Commands
-- `send_click_viz_emails [--dry-run] [--user-email=<email>]`: Emails click visualizations for posts published >24h ago. Runs automatically every 30 minutes via a daemon thread in `AnalyticsConfig.ready()` (gunicorn/runserver only)
 
 ## Testing Notes
 

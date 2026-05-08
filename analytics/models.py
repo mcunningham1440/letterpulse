@@ -1,10 +1,7 @@
 from django.db import models
 from django.conf import settings
-from django.contrib.postgres.fields import ArrayField
-from django.core.serializers.json import DjangoJSONEncoder
 from django.utils import timezone
 from calendar import monthrange
-import json
 import uuid
 
 from .fields import EncryptedCharField
@@ -60,24 +57,11 @@ class UsageAccount(models.Model):
         default='America/Chicago',
         help_text="User's preferred timezone for date display"
     )
-    survey_completed = models.BooleanField(
-        default=False,
-        help_text="Whether the user has completed the signup survey"
-    )
     newsletter_name = models.CharField(
         max_length=255,
         blank=True,
         default='',
         help_text="Name of the user's newsletter"
-    )
-    auto_click_viz_email = models.BooleanField(
-        default=False,
-        help_text="Whether to auto-email click visualizations after post publication"
-    )
-    auto_click_viz_enabled_at = models.DateTimeField(
-        null=True,
-        blank=True,
-        help_text="When the user enabled auto click viz emails; prevents old posts from triggering"
     )
     initial_fetched_pub_ids = models.JSONField(
         default=list,
@@ -220,7 +204,6 @@ class Post(models.Model):
         help_text="The user who owns this post data"
     )
     title = models.CharField(max_length=500)
-    subtitle = models.TextField(blank=True, null=True)
     status = models.CharField(max_length=20, default='Published', help_text="Draft, Scheduled, or Published")
     platform = models.CharField(
         max_length=20, blank=True, null=True,
@@ -229,13 +212,7 @@ class Post(models.Model):
     creation_date = models.DateTimeField(blank=True, null=True, help_text="When the post was first created in Beehiiv")
     publish_date = models.DateTimeField(blank=True, null=True, help_text="When the post was published (stored in UTC)")
     recipients = models.IntegerField(default=0)
-    delivered = models.IntegerField(default=0)
-    email_opens = models.IntegerField(default=0)
     unique_email_opens = models.IntegerField(default=0)
-    email_clicks = models.IntegerField(default=0)
-    unique_email_clicks = models.IntegerField(default=0)
-    unsubscribes = models.IntegerField(default=0)
-    spam_reports = models.IntegerField(default=0)
     
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -291,17 +268,7 @@ class ExecutionLog(models.Model):
         max_length=64, blank=True, default='', db_index=True,
         help_text="UUID for request correlation"
     )
-    parent_id = models.BigIntegerField(
-        null=True, blank=True,
-        help_text="ID of parent log entry for nesting"
-    )
 
-    # Data placeholders (for future use)
-    inputs = models.JSONField(default=dict, blank=True, help_text="Input parameters (placeholder)")
-    outputs = models.JSONField(default=dict, blank=True, help_text="Output data (placeholder)")
-    meta = models.JSONField(default=dict, blank=True, help_text="Additional metadata (placeholder)")
-
-    # Timestamps
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -441,7 +408,6 @@ class LinkData(models.Model):
     raw_url = models.URLField(max_length=2048)
     description = models.TextField(blank=True)
     section_name = models.CharField(max_length=255, blank=True, default='')
-    rank_in_post = models.PositiveIntegerField()
     rank_in_section = models.PositiveIntegerField(null=True)
     mean_ctr = models.FloatField(help_text="Mean CTR as percentage (e.g. 3.5 = 3.5%)")
     mean_clicks = models.FloatField()
@@ -520,8 +486,6 @@ class PendingContentSearch(models.Model):
         blank=True,
     )
     post = models.ForeignKey(Post, on_delete=models.CASCADE)
-    mode = models.CharField(max_length=10, default='auto')
-    selected_sections = models.JSONField(default=list, blank=True)
     status = models.CharField(
         max_length=20,
         default='pending',
@@ -679,66 +643,6 @@ class PendingNicheAnalysis(models.Model):
         return f"PendingNicheAnalysis {self.task_id} ({self.status})"
 
 
-class SurveyResponse(models.Model):
-    """Stores user responses to the signup survey"""
-
-    user = models.OneToOneField(
-        settings.AUTH_USER_MODEL,
-        on_delete=models.CASCADE,
-        related_name='survey_response'
-    )
-    beehiiv_analytics_inadequate = models.BooleanField(
-        null=True,
-        help_text="Does the user feel Beehiiv analytics are inadequate?"
-    )
-    missing_features = models.TextField(
-        blank=True,
-        default='',
-        help_text="What analytics features does the user feel are missing from Beehiiv?"
-    )
-    other_tools = models.TextField(
-        blank=True,
-        default='',
-        help_text="What other third-party tools does the user use for newsletter analytics?"
-    )
-
-    created_at = models.DateTimeField(auto_now_add=True)
-
-    class Meta:
-        verbose_name = "Survey Response"
-        verbose_name_plural = "Survey Responses"
-
-    def __str__(self):
-        return f"Survey response from {self.user.email}"
-
-
-class CronRunLog(models.Model):
-    """Log of each cron/management command run for monitoring"""
-
-    command = models.CharField(max_length=255, help_text="Management command name")
-    started_at = models.DateTimeField(help_text="When the run started")
-    finished_at = models.DateTimeField(null=True, blank=True, help_text="When the run finished")
-    duration_ms = models.PositiveIntegerField(null=True, blank=True, help_text="Duration in milliseconds")
-    users_processed = models.PositiveIntegerField(default=0)
-    emails_sent = models.PositiveIntegerField(default=0)
-    errors = models.PositiveIntegerField(default=0)
-    output = models.TextField(blank=True, default='', help_text="Captured stdout from the command")
-    success = models.BooleanField(default=True)
-    triggered_by = models.CharField(
-        max_length=50, default='cron',
-        help_text="How the run was triggered: cron, manual, etc."
-    )
-
-    class Meta:
-        ordering = ['-started_at']
-        verbose_name = "Cron Run Log"
-        verbose_name_plural = "Cron Run Logs"
-
-    def __str__(self):
-        status = "OK" if self.success else "FAIL"
-        return f"{self.command} at {self.started_at:%Y-%m-%d %H:%M} ({status})"
-
-
 class Feedback(models.Model):
     """Captures user feedback on features and product direction"""
 
@@ -756,38 +660,6 @@ class Feedback(models.Model):
 
     def __str__(self):
         return f"{self.user} — {self.feature}: {self.response}"
-
-
-class ClickVizEmailLog(models.Model):
-    """Log of click visualization emails sent to users"""
-
-    user = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
-        on_delete=models.CASCADE,
-        related_name='click_viz_email_logs'
-    )
-    publication = models.ForeignKey(
-        Publication,
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name='click_viz_email_logs'
-    )
-    post_id = models.CharField(max_length=255, help_text="Beehiiv post ID")
-    post_title = models.CharField(max_length=500, blank=True, default='')
-    sent_at = models.DateTimeField(auto_now_add=True)
-    success = models.BooleanField(default=True)
-    error_message = models.TextField(blank=True, default='')
-
-    class Meta:
-        ordering = ['-sent_at']
-        unique_together = [['user', 'post_id']]
-        verbose_name = "Click Viz Email Log"
-        verbose_name_plural = "Click Viz Email Logs"
-
-    def __str__(self):
-        status = "OK" if self.success else "FAIL"
-        return f"{self.user.email} - {self.post_id} ({status})"
 
 
 class ContentSearchFeedback(models.Model):

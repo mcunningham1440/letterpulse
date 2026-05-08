@@ -365,14 +365,6 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
 
-    // Auto-submit click viz toggle on change
-    const clickVizCheckbox = document.getElementById('autoClickVizEmail');
-    if (clickVizCheckbox) {
-        clickVizCheckbox.addEventListener('change', function() {
-            document.getElementById('clickVizToggleForm').submit();
-        });
-    }
-
     // Show coach mark overlay if redirected here for API setup or if key is invalid
     var setupParam = new URLSearchParams(window.location.search).get('setup');
     {% if usage.beehiiv_token and not usage.api_key_valid %}

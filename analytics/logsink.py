@@ -217,10 +217,6 @@ class LogSink:
                         traceback=entry.get('traceback', ''),
                         user_id=entry.get('user_id'),
                         request_id=entry.get('request_id', ''),
-                        parent_id=entry.get('parent_id'),
-                        inputs=entry.get('inputs', {}),
-                        outputs=entry.get('outputs', {}),
-                        meta=entry.get('meta', {}),
                     ))
 
             if exec_objs:
@@ -259,26 +255,6 @@ def generate_request_id() -> str:
 _request_context = threading.local()
 
 
-def get_current_request_id() -> Optional[str]:
-    """Get the request ID for the current thread, if any."""
-    return getattr(_request_context, 'request_id', None)
-
-
-def set_current_request_id(request_id: Optional[str]):
-    """Set the request ID for the current thread."""
-    _request_context.request_id = request_id
-
-
-def get_current_user_id() -> Optional[int]:
-    """Get the user ID for the current thread, if any."""
-    return getattr(_request_context, 'user_id', None)
-
-
-def set_current_user_id(user_id: Optional[int]):
-    """Set the user ID for the current thread."""
-    _request_context.user_id = user_id
-
-
 @contextmanager
 def request_context(request_id: str, user_id: Optional[int] = None):
     """
@@ -286,14 +262,14 @@ def request_context(request_id: str, user_id: Optional[int] = None):
 
     Used by middleware to set context for the duration of a request.
     """
-    old_request_id = get_current_request_id()
-    old_user_id = get_current_user_id()
+    old_request_id = getattr(_request_context, 'request_id', None)
+    old_user_id = getattr(_request_context, 'user_id', None)
 
-    set_current_request_id(request_id)
-    set_current_user_id(user_id)
+    _request_context.request_id = request_id
+    _request_context.user_id = user_id
 
     try:
         yield
     finally:
-        set_current_request_id(old_request_id)
-        set_current_user_id(old_user_id)
+        _request_context.request_id = old_request_id
+        _request_context.user_id = old_user_id

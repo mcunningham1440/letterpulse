@@ -100,7 +100,6 @@ Include a maximum of 6 sections in your search plan. If more than 6 meet the cri
 DO NOT mention...
 - The number of items you'll be looking for, including through digits or just "a pair", etc.
 - Anything about excluding some sections, some "requiring external content" and others not, etc.
-- 
 
 <sample>
 ## Search plan

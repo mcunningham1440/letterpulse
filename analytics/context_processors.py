@@ -23,21 +23,10 @@ def usage_context(request):
                 'usage_quota': usage.monthly_quota,
                 'usage_remaining': usage.remaining,
                 'usage_percentage': usage.usage_percentage,
-                'show_survey': settings.SIGNUP_SURVEY_ENABLED and not usage.survey_completed,
             }
         except UsageAccount.DoesNotExist:
-            return {'show_survey': False}
-    return {'show_survey': False}
-
-
-def progress_context(request):
-    """
-    Add progress bar durations to template context.
-    """
-    return {
-        'progress_durations': settings.PROGRESS_DURATIONS,
-        'expected_times': settings.EXPECTED_TIMES,
-    }
+            return {}
+    return {}
 
 
 def environment_context(request):

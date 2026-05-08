@@ -1321,7 +1321,6 @@
                 overlay.style.display = 'none';
                 ProgressBar.start({
                     containerId: 'cfProgressContainer',
-                    expectedDuration: {{ progress_durations.content_search_run }},
                     subtext: 'Searching...',
                 });
                 startContentFinderPolling(taskId);
@@ -1371,7 +1370,6 @@
 
             ProgressBar.start({
                 containerId: 'cfProgressContainer',
-                expectedDuration: {{ progress_durations.content_search_plan }},
                 subtext: 'Building search plan...',
             });
             startContentFinderPolling(data.task_id);
@@ -1589,7 +1587,6 @@
             // Start progress bar and polling
             ProgressBar.start({
                 containerId: 'itProgressContainer',
-                expectedDuration: {{ progress_durations.improvement_tips }},
                 subtext: 'Generating improvement tips...',
             });
             if (itPollTimer) clearInterval(itPollTimer);

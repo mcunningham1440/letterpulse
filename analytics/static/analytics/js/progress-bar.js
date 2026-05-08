@@ -6,9 +6,6 @@
  *     Used inline beneath buttons (Content Finder, Improvement Tips).
  *   - 'spinner': small circular spinner. Used inside the Learning modal,
  *     where the surrounding modal already supplies phase copy.
- *
- * The legacy `expectedDuration` option is still accepted for call-site
- * compatibility but is ignored — bars no longer fake forward progress.
  */
 const ProgressBar = (function() {
     const activeBars = {};
@@ -138,7 +135,6 @@ const ProgressBar = (function() {
      * @param {string} options.containerId   - Target container element ID.
      * @param {('shimmer'|'spinner')} [options.mode='shimmer']
      * @param {string} [options.subtext]     - Caption (shimmer mode only).
-     * @param {number} [options.expectedDuration] - Accepted for legacy callers; ignored.
      */
     function start(options) {
         injectStyles();

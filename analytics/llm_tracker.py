@@ -77,13 +77,6 @@ def seed_tracking(prior_data):
     _tracker_start.set(time.time())
 
 
-def is_tracking():
-    """Return True if dev-panel tracking is active in the current context."""
-    if settings.ENVIRONMENT != 'local':
-        return False
-    return _tracker_calls.get() is not None
-
-
 def record_call(function_name, model, messages, response, duration, start_ts=None):
     """
     Record a successful LLM call. Always enqueues a DB row; also appends

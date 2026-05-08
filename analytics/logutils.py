@@ -101,10 +101,6 @@ class ExecutionLoggingMiddleware:
                 'traceback': traceback,
                 'user_id': user_id,
                 'request_id': request_id,
-                'parent_id': None,
-                'inputs': {},   # Placeholder
-                'outputs': {},  # Placeholder
-                'meta': {},     # Placeholder
             }
 
             log_sink.put(log_entry)

@@ -9,7 +9,7 @@ import json
 import math
 import re
 from collections import Counter
-from openai import AsyncOpenAI, OpenAI, BadRequestError
+from openai import AsyncOpenAI, OpenAI
 from pydantic import BaseModel
 from typing import List, Optional
 import pandas as pd
@@ -18,7 +18,6 @@ import aiohttp
 import os
 import logging
 from datetime import datetime
-from zoneinfo import ZoneInfo
 import time
 import html as html_module
 from bs4 import BeautifulSoup, NavigableString
@@ -108,28 +107,6 @@ TIMEZONE_CHOICES = [
     # UTC
     ('UTC', 'UTC'),
 ]
-
-
-def convert_to_user_timezone(dt, user_timezone_str):
-    """
-    Convert a UTC datetime to the user's preferred timezone.
-
-    Args:
-        dt: A timezone-aware datetime object (expected to be in UTC)
-        user_timezone_str: IANA timezone string (e.g., 'America/New_York')
-
-    Returns:
-        datetime object in the user's timezone, or None if dt is None/NaT
-    """
-    if dt is None:
-        return None
-
-    # Handle pandas NaT (Not a Time) values
-    if pd.isna(dt):
-        return None
-
-    user_tz = ZoneInfo(user_timezone_str)
-    return dt.astimezone(user_tz)
 
 
 class NotEnoughCredits(Exception):
@@ -804,7 +781,7 @@ async def process_post_links(session, post_id, user, beehiiv_token, beehiiv_pub_
 
     Returns:
         List of dicts with keys: post_id, raw_url, description, section_name,
-        rank_in_post, rank_in_section, mean_ctr, mean_clicks
+        rank_in_section, mean_ctr, mean_clicks
     """
     from analytics.models import Post
 
@@ -903,13 +880,12 @@ async def process_post_links(session, post_id, user, beehiiv_token, beehiiv_pub_
     if not selected_links:
         return []
 
-    # --- Compute global rank_in_post and tag for LLM ---
-    # Sort all selected links by CTR descending for global ranking
+    # Sort all selected links by CTR descending so the LLM_TAG_N indices line
+    # up with global CTR rank when we tag links in the prettified HTML below.
     selected_links.sort(key=lambda x: x[1]['mean_ctr'], reverse=True)
 
     url_to_tag = {}
     for i, (sec_name, ls) in enumerate(selected_links, start=1):
-        ls['rank_in_post'] = i
         url_to_tag[ls['url']] = i
 
     # Tag links in prettified HTML
@@ -970,7 +946,6 @@ Newsletter HTML:
             'raw_url': ls['url'],
             'description': desc_by_tag.get(i, ''),
             'section_name': sec_name,
-            'rank_in_post': ls['rank_in_post'],
             'rank_in_section': ls['rank_in_section'],
             'mean_ctr': round(ls['mean_ctr'], 2),
             'mean_clicks': round(ls['mean_clicks'], 1),
@@ -1835,7 +1810,6 @@ async def _save_post_full(post_id, sections, link_rows, user, publication):
                         raw_url=row['raw_url'],
                         description=row['description'],
                         section_name=row['section_name'],
-                        rank_in_post=row['rank_in_post'],
                         rank_in_section=row['rank_in_section'],
                         mean_ctr=row['mean_ctr'],
                         mean_clicks=row['mean_clicks'],
@@ -1935,38 +1909,6 @@ async def process_posts_sections_sequential(post_ids, user, beehiiv_token, beehi
     return results_by_post
 
 
-def load_posts_from_db(publication_id=None, user=None):
-    """Load posts from database into a DataFrame, filtered by publication and user.
-
-    Args:
-        publication_id: Optional Beehiiv publication ID (e.g., 'pub_xxx') to filter posts.
-                        If None, returns all posts for the user.
-        user: The user who owns the posts. Required for proper scoping.
-    """
-    from .models import Post
-
-    queryset = Post.objects.all()
-    if user:
-        queryset = queryset.filter(user=user)
-    if publication_id:
-        queryset = queryset.filter(publication__pub_id=publication_id)
-
-    posts = queryset.values(
-        'post_id', 'title',
-        # 'subtitle',  # Commented out - re-enable to show subtitle column
-        'status', 'creation_date', 'publish_date',
-        'recipients', 'delivered', 'email_opens', 'unique_email_opens',
-        'email_clicks', 'unique_email_clicks', 'unsubscribes', 'spam_reports'
-    )
-
-    if posts:
-        df = pd.DataFrame(list(posts))
-        # Rename post_id to id to match the expected format
-        df = df.rename(columns={'post_id': 'id'})
-        return df
-    return pd.DataFrame()
-
-
 async def fetch_posts_page(session, page, pagination_size, semaphore, beehiiv_token, beehiiv_pub_id):
     """
     Fetch a single page of posts from Beehiiv API.
@@ -2048,31 +1990,18 @@ def process_posts_data(posts_list):
     posts = {
         'id': [],
         'title': [],
-        # 'subtitle': [],  # Commented out - re-enable to show subtitle column
         'status': [],
         'created': [],
         'publish_date': [],
         'web_url': [],
         'platform': [],
         'recipients': [],
-        'delivered': [],
-        'email_opens': [],
         'unique_email_opens': [],
-        'email_clicks': [],
-        'unique_email_clicks': [],
-        'unsubscribes': [],
-        'spam_reports': [],
     }
 
     email_keys = {
         'recipients': 'recipients',
-        'delivered': 'delivered',
-        'email_opens': 'opens',
         'unique_email_opens': 'unique_opens',
-        'email_clicks': 'clicks',
-        'unique_email_clicks': 'unique_clicks',
-        'unsubscribes': 'unsubscribes',
-        'spam_reports': 'spam_reports'
     }
 
     clicks = {}
@@ -2116,10 +2045,6 @@ def process_posts_data(posts_list):
     # Convert publish_date - keep in UTC (handle drafts which have no publish_date)
     posts_df['publish_date'] = pd.to_datetime(posts_df['publish_date_raw'], unit='s', utc=True, errors='coerce')
 
-    posts_df['publish_dow'] = posts_df['publish_date'].dt.strftime('%A')
-    posts_df['email_open_rate'] = posts_df['unique_email_opens'] / posts_df['delivered'].replace(0, pd.NA)
-    posts_df['email_click_rate'] = posts_df['unique_email_clicks'] / posts_df['unique_email_opens'].replace(0, pd.NA)
-
     posts_df = posts_df.drop(columns=['created', 'publish_date_raw'])
 
     return posts_df
@@ -2146,19 +2071,12 @@ def save_posts_to_db(posts_df, user, publication):
             defaults={
                 'publication': publication,
                 'title': row['title'],
-                'subtitle': row.get('subtitle', ''),
                 'status': row.get('status', 'Published'),
                 'platform': row.get('platform') or None,
                 'creation_date': row.get('creation_date'),
                 'publish_date': publish_date,
                 'recipients': row.get('recipients', 0),
-                'delivered': row.get('delivered', 0),
-                'email_opens': row.get('email_opens', 0),
                 'unique_email_opens': row.get('unique_email_opens', 0),
-                'email_clicks': row.get('email_clicks', 0),
-                'unique_email_clicks': row.get('unique_email_clicks', 0),
-                'unsubscribes': row.get('unsubscribes', 0),
-                'spam_reports': row.get('spam_reports', 0),
             },
         )
 
@@ -2502,85 +2420,6 @@ async def fetch_recent_published_posts(beehiiv_token, beehiiv_pub_id, max_pages=
         raise
 
     return posts_list
-
-
-def build_click_viz_email_html(viz_html, post_title, site_url):
-    """
-    Wrap click visualization HTML with a branded header banner and footer for email delivery.
-
-    Args:
-        viz_html: The click visualization HTML string
-        post_title: Title of the newsletter post
-        site_url: Base URL of the LetterPulse site (e.g. https://letterpulse.com)
-
-    Returns:
-        Complete HTML string ready for email
-    """
-    account_url = f"{site_url.rstrip('/')}/account/"
-
-    posts_url = f"{site_url.rstrip('/')}/posts/"
-
-    banner = (
-        # Outer wrapper — dark background matching the app sidebar
-        '<div style="background-color: #212529; margin: 0 auto 24px auto; max-width: 720px; '
-        'font-family: Arial, Helvetica, sans-serif; border-radius: 8px; overflow: hidden;">'
-
-        # Top bar — brand name on dark background with green accent underline
-        '<div style="padding: 20px 24px 16px 24px; text-align: center; '
-        'border-bottom: 3px solid #28a745;">'
-        '<span style="color: #ffffff; font-size: 22px; font-weight: 700; letter-spacing: 0.5px;">'
-        'LetterPulse'
-        '</span>'
-        '</div>'
-
-        # Content area — slightly lighter dark panel
-        '<div style="background-color: #2c3034; padding: 20px 24px; color: #dee2e6; '
-        'font-size: 14px; line-height: 1.6;">'
-
-        # Post title
-        '<div style="text-align: center; margin-bottom: 14px; font-size: 16px; color: #ffffff;">'
-        f'Click visualization for <strong>{post_title}</strong>'
-        '</div>'
-
-        # Divider
-        '<div style="border-top: 1px solid #495057; margin: 0 auto 14px auto; max-width: 400px;"></div>'
-
-        # Instructions
-        '<div style="text-align: center; color: #adb5bd; font-size: 13px;">'
-        f'Process your post in the <a href="{posts_url}" style="color: #28a745; text-decoration: none; font-weight: 600;">Posts</a> tab '
-        'to see each section\'s performance and compare with previous issues.'
-        '</div>'
-        '<div style="text-align: center; margin-top: 6px; color: #adb5bd; font-size: 13px;">'
-        f'Toggle these emails in <a href="{account_url}" style="color: #28a745; text-decoration: none; font-weight: 600;">Account</a> settings.'
-        '</div>'
-
-        '</div>'  # end content area
-        '</div>'  # end outer wrapper
-    )
-
-    footer = (
-        '<div style="text-align: center; padding: 20px; margin: 20px auto; max-width: 720px; '
-        'font-family: Arial, Helvetica, sans-serif; font-size: 12px; color: #6c757d;">'
-        f'<a href="{account_url}" style="color: #28a745; text-decoration: none;">Manage email settings</a>'
-        ' &nbsp;&middot;&nbsp; '
-        f'<a href="{site_url}" style="color: #28a745; text-decoration: none;">LetterPulse</a>'
-        '</div>'
-    )
-
-    # Insert banner after <body> tag (or at start if no body tag)
-    soup = BeautifulSoup(viz_html, 'html.parser')
-    body = soup.find('body')
-    if body:
-        # Insert banner as first child of body
-        banner_soup = BeautifulSoup(banner, 'html.parser')
-        body.insert(0, banner_soup)
-        # Append footer at end of body
-        footer_soup = BeautifulSoup(footer, 'html.parser')
-        body.append(footer_soup)
-    else:
-        return banner + viz_html + footer
-
-    return str(soup)
 
 
 # =============================================================================
