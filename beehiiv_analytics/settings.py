@@ -22,20 +22,20 @@ SECRET_KEY = os.environ["SECRET_KEY"]
 ENVIRONMENT = os.environ.get('ENVIRONMENT', 'local')
 DEBUG = ENVIRONMENT == 'local'
 
-CSRF_TRUSTED_ORIGINS = [
-    "https://qp4y3etffq.us-east-1.awsapprunner.com",
-    "https://peyaih5jyd.us-east-1.awsapprunner.com",
-    "https://abceejrmag.us-east-1.awsapprunner.com",
-    "https://letterpulse.com"
-    ]
-ALLOWED_HOSTS = [
-    "qp4y3etffq.us-east-1.awsapprunner.com",
-    "peyaih5jyd.us-east-1.awsapprunner.com",
-    "abceejrmag.us-east-1.awsapprunner.com",
-    "127.0.0.1",
-    "localhost",
-    "letterpulse.com"
-    ]
+
+def _csv_env(key):
+    """Parse a comma-separated env var into a list of stripped, non-empty entries."""
+    return [s.strip() for s in os.environ.get(key, '').split(',') if s.strip()]
+
+
+# Loopback hosts are always permitted (health checks, local dev). Public
+# hostnames per deployment target are supplied via the ALLOWED_HOSTS env var
+# as a comma-separated list (e.g. "letterpulse.com,xyz.awsapprunner.com").
+ALLOWED_HOSTS = _csv_env('ALLOWED_HOSTS') + ['127.0.0.1', 'localhost']
+
+# CSRF_TRUSTED_ORIGINS env var is comma-separated full origins (with scheme),
+# e.g. "https://letterpulse.com,https://xyz.awsapprunner.com".
+CSRF_TRUSTED_ORIGINS = _csv_env('CSRF_TRUSTED_ORIGINS')
 
 
 # Application definition
@@ -109,7 +109,7 @@ if 'rds.amazonaws.com' in (db_host or ''):
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql',
-        'NAME': "letterpulse",
+        'NAME': os.environ.get('DB_NAME', 'letterpulse'),
         'USER': db_secret['username'],
         'PASSWORD': db_secret['password'],
         'HOST': db_host,
