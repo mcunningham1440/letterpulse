@@ -70,7 +70,11 @@ app/
 │   ├── signals.py              # User signals (auto-create UsageAccount)
 │   ├── context_processors.py   # Usage stats and environment context for templates
 │   ├── templates/analytics/    # HTML templates (base, posts, insights, account, about, mobile)
-│   ├── static/analytics/js/    # JS including dev-panel.js (local mode only)
+│   ├── static/analytics/js/    # Page-specific JS (insights split into fancy-select / datatables-init /
+│   │                           #   learning-flow / content-finder / improvement-tips; monetize.js;
+│   │                           #   shared utilities csv.js / progress-bar.js / dev-panel.js).
+│   │                           #   Server-side context flows in via a <div id="page-config" data-...>
+│   │                           #   element in insights.html (read with element.dataset).
 │   └── migrations/
 ├── manage.py
 ├── requirements.txt
