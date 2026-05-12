@@ -11,6 +11,7 @@ def update_site(apps, schema_editor):
 class Migration(migrations.Migration):
     dependencies = [
         ("analytics", "0021_add_newsletter_name_to_usageaccount"),
+        ("sites", "0001_initial"),
     ]
 
     operations = [
