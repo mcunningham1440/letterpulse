@@ -5,8 +5,11 @@ import os
 import time
 from datetime import datetime
 
+from django.utils import timezone as dj_timezone
 from dotenv import load_dotenv
 from openai import AsyncOpenAI, OpenAI
+
+from analytics.llm_tracker import record_call, record_error
 
 logger = logging.getLogger(__name__)
 
@@ -46,9 +49,6 @@ async def llm_call(function_name, messages, model, reasoning_level, response_for
     Returns:
         OpenAI API response object
     """
-    from django.utils import timezone as dj_timezone
-    from analytics.llm_tracker import record_call, record_error
-
     start_datetime = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     start_ts = dj_timezone.now()
     start_time = time.time()

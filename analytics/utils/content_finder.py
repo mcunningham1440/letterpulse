@@ -2,12 +2,30 @@ import asyncio
 import hashlib
 import json
 import logging
-from datetime import datetime
+import warnings as _warnings
+from datetime import date, datetime, timedelta
 from typing import List
 
+from asgiref.sync import async_to_sync, sync_to_async
 from django.conf import settings
+from django.db import close_old_connections, connection
+from perplexity import Perplexity
 from pydantic import BaseModel
 
+from analytics.llm_tracker import (
+    finish_tracking,
+    seed_tracking,
+    set_additional_info,
+    set_llm_context,
+    start_tracking,
+)
+from analytics.models import (
+    ContentSearchFeedback,
+    Feedback,
+    LinkData,
+    PendingContentSearch,
+    Section,
+)
 from analytics.prompts import (
     CONTENT_FINDER_DISPATCH_PROMPT,
     CONTENT_FINDER_OUTPUT_PROMPT,
@@ -28,9 +46,6 @@ def perplexity_search(queries, max_results=10, domains=None, max_days_ago=None, 
     If historical_urls is provided, any result whose URL is a substring of
     any historical URL is silently excluded from the output.
     """
-    from perplexity import Perplexity
-    from datetime import date, timedelta
-
     queries = [q for q in queries if q and q.strip()]
     if not queries:
         return "No results found (empty queries)."
@@ -172,8 +187,6 @@ def _serialize_response_output(response):
     noisy Pydantic warnings, so we suppress those warnings during the dump and
     strip `parsed` from each content item before returning.
     """
-    import warnings as _warnings
-
     serialized = []
     for item in response.output:
         try:
@@ -218,8 +231,6 @@ async def run_plan_stage(task, sections):
     Returns (plan_text, plan_messages) where plan_messages is the full list
     [system(PLAN_PROMPT), user(user_prompt), <plan response output items>].
     """
-    from asgiref.sync import sync_to_async
-
     max_links = settings.CONTENT_FINDER_MAX_LINKS
     max_url_len = settings.CONTENT_FINDER_MAX_URL_LEN
 
@@ -295,7 +306,6 @@ async def run_search_agent(section_name, dispatch_messages, historical_urls, tas
 
     Returns (section_name, parsed_links_or_empty_list).
     """
-    from analytics.llm_tracker import set_additional_info
     set_additional_info({'section_name': section_name})
 
     model = settings.CONTENT_FINDER_MODEL
@@ -377,9 +387,6 @@ async def run_search_agent(section_name, dispatch_messages, historical_urls, tas
 
 async def run_all_searches(task):
     """Stage 3: fan out parallel search agents, one per entry in task.dispatch_sections."""
-    from asgiref.sync import sync_to_async
-    from analytics.models import LinkData, ContentSearchFeedback
-
     def _load_historical_urls():
         urls = set(
             url.rstrip('/') for url in
@@ -418,11 +425,6 @@ def run_content_finder_background(task_id):
     Branches on task.status: 'planning' runs Stage 1 (exits awaiting user feedback);
     'dispatching' runs Stage 2 + Stage 3.
     """
-    from asgiref.sync import async_to_sync
-    from django.db import connection, close_old_connections
-    from analytics.models import PendingContentSearch, Section
-    from analytics.llm_tracker import start_tracking, seed_tracking, finish_tracking, set_llm_context
-
     task = None
     try:
         task = PendingContentSearch.objects.get(task_id=task_id)
@@ -506,7 +508,6 @@ def run_content_finder_background(task_id):
             else:
                 task.save(update_fields=['status', 'result_data'])
 
-            from analytics.models import Feedback
             Feedback.objects.get_or_create(
                 user=task.user, feature='used_content_finder',
                 defaults={'response': 'completed'}

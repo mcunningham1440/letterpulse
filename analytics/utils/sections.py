@@ -1,8 +1,12 @@
 import math
 from typing import List, Optional
 
+from asgiref.sync import sync_to_async
 from bs4 import BeautifulSoup
 from pydantic import BaseModel
+
+from analytics.models import Section as SectionModel
+from analytics.prompts import AUTO_SECTION_PROMPT
 
 from .llm import llm_call
 from .text import html_to_text_with_links
@@ -24,8 +28,6 @@ def build_sections_desc(user, publication, post, n_examples=5):
         A formatted string describing each section with typical descriptions,
         line positions, and first/last HTML lines from nearby posts.
     """
-    from analytics.models import Section as SectionModel
-
     target_date = post.publish_date
     if not target_date:
         return ""
@@ -141,9 +143,6 @@ async def auto_section(html, user, publication, post, n_examples=5, pretty_html=
         List of section dicts with keys: name, title, description,
         start_line, end_line, section_html, post_html_length.
     """
-    from asgiref.sync import sync_to_async
-    from analytics.prompts import AUTO_SECTION_PROMPT
-
     if pretty_html is None:
         pretty_html = BeautifulSoup(html, 'html.parser').prettify()
     html_lines = pretty_html.split('\n')

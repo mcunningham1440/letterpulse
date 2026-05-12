@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from datetime import datetime
+from datetime import datetime, timezone as dt_timezone
 
 import aiohttp
 
@@ -309,8 +309,6 @@ async def _fetch_incremental_track(
     If apply_publish_age_check is True (Track A), additionally requires the
     oldest post in the batch to be at least 72h old before stopping.
     """
-    from datetime import timezone as dt_timezone
-
     fetched = []
     headers = {"Authorization": beehiiv_token}
 

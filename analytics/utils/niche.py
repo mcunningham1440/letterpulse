@@ -1,9 +1,13 @@
 import logging
 from typing import List
 
+from asgiref.sync import async_to_sync
 from django.conf import settings
+from django.db import close_old_connections, connection
 from pydantic import BaseModel
 
+from analytics.llm_tracker import finish_tracking, set_llm_context, start_tracking
+from analytics.models import LinkData, PendingNicheAnalysis, Post, ProcessedPost, Section
 from analytics.prompts import NICHE_ANALYSIS_PROMPT
 
 from .llm import llm_call
@@ -29,8 +33,6 @@ def _build_niche_analysis_prompt(user, publication):
     Returns the user-message string (or None if there's not enough data — the
     caller should treat that as "skip the analysis" rather than erroring).
     """
-    from analytics.models import Post, ProcessedPost, Section, LinkData
-
     recent_n = settings.NICHE_ANALYSIS_RECENT_POSTS
     history_m = settings.NICHE_ANALYSIS_LINK_HISTORY_ISSUES
     top_links = settings.NICHE_ANALYSIS_TOP_LINKS_PER_SECTION
@@ -158,11 +160,6 @@ def run_niche_analysis_background(task_id):
     the PendingNicheAnalysis row, gathers post text + per-section link history,
     runs the LLM, and writes the result back to the row.
     """
-    from asgiref.sync import async_to_sync
-    from django.db import connection, close_old_connections
-    from analytics.models import PendingNicheAnalysis
-    from analytics.llm_tracker import start_tracking, finish_tracking, set_llm_context
-
     try:
         task = PendingNicheAnalysis.objects.select_related('user', 'publication').get(task_id=task_id)
         task.status = 'running'

@@ -80,13 +80,14 @@ def _send_welcome_email(user):
                 f"{greeting}<br><br>"
                 "Thanks for signing up to try out LetterPulse!<br><br>"
 
-                "<b>Some quick wins to get value from your first session:</b><br><br>"
+                "<b>Getting started:</b><br><br>"
 
-                "1. Once you've entered your Beehiiv credentials, head to the <a href=\"https://letterpulse.com/posts/\">Posts tab</a> and "
-                "<b>process a few of your recent issues</b> with at least 2-3 recurring sections in your newsletter. "
-                "<i>Make sure to use real sections! The app won't work properly if given made-up ones like 'just testing'.</i><br>"
-                "2. <b>Check out the section performance chart</b> in the <a href=\"https://letterpulse.com/insights/\">Write tab</a> to see how each section is performing over time.<br>"
-                "3. <b>Run &quot;Get Insights&quot;</b> to see what kind of content in those sections performs best.<br><br>"
+                "1. <b>Add your Beehiiv API credentials</b> on the <a href=\"https://letterpulse.com/account/\">Account tab</a> "
+                "so LetterPulse can pull in your past issues.<br>"
+                "2. Head to the <a href=\"https://letterpulse.com/insights/\">Write tab</a> and click <b>Scan</b> when prompted. "
+                "LetterPulse will read your recent issues in the background to learn what your sections are and how each one performs.<br>"
+                "3. Once the scan finishes, try <b>Content Finder</b> to get suggested links for an upcoming issue, or "
+                "<b>Improvement Tips</b> to get inline editing suggestions on any specific post.<br><br>"
 
                 "The app has informational tooltips to walk you through getting started, "
                 "but please reach out if anything is unclear\u2014I'm always happy to help.<br><br>"
@@ -102,13 +103,14 @@ def _send_welcome_email(user):
                 f"{greeting}\n\n"
                 "Thanks for signing up to try out LetterPulse!\n\n"
 
-                "Some quick wins to get value from your first session:\n\n"
+                "Getting started:\n\n"
 
-                "1. Once you've entered your Beehiiv credentials, head to the Posts tab (https://letterpulse.com/posts/) and "
-                "process a few of your recent issues with at least 2-3 recurring sections in your newsletter. "
-                "Make sure to use real sections! The app won't work properly if given made-up ones like 'just testing'.\n"
-                "2. Check out the section performance chart in the Write tab (https://letterpulse.com/insights/) to see how each section is performing over time.\n"
-                "3. Run \"Get Insights\" to see what kind of content in those sections performs best.\n\n"
+                "1. Add your Beehiiv API credentials on the Account tab (https://letterpulse.com/account/) "
+                "so LetterPulse can pull in your past issues.\n"
+                "2. Head to the Write tab (https://letterpulse.com/insights/) and click Scan when prompted. "
+                "LetterPulse will read your recent issues in the background to learn what your sections are and how each one performs.\n"
+                "3. Once the scan finishes, try Content Finder to get suggested links for an upcoming issue, or "
+                "Improvement Tips to get inline editing suggestions on any specific post.\n\n"
 
                 "The app has informational tooltips to walk you through getting started, "
                 "but please reach out if anything is unclear\u2014I'm always happy to help.\n\n"

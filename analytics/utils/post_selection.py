@@ -1,5 +1,16 @@
 import pandas as pd
 from django.db import transaction
+from django.db.models import Q
+from django.utils import timezone as dj_timezone
+
+from analytics.models import (
+    LinkData,
+    Post,
+    ProcessedPost,
+    Publication,
+    Section,
+    UsageAccount,
+)
 
 
 PROCESSABLE_PLATFORMS = ('email', 'both')
@@ -14,10 +25,6 @@ def _processable_posts_queryset(user, publication):
       OR platform is NULL (legacy rows fetched before the platform field
       existed — treat as eligible; they'll be backfilled on next fetch).
     """
-    from django.db.models import Q
-    from django.utils import timezone as dj_timezone
-    from analytics.models import Post
-
     cutoff = dj_timezone.now() - pd.Timedelta(seconds=PROCESSABLE_PUBLISHED_AGE_SECONDS)
     return (
         Post.objects
@@ -71,8 +78,6 @@ def select_posts_for_update(user, publication):
     haven't been processed yet AND were published more recently than the oldest
     already-processed post (so we don't retroactively backfill older history).
     """
-    from analytics.models import ProcessedPost
-
     eligible = _processable_posts_queryset(user, publication)
 
     processed_post_pks = ProcessedPost.objects.filter(
@@ -102,10 +107,6 @@ def wipe_user_publication_data(user, pub_id):
     remove pub_id from UsageAccount.initial_fetched_pub_ids so the user sees the
     onboarding coach again on their next page load.
     """
-    from analytics.models import (
-        LinkData, Post, Publication, ProcessedPost, Section, UsageAccount,
-    )
-
     with transaction.atomic():
         try:
             publication = Publication.objects.get(pub_id=pub_id)

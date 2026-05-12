@@ -2,21 +2,51 @@
 Views for the analytics app.
 """
 
-import re
+import functools
+import json
 import logging
-from django.shortcuts import render, redirect
-from django.urls import reverse
-from django.http import JsonResponse, HttpResponse
-from django.views.decorators.http import require_GET, require_POST
-from django.views.decorators.csrf import csrf_exempt
+import re
+import threading
+from datetime import timedelta
 
+from asgiref.sync import async_to_sync
+from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
-from django.conf import settings
-import json
-from asgiref.sync import async_to_sync
+from django.http import HttpResponse, JsonResponse
+from django.shortcuts import redirect, render
+from django.urls import reverse
+from django.utils import timezone
+from django.views.decorators.csrf import csrf_exempt
+from django.views.decorators.http import require_GET, require_POST
 
-from .models import Post, UsageAccount, ProcessedPost, LinkData, Section, PendingContentSearch, PendingImprovementTips, ContentSearchFeedback, PendingLearningTask, PendingNicheAnalysis
+from .models import (
+    ContentSearchFeedback,
+    Feedback,
+    LinkData,
+    PendingContentSearch,
+    PendingImprovementTips,
+    PendingLearningTask,
+    PendingNicheAnalysis,
+    ProcessedPost,
+    Publication,
+    Post,
+    Section,
+    UsageAccount,
+)
+from .utils import (
+    NotEnoughCredits,
+    TIMEZONE_CHOICES,
+    charge_credits,
+    fetch_publication_stats,
+    run_content_finder_background,
+    run_improvement_tips_background,
+    run_initial_learning_task,
+    run_niche_analysis_background,
+    run_update_task,
+    validate_beehiiv_api_key,
+    wipe_user_publication_data,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -56,20 +86,6 @@ def sanitize_filename(filename: str) -> str:
 
     # Limit length to prevent issues
     return sanitized[:200]
-
-
-from .utils import (
-    NotEnoughCredits,
-    charge_credits,
-    validate_beehiiv_api_key,
-    run_initial_learning_task,
-    run_update_task,
-    wipe_user_publication_data,
-    fetch_publication_stats,
-)
-
-
-import functools
 
 
 def get_user_api_credentials(user):
@@ -123,8 +139,6 @@ def account_view(request):
     """
     Display and manage user account settings including API credentials and usage.
     """
-    from .models import Publication
-
     # Get or create usage account
     usage, created = UsageAccount.objects.get_or_create(
         user=request.user,
@@ -200,7 +214,6 @@ def account_view(request):
 
         elif action == 'update_timezone':
             # Handle timezone update
-            from .utils import TIMEZONE_CHOICES
             new_timezone = request.POST.get('timezone', '').strip()
             valid_timezones = [tz[0] for tz in TIMEZONE_CHOICES]
             if new_timezone in valid_timezones:
@@ -246,7 +259,6 @@ def account_view(request):
             request.session['publication_coach_dismissed'] = True
             return redirect('analytics:account')
 
-    from .utils import TIMEZONE_CHOICES
     has_posts = Post.objects.filter(user=request.user).exists() if usage.api_key_valid else False
 
     publication = None
@@ -354,18 +366,12 @@ def dismiss_publication_coach(request):
     return JsonResponse({'success': True})
 
 
-# Import timezone for account_view
-from django.utils import timezone
-from datetime import timedelta
-
-
 def _resolve_publication(user, beehiiv_pub_id):
     """
     Return the Publication for the user's selected Beehiiv pub, creating the
     row from UsageAccount.available_publications if it's missing. Returns
     None if no metadata for the pub_id is available (caller should 400).
     """
-    from .models import Publication
     pub = Publication.objects.filter(pub_id=beehiiv_pub_id).first()
     if pub is not None:
         return pub
@@ -424,8 +430,6 @@ def insights_view(request):
     """
     Display the insights page with section data table.
     """
-    from .models import Publication
-
     # Sweep stale initial Learning tasks first so the gating below uses fresh state.
     _sweep_stale_learning_tasks(request.user)
 
@@ -445,7 +449,6 @@ def insights_view(request):
         publication = None
         has_processed_data = False
 
-    from .models import Feedback
     write_post_feedback = Feedback.objects.filter(
         user=request.user, feature='write_post'
     ).first()
@@ -522,8 +525,6 @@ def monetize_view(request):
     live publication stats (subscribers / open rate / click rate) from
     Beehiiv to display in the Newsletter profile card.
     """
-    from .models import Publication
-
     usage = UsageAccount.objects.get(user=request.user)
     beehiiv_token, beehiiv_pub_id, _ = get_user_api_credentials(request.user)
 
@@ -605,8 +606,6 @@ def monetize_view(request):
             user=request.user, publication=publication,
         ).exists()
         if has_processed:
-            import threading
-            from .utils import run_niche_analysis_background
             new_task = PendingNicheAnalysis.objects.create(
                 user=request.user,
                 publication=publication,
@@ -638,8 +637,6 @@ def load_processed_data(request):
     Load all Section data for the current user and publication.
     Returns section fields for display in the Insights table.
     """
-    from .models import Publication
-
     try:
         _, beehiiv_pub_id, _ = get_user_api_credentials(request.user)
 
@@ -692,8 +689,6 @@ def load_link_data(request):
     Load all LinkData for the current user and publication.
     Returns link fields for display in the Insights link table.
     """
-    from .models import Publication
-
     try:
         _, beehiiv_pub_id, _ = get_user_api_credentials(request.user)
 
@@ -755,8 +750,6 @@ def start_learning_task(request):
     process top-k eligible posts. Refuses if one is already running for this
     user/publication.
     """
-    import threading
-
     _sweep_stale_learning_tasks(request.user)
 
     _, beehiiv_pub_id, _ = get_user_api_credentials(request.user)
@@ -805,8 +798,6 @@ def start_update_task(request):
     client-side via localStorage; here we only enforce "no duplicate running
     task" as defense-in-depth.
     """
-    import threading
-
     _sweep_stale_learning_tasks(request.user)
 
     _, beehiiv_pub_id, _ = get_user_api_credentials(request.user)
@@ -915,8 +906,6 @@ def abandon_learning_task(request, task_id):
 @require_valid_api_credentials
 def content_finder_posts(request):
     """Return list of processed posts for the content finder dropdown."""
-    from .models import Publication
-
     try:
         _, beehiiv_pub_id, _ = get_user_api_credentials(request.user)
         try:
@@ -953,10 +942,6 @@ def content_finder_posts(request):
 @require_valid_api_credentials
 def run_content_finder(request):
     """Start a content finder background task (Stage 1: planning)."""
-    import threading
-    from .models import Publication
-    from .utils import charge_credits, NotEnoughCredits, run_content_finder_background
-
     try:
         data = json.loads(request.body)
     except json.JSONDecodeError:
@@ -1010,9 +995,6 @@ def run_content_finder(request):
 @require_valid_api_credentials
 def confirm_content_finder_plan(request, task_id):
     """Stage 2/3 kickoff: record the user's plan feedback and spawn dispatch + search."""
-    import threading
-    from .utils import run_content_finder_background
-
     try:
         task = PendingContentSearch.objects.get(task_id=task_id, user=request.user)
     except PendingContentSearch.DoesNotExist:
@@ -1085,7 +1067,6 @@ def submit_content_search_feedback(request):
         return JsonResponse({'success': False, 'error': 'url and feedback (up/down) required'}, status=400)
 
     _, beehiiv_pub_id, _ = get_user_api_credentials(request.user)
-    from .models import Publication
     try:
         publication = Publication.objects.get(pub_id=beehiiv_pub_id)
     except Publication.DoesNotExist:
@@ -1113,8 +1094,6 @@ def submit_content_search_feedback(request):
 @require_valid_api_credentials
 def improvement_tips_posts(request):
     """Return list of all posts for the improvement tips dropdown."""
-    from .models import Publication
-
     try:
         _, beehiiv_pub_id, _ = get_user_api_credentials(request.user)
         try:
@@ -1149,10 +1128,6 @@ def improvement_tips_posts(request):
 @require_valid_api_credentials
 def run_improvement_tips(request):
     """Start an improvement tips background task."""
-    import threading
-    from .models import Publication, PendingImprovementTips
-    from .utils import charge_credits, NotEnoughCredits, run_improvement_tips_background
-
     try:
         data = json.loads(request.body)
     except json.JSONDecodeError:
@@ -1202,8 +1177,6 @@ def run_improvement_tips(request):
 @require_GET
 def poll_improvement_tips(request, task_id):
     """Poll the status of an improvement tips task."""
-    from .models import PendingImprovementTips
-
     try:
         task = PendingImprovementTips.objects.get(task_id=task_id, user=request.user)
     except PendingImprovementTips.DoesNotExist:
@@ -1231,8 +1204,6 @@ def poll_improvement_tips(request, task_id):
 @require_GET
 def download_improvement_tips(request, task_id):
     """Download the annotated HTML from a completed improvement tips task."""
-    from .models import PendingImprovementTips
-
     try:
         task = PendingImprovementTips.objects.get(task_id=task_id, user=request.user)
     except PendingImprovementTips.DoesNotExist:
@@ -1284,7 +1255,6 @@ SUBMITTABLE_FEEDBACK_FEATURES = {'write_post', 'seen_write_post_poll'}
 @require_POST
 def submit_feedback(request):
     """Save a user feedback response."""
-    from .models import Feedback
     try:
         data = json.loads(request.body)
         feature = data.get('feature', '')

@@ -219,8 +219,16 @@ EMAIL_HOST_USER = os.environ.get('EMAIL_HOST_USER', '')
 EMAIL_HOST_PASSWORD = os.environ.get('EMAIL_HOST_PASSWORD', '')
 DEFAULT_FROM_EMAIL = os.environ.get('EMAIL_HOST_USER', 'noreply@letterpulse.app')
 
-# Email address to receive signup notifications
+# =============================================================================
+# Signup Configuration
+# =============================================================================
+# Email address to receive notifications when a new user signs up.
 SIGNUP_NOTIFICATION_EMAIL = os.environ.get('SIGNUP_NOTIFICATION_EMAIL', '')
+
+# Maximum new user signups allowed per rolling 24-hour window. Enforced in
+# analytics/adapters.py:CustomAccountAdapter.is_open_for_signup. Set to None
+# to disable the cap.
+DAILY_SIGNUP_CAP = 5
 
 # =============================================================================
 # Messages Framework Configuration
@@ -250,9 +258,6 @@ MAX_POSTS_PROCESSED_PER_PERIOD = 45
 # Link processing configuration
 LINK_PROCESS_TOP_N = 60             # Total links to select across all sections
 LINK_PROCESS_MAX_RETRIES = 2        # Max LLM retries for link description count mismatch
-
-# Maximum new user signups allowed per rolling 24-hour window (None = unlimited)
-DAILY_SIGNUP_CAP = 5
 
 # Stale-task sweep: if a running PendingLearningTask's last_heartbeat is older
 # than this, treat it as abandoned (backup for the pagehide beacon).
