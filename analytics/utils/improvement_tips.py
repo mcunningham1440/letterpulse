@@ -9,13 +9,13 @@ import aiohttp
 from asgiref.sync import async_to_sync, sync_to_async
 from bs4 import BeautifulSoup, NavigableString
 from django.conf import settings
-from django.db import close_old_connections, connection
 from pydantic import BaseModel
 
 from analytics.llm_tracker import finish_tracking, set_llm_context, start_tracking
-from analytics.models import Feedback, PendingImprovementTips, Section, UsageAccount
+from analytics.models import Feedback, Section, UsageAccount
 from analytics.prompts import IMPROVEMENT_TIP_PROMPT
 
+from .background import refresh_db_connection
 from .beehiiv_api import fetch_post_html
 from .links import format_link_history
 from .llm import llm_call
@@ -590,68 +590,43 @@ async def generate_improvement_tips_html(post, user, publication, beehiiv_token,
     return result_html
 
 
-def run_improvement_tips_background(task_id):
+def run_improvement_tips_background(task):
     """
-    Background thread entry point for generating improvement tips.
-    Loads the PendingImprovementTips task, generates annotated HTML, saves result.
+    Background work fn for improvement tips. Generates the annotated HTML and
+    saves it. The `spawn_background` wrapper handles claim, error-marking, and
+    DB connection cleanup.
     """
+    set_llm_context(
+        user_id=task.user_id,
+        publication_id=task.publication_id,
+        task_id=task.task_id,
+        task_kind='improvement_tips',
+    )
+    if settings.ENVIRONMENT == 'local':
+        start_tracking()
+
+    post = task.post
+    user = task.user
+    publication = task.publication
+
     try:
-        task = PendingImprovementTips.objects.get(task_id=task_id)
-        task.status = 'running'
-        task.save(update_fields=['status'])
+        usage = UsageAccount.objects.get(user=user)
+        beehiiv_token = usage.beehiiv_token
+        beehiiv_pub_id = usage.beehiiv_pub_id
+    except UsageAccount.DoesNotExist:
+        raise RuntimeError("No API credentials configured")
 
-        set_llm_context(
-            user_id=task.user_id,
-            publication_id=task.publication_id,
-            task_id=task.task_id,
-            task_kind='improvement_tips',
-        )
-        if settings.ENVIRONMENT == 'local':
-            start_tracking()
+    result_html = async_to_sync(generate_improvement_tips_html)(
+        post, user, publication, beehiiv_token, beehiiv_pub_id
+    )
+    refresh_db_connection()
 
-        post = task.post
-        user = task.user
-        publication = task.publication
+    extras = {'result_html': result_html}
+    if settings.ENVIRONMENT == 'local':
+        extras['dev_panel_data'] = finish_tracking() or {}
+    task.mark_complete(**extras)
 
-        try:
-            usage = UsageAccount.objects.get(user=user)
-            beehiiv_token = usage.beehiiv_token
-            beehiiv_pub_id = usage.beehiiv_pub_id
-        except UsageAccount.DoesNotExist:
-            raise RuntimeError("No API credentials configured")
-
-        result_html = async_to_sync(generate_improvement_tips_html)(
-            post, user, publication, beehiiv_token, beehiiv_pub_id
-        )
-
-        # Long-running LLM calls can leave the DB connection stale (RDS-side
-        # idle timeout). Drop any unhealthy connection so the next ORM call
-        # opens a fresh one instead of raising SSL SYSCALL EOF.
-        close_old_connections()
-
-        task.status = 'complete'
-        task.result_html = result_html
-        if settings.ENVIRONMENT == 'local':
-            task.dev_panel_data = finish_tracking() or {}
-            task.save(update_fields=['status', 'result_html', 'dev_panel_data'])
-        else:
-            task.save(update_fields=['status', 'result_html'])
-
-        # Mark that the user has used post improvement
-        Feedback.objects.get_or_create(
-            user=task.user, feature='used_post_improvement',
-            defaults={'response': 'completed'}
-        )
-
-    except Exception as e:
-        logger.exception("Improvement tips background task failed")
-        try:
-            close_old_connections()
-            task = PendingImprovementTips.objects.get(task_id=task_id)
-            task.status = 'error'
-            task.error_message = str(e)
-            task.save(update_fields=['status', 'error_message'])
-        except Exception:
-            logger.exception("Failed to save error status for improvement tips task")
-    finally:
-        connection.close()
+    Feedback.objects.get_or_create(
+        user=task.user, feature='used_post_improvement',
+        defaults={'response': 'completed'}
+    )

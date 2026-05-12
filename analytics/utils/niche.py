@@ -3,13 +3,13 @@ from typing import List
 
 from asgiref.sync import async_to_sync
 from django.conf import settings
-from django.db import close_old_connections, connection
 from pydantic import BaseModel
 
 from analytics.llm_tracker import finish_tracking, set_llm_context, start_tracking
-from analytics.models import LinkData, PendingNicheAnalysis, Post, ProcessedPost, Section
+from analytics.models import LinkData, Post, ProcessedPost, Section
 from analytics.prompts import NICHE_ANALYSIS_PROMPT
 
+from .background import refresh_db_connection
 from .llm import llm_call
 from .text import html_to_text_with_links, truncate_url
 
@@ -154,68 +154,46 @@ async def _run_niche_analysis_llm(user_prompt):
     return parsed
 
 
-def run_niche_analysis_background(task_id):
+def run_niche_analysis_background(task):
     """
-    Background thread entry point for the Monetize-tab niche analysis. Loads
-    the PendingNicheAnalysis row, gathers post text + per-section link history,
-    runs the LLM, and writes the result back to the row.
+    Background work fn for the Monetize-tab niche analysis. Gathers post text +
+    per-section link history, runs the LLM, and writes the result back to the
+    row. The `spawn_background` wrapper handles claim, error-marking, and DB
+    connection cleanup.
     """
-    try:
-        task = PendingNicheAnalysis.objects.select_related('user', 'publication').get(task_id=task_id)
-        task.status = 'running'
-        task.save(update_fields=['status'])
+    set_llm_context(
+        user_id=task.user_id,
+        publication_id=task.publication_id,
+        task_id=task.task_id,
+        task_kind='niche_analysis',
+    )
+    if settings.ENVIRONMENT == 'local':
+        start_tracking()
 
-        set_llm_context(
-            user_id=task.user_id,
-            publication_id=task.publication_id,
-            task_id=task.task_id,
-            task_kind='niche_analysis',
-        )
+    user_prompt = _build_niche_analysis_prompt(task.user, task.publication)
+    if user_prompt is None:
+        # No processed posts yet — caller should not have spawned us, but be
+        # defensive. Flagged as a soft fallback per global instructions: we
+        # complete the task with empty results rather than erroring, which
+        # would surface a generic error toast to the user.
+        extras = {'niche': '', 'content_types': []}
         if settings.ENVIRONMENT == 'local':
-            start_tracking()
+            extras['dev_panel_data'] = finish_tracking() or {}
+        task.mark_complete(**extras)
+        return
 
-        user_prompt = _build_niche_analysis_prompt(task.user, task.publication)
-        if user_prompt is None:
-            # No processed posts yet — caller should not have spawned us, but be
-            # defensive. Flagged as a soft fallback per global instructions: we
-            # complete the task with empty results rather than erroring, which
-            # would surface a generic error toast to the user.
-            task.status = 'complete'
-            task.niche = ''
-            task.content_types = []
-            if settings.ENVIRONMENT == 'local':
-                task.dev_panel_data = finish_tracking() or {}
-                task.save(update_fields=['status', 'niche', 'content_types', 'dev_panel_data'])
-            else:
-                task.save(update_fields=['status', 'niche', 'content_types'])
-            return
+    parsed = async_to_sync(_run_niche_analysis_llm)(user_prompt)
+    refresh_db_connection()
 
-        parsed = async_to_sync(_run_niche_analysis_llm)(user_prompt)
-        close_old_connections()
+    # Cap content_types at 5 entries. Falling short is acceptable — we
+    # render whatever the model returned. Going over is silently truncated
+    # (flagged as soft fallback per global instructions).
+    types = [t.strip() for t in (parsed.content_types or []) if t and t.strip()][:5]
 
-        # Cap content_types at 5 entries. Falling short is acceptable — we
-        # render whatever the model returned. Going over is silently truncated
-        # (flagged as soft fallback per global instructions).
-        types = [t.strip() for t in (parsed.content_types or []) if t and t.strip()][:5]
-
-        task.status = 'complete'
-        task.niche = (parsed.niche or '').strip()[:255]
-        task.content_types = types
-        if settings.ENVIRONMENT == 'local':
-            task.dev_panel_data = finish_tracking() or {}
-            task.save(update_fields=['status', 'niche', 'content_types', 'dev_panel_data'])
-        else:
-            task.save(update_fields=['status', 'niche', 'content_types'])
-
-    except Exception as e:
-        logger.exception("Niche analysis background task failed")
-        try:
-            close_old_connections()
-            task = PendingNicheAnalysis.objects.get(task_id=task_id)
-            task.status = 'error'
-            task.error_message = str(e)
-            task.save(update_fields=['status', 'error_message'])
-        except Exception:
-            logger.exception("Failed to save error status for niche analysis task")
-    finally:
-        connection.close()
+    extras = {
+        'niche': (parsed.niche or '').strip()[:255],
+        'content_types': types,
+    }
+    if settings.ENVIRONMENT == 'local':
+        extras['dev_panel_data'] = finish_tracking() or {}
+    task.mark_complete(**extras)
