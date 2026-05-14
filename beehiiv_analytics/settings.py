@@ -19,6 +19,13 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # SECURITY WARNING: keep the secret key used in production secret!
 SECRET_KEY = os.environ["SECRET_KEY"]
 
+# Key used by EncryptedCharField (analytics/fields.py) to derive the Fernet
+# key for per-user Beehiiv tokens. Falls back to SECRET_KEY when unset so
+# existing deployments keep decrypting tokens that were originally encrypted
+# under SECRET_KEY. To rotate SECRET_KEY without invalidating stored tokens,
+# set this env var to the *current* SECRET_KEY value before rotating.
+BEEHIIV_TOKEN_ENCRYPTION_KEY = os.environ.get('BEEHIIV_TOKEN_ENCRYPTION_KEY') or SECRET_KEY
+
 ENVIRONMENT = os.environ.get('ENVIRONMENT', 'local')
 DEBUG = ENVIRONMENT == 'local'
 
