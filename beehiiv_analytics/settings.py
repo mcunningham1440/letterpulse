@@ -24,7 +24,7 @@ SECRET_KEY = os.environ["SECRET_KEY"]
 # existing deployments keep decrypting tokens that were originally encrypted
 # under SECRET_KEY. To rotate SECRET_KEY without invalidating stored tokens,
 # set this env var to the *current* SECRET_KEY value before rotating.
-BEEHIIV_TOKEN_ENCRYPTION_KEY = os.environ.get('BEEHIIV_TOKEN_ENCRYPTION_KEY') or SECRET_KEY
+BEEHIIV_TOKEN_ENCRYPTION_KEY = os.environ.get('BEEHIIV_TOKEN_ENCRYPTION_KEY', SECRET_KEY)
 
 ENVIRONMENT = os.environ.get('ENVIRONMENT', 'local')
 DEBUG = ENVIRONMENT == 'local'
