@@ -444,6 +444,8 @@
                     <span class="nav-link-text">Write</span>
                 </a>
             </li>
+            {# Monetize tab hidden — feature still under development. Route/view/template remain in the codebase. #}
+            {% comment %}
             <li class="nav-item">
                 <a class="nav-link {% if request.resolver_match.url_name == 'monetize' %}active{% endif %}"
                    href="{% url 'analytics:monetize' %}" title="Monetize">
@@ -451,6 +453,7 @@
                     <span class="nav-link-text">Monetize</span>
                 </a>
             </li>
+            {% endcomment %}
             <li class="nav-item">
                 <a class="nav-link {% if request.resolver_match.url_name == 'account' %}active{% endif %}"
                    href="{% url 'analytics:account' %}" title="Account">
