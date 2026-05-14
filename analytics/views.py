@@ -611,6 +611,7 @@ def monetize_view(request):
                 publication=publication,
                 status='pending',
             )
+            # TODO(scaling): replace daemon-thread background work with a real job queue (Celery/RQ) before scaling past 1 gunicorn worker.
             threading.Thread(
                 target=run_niche_analysis_background,
                 args=(new_task.task_id,),
@@ -780,6 +781,7 @@ def start_learning_task(request):
         status='pending',
     )
 
+    # TODO(scaling): replace daemon-thread background work with a real job queue (Celery/RQ) before scaling past 1 gunicorn worker.
     threading.Thread(
         target=run_initial_learning_task,
         args=(task.task_id,),
@@ -827,6 +829,7 @@ def start_update_task(request):
         status='pending',
     )
 
+    # TODO(scaling): replace daemon-thread background work with a real job queue (Celery/RQ) before scaling past 1 gunicorn worker.
     threading.Thread(
         target=run_update_task,
         args=(task.task_id,),
@@ -981,6 +984,7 @@ def run_content_finder(request):
         status='planning',
     )
 
+    # TODO(scaling): replace daemon-thread background work with a real job queue (Celery/RQ) before scaling past 1 gunicorn worker.
     threading.Thread(
         target=run_content_finder_background,
         args=(task.task_id,),
@@ -1013,6 +1017,7 @@ def confirm_content_finder_plan(request, task_id):
     task.status = 'dispatching'
     task.save(update_fields=['user_feedback', 'status'])
 
+    # TODO(scaling): replace daemon-thread background work with a real job queue (Celery/RQ) before scaling past 1 gunicorn worker.
     threading.Thread(
         target=run_content_finder_background,
         args=(task.task_id,),
@@ -1163,7 +1168,7 @@ def run_improvement_tips(request):
         post=post,
     )
 
-    # Spawn background thread
+    # TODO(scaling): replace daemon-thread background work with a real job queue (Celery/RQ) before scaling past 1 gunicorn worker.
     threading.Thread(
         target=run_improvement_tips_background,
         args=(task.task_id,),
