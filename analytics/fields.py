@@ -15,12 +15,14 @@ logger = logging.getLogger(__name__)
 
 def get_encryption_key() -> bytes:
     """
-    Derive a Fernet-compatible encryption key from Django's SECRET_KEY.
+    Derive a Fernet-compatible encryption key from settings.BEEHIIV_TOKEN_ENCRYPTION_KEY.
 
-    Uses SHA256 to hash the SECRET_KEY and then base64-encodes
-    the first 32 bytes to create a valid Fernet key.
+    Uses SHA256 to hash the key and then base64-encodes the 32-byte digest to
+    create a valid Fernet key. The source setting defaults to SECRET_KEY when
+    BEEHIIV_TOKEN_ENCRYPTION_KEY is not configured, preserving readability of
+    tokens originally encrypted under SECRET_KEY.
     """
-    secret = settings.SECRET_KEY.encode('utf-8')
+    secret = settings.BEEHIIV_TOKEN_ENCRYPTION_KEY.encode('utf-8')
     # Use SHA256 to get consistent 32 bytes
     hashed = hashlib.sha256(secret).digest()
     # Fernet requires base64-encoded 32-byte key
@@ -31,9 +33,12 @@ class EncryptedCharField(models.CharField):
     """
     A CharField that encrypts data at rest using Fernet symmetric encryption.
 
-    The encryption key is derived from Django's SECRET_KEY, so:
-    - Changing SECRET_KEY will make existing encrypted data unreadable
-    - Backup SECRET_KEY securely along with database backups
+    The encryption key is derived from settings.BEEHIIV_TOKEN_ENCRYPTION_KEY
+    (which defaults to SECRET_KEY when the env var is unset), so:
+    - Changing the active key makes existing encrypted data unreadable
+    - To rotate SECRET_KEY safely, first set BEEHIIV_TOKEN_ENCRYPTION_KEY to
+      the current SECRET_KEY value, deploy, and only then rotate SECRET_KEY
+    - Back up the active encryption key alongside database backups
 
     Usage:
         beehiiv_token = EncryptedCharField(max_length=500, blank=True, default='')
