@@ -422,6 +422,9 @@ class LinkData(models.Model):
     class Meta:
         ordering = ['post', 'section_name', 'rank_in_section']
         unique_together = [['post', 'user', 'raw_url', 'section_name']]
+        indexes = [
+            models.Index(fields=['user', 'publication']),
+        ]
         verbose_name = "Link Data"
         verbose_name_plural = "Link Data"
 
@@ -468,6 +471,9 @@ class Section(models.Model):
     class Meta:
         ordering = ['post', 'start_line']
         unique_together = [['post', 'user', 'section_name']]
+        indexes = [
+            models.Index(fields=['user', 'publication']),
+        ]
         verbose_name = "Section"
         verbose_name_plural = "Sections"
 

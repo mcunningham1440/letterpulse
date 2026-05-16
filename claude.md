@@ -114,7 +114,7 @@ All models are in `analytics/models.py`. Key models and their relationships:
 - After login: users without API credentials → Account page; users with credentials → Write page
 - "Please configure your Beehiiv API credentials" message only appears when navigating to Write without credentials, not immediately after login
 
-**Important:** `SECRET_KEY` derives the encryption key for user beehiiv tokens (via `EncryptedCharField`). Changing it makes existing encrypted tokens unreadable.
+**Important:** User Beehiiv tokens are encrypted via `EncryptedCharField` using a key derived from `BEEHIIV_TOKEN_ENCRYPTION_KEY` (settings.py), which falls back to `SECRET_KEY` when the env var is unset. To rotate `SECRET_KEY` without corrupting stored tokens, first set `BEEHIIV_TOKEN_ENCRYPTION_KEY` to the *current* `SECRET_KEY` value and deploy, then rotate `SECRET_KEY`. Rotating the active encryption key still makes existing tokens unreadable, so back it up alongside DB backups. On decrypt failure, `from_db_value` returns `''` and logs `EncryptedCharField: InvalidToken` — the affected user appears to have no credentials configured and is silently re-onboarded, so monitor that log line.
 
 ## Key Features & Workflows
 

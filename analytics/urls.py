@@ -9,8 +9,10 @@ urlpatterns = [
     path('account/', views.account_view, name='account'),
     path('account/dismiss-publication-coach/', views.dismiss_publication_coach, name='dismiss_publication_coach'),
     path('insights/', views.insights_view, name='insights'),
-    path('monetize/', views.monetize_view, name='monetize'),
-    path('monetize/niche-analysis/status/<uuid:task_id>/', views.poll_niche_analysis, name='poll_niche_analysis'),
+    # Monetize routes disabled — feature still under development.
+    # The view functions (monetize_view, poll_niche_analysis) and their templates/JS remain in the codebase.
+    # path('monetize/', views.monetize_view, name='monetize'),
+    # path('monetize/niche-analysis/status/<uuid:task_id>/', views.poll_niche_analysis, name='poll_niche_analysis'),
     path('insights/learning/start/', views.start_learning_task, name='start_learning_task'),
     path('insights/learning/update/', views.start_update_task, name='start_update_task'),
     path('insights/learning/status/<uuid:task_id>/', views.poll_learning_task, name='poll_learning_task'),
