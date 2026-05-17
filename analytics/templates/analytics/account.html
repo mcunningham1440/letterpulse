@@ -26,7 +26,7 @@
         <p class="mb-3">Your Beehiiv account has multiple publications. Choose the one you plan to use LetterPulse for.</p>
         <div class="mb-4">
             <select class="form-select" id="selectPublicationDropdown">
-                {% for pub in usage.available_publications %}
+                {% for pub in available_publications %}
                 <option value="{{ pub.id }}" {% if pub.id == usage.beehiiv_pub_id %}selected{% endif %}>
                     {{ pub.name }}
                 </option>
@@ -143,14 +143,14 @@
                     </div>
                 </form>
 
-                {% if usage.api_key_valid and usage.available_publications %}
+                {% if usage.api_key_valid and available_publications %}
                 <form method="post" action="{% url 'analytics:account' %}" id="publicationForm">
                     {% csrf_token %}
                     <input type="hidden" name="action" value="switch_publication">
                     <div class="mb-3">
                         <label for="beehiiv_pub_id" class="form-label">Publication</label>
                         <select class="form-select" id="beehiiv_pub_id" name="beehiiv_pub_id">
-                            {% for pub in usage.available_publications %}
+                            {% for pub in available_publications %}
                             <option value="{{ pub.id }}" {% if pub.id == usage.beehiiv_pub_id %}selected{% endif %}>
                                 {{ pub.name }}
                             </option>

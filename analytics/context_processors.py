@@ -43,7 +43,7 @@ def limited_data_context(request):
     both platform) posts for their currently-selected publication. Shown on
     every page load when active.
     """
-    from .models import Post, Publication
+    from .models import Post, Publication, UserPublication
 
     if not request.user.is_authenticated:
         return {'show_limited_data_coach': False}
@@ -59,7 +59,12 @@ def limited_data_context(request):
     # Only show after the initial scan + processing has completed for the
     # current publication. Before that, the user either sees the API-validated
     # coach (Account) or the Learning coach/modal (Write).
-    if usage.beehiiv_pub_id not in (usage.initial_fetched_pub_ids or []):
+    initial_done = UserPublication.objects.filter(
+        user=request.user,
+        publication__pub_id=usage.beehiiv_pub_id,
+        initial_fetch_done_at__isnull=False,
+    ).exists()
+    if not initial_done:
         return {'show_limited_data_coach': False}
 
     try:

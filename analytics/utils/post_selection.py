@@ -9,7 +9,7 @@ from analytics.models import (
     ProcessedPost,
     Publication,
     Section,
-    UsageAccount,
+    UserPublication,
 )
 
 
@@ -104,8 +104,8 @@ def wipe_user_publication_data(user, pub_id):
     """
     Atomic cleanup for interrupted "Learning Your Audience" flows: delete every
     Post / ProcessedPost / Section / LinkData row for (user, publication), and
-    remove pub_id from UsageAccount.initial_fetched_pub_ids so the user sees the
-    onboarding coach again on their next page load.
+    clear UserPublication.initial_fetch_done_at so the user sees the onboarding
+    coach again on their next page load.
     """
     with transaction.atomic():
         try:
@@ -122,16 +122,9 @@ def wipe_user_publication_data(user, pub_id):
         if publication is not None:
             ProcessedPost.objects.filter(user=user, post__publication=publication).delete()
             Post.objects.filter(user=user, publication=publication).delete()
+            UserPublication.objects.filter(
+                user=user, publication=publication,
+            ).update(initial_fetch_done_at=None)
         else:
             ProcessedPost.objects.filter(user=user).delete()
             Post.objects.filter(user=user).delete()
-
-        try:
-            usage = UsageAccount.objects.get(user=user)
-        except UsageAccount.DoesNotExist:
-            usage = None
-        if usage and pub_id and pub_id in (usage.initial_fetched_pub_ids or []):
-            usage.initial_fetched_pub_ids = [
-                p for p in (usage.initial_fetched_pub_ids or []) if p != pub_id
-            ]
-            usage.save(update_fields=['initial_fetched_pub_ids'])

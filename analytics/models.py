@@ -47,11 +47,6 @@ class UsageAccount(models.Model):
         default=False,
         help_text="Whether the API key has been validated against Beehiiv"
     )
-    available_publications = models.JSONField(
-        default=list,
-        blank=True,
-        help_text="Cached list of publications from Beehiiv API"
-    )
     timezone = models.CharField(
         max_length=50,
         default='America/Chicago',
@@ -62,11 +57,6 @@ class UsageAccount(models.Model):
         blank=True,
         default='',
         help_text="Name of the user's newsletter"
-    )
-    initial_fetched_pub_ids = models.JSONField(
-        default=list,
-        blank=True,
-        help_text="Beehiiv pub_ids for which the user has completed the initial full post fetch"
     )
 
     created_at = models.DateTimeField(auto_now_add=True)
@@ -183,6 +173,44 @@ class Publication(models.Model):
 
     def __str__(self):
         return f"{self.name} ({self.pub_id[:20]}...)"
+
+
+class UserPublication(models.Model):
+    """
+    Per-user access to a Beehiiv Publication, plus per-(user, publication)
+    onboarding state. Replaces the legacy UsageAccount.available_publications
+    JSON cache and UsageAccount.initial_fetched_pub_ids JSON set.
+    """
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='user_publications',
+    )
+    publication = models.ForeignKey(
+        Publication,
+        on_delete=models.CASCADE,
+        related_name='user_publications',
+    )
+    initial_fetch_done_at = models.DateTimeField(
+        null=True, blank=True,
+        help_text="When the user's initial Learning fetch completed for this pub; null if not yet completed.",
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = [('user', 'publication')]
+        indexes = [
+            models.Index(fields=['user', 'publication']),
+        ]
+        ordering = ['publication__name']
+        verbose_name = "User Publication"
+        verbose_name_plural = "User Publications"
+
+    def __str__(self):
+        return f"{self.user.email} ↔ {self.publication.name}"
 
 
 class Post(models.Model):

@@ -33,6 +33,7 @@ from .models import (
     Post,
     Section,
     UsageAccount,
+    UserPublication,
 )
 from .utils import (
     NotEnoughCredits,
@@ -159,10 +160,11 @@ def account_view(request):
                 is_valid, result = async_to_sync(validate_beehiiv_api_key)(beehiiv_token)
 
                 if is_valid:
-                    # Store token and publications list
                     usage.beehiiv_token = beehiiv_token
                     usage.api_key_valid = True
-                    usage.available_publications = result  # List of publication dicts
+
+                    # Mirror Beehiiv's pub list into Publication / UserPublication
+                    _sync_user_publications(request.user, result)
 
                     # Validate selected publication is in list
                     valid_pub_ids = [p["id"] for p in result]
@@ -176,28 +178,17 @@ def account_view(request):
 
                     usage.save()
 
-                    # Ensure Publication record exists for the selected pub
-                    if usage.beehiiv_pub_id:
-                        pub_data = next((p for p in result if p["id"] == usage.beehiiv_pub_id), None)
-                        if pub_data:
-                            Publication.objects.update_or_create(
-                                pub_id=usage.beehiiv_pub_id,
-                                defaults={
-                                    'name': pub_data.get('name', 'Unknown'),
-                                    'organization_name': pub_data.get('organization_name', '')
-                                }
-                            )
-
                     # Clear extracted items if publication changed
                     if usage.beehiiv_pub_id != old_pub_id:
                         request.session.pop('extracted_items', None)
 
                     messages.success(request, "API credentials validated and saved!")
                 else:
-                    # Invalid key
+                    # Invalid key — drop any UserPublication access this user had,
+                    # mirroring the legacy behavior of clearing available_publications.
                     usage.beehiiv_token = beehiiv_token  # Keep token so user can see it
                     usage.api_key_valid = False
-                    usage.available_publications = []
+                    UserPublication.objects.filter(user=request.user).delete()
                     usage.save()
                     # Coach mark overlay on page reload will inform the user
             else:
@@ -205,7 +196,7 @@ def account_view(request):
                 usage.beehiiv_token = ''
                 usage.beehiiv_pub_id = ''
                 usage.api_key_valid = False
-                usage.available_publications = []
+                UserPublication.objects.filter(user=request.user).delete()
                 usage.save()
                 request.session.pop('extracted_items', None)
                 messages.info(request, "API credentials cleared.")
@@ -227,25 +218,16 @@ def account_view(request):
         elif action == 'switch_publication':
             # Handle publication switching
             new_pub_id = request.POST.get('beehiiv_pub_id', '').strip()
-            valid_pub_ids = [p["id"] for p in usage.available_publications]
+            user_has_access = UserPublication.objects.filter(
+                user=request.user, publication__pub_id=new_pub_id,
+            ).exists()
 
-            if new_pub_id in valid_pub_ids and new_pub_id != old_pub_id:
+            if user_has_access and new_pub_id != old_pub_id:
                 usage.beehiiv_pub_id = new_pub_id
                 usage.save()
 
                 # Clear extracted items since they belong to old publication
                 request.session.pop('extracted_items', None)
-
-                # Ensure Publication record exists
-                pub_data = next((p for p in usage.available_publications if p["id"] == new_pub_id), None)
-                if pub_data:
-                    Publication.objects.update_or_create(
-                        pub_id=new_pub_id,
-                        defaults={
-                            'name': pub_data.get('name', 'Unknown'),
-                            'organization_name': pub_data.get('organization_name', '')
-                        }
-                    )
 
                 messages.success(request, "Publication switched successfully!")
             elif new_pub_id == old_pub_id:
@@ -312,12 +294,28 @@ def account_view(request):
                     user=request.user, post__publication=publication,
                 ).count()
 
+    # Publications the user currently has access to (drives both selector
+    # dropdowns in account.html).
+    available_publications = list(
+        UserPublication.objects.filter(user=request.user)
+        .select_related('publication')
+        .order_by('publication__name')
+        .values_list('publication__pub_id', 'publication__name')
+    )
+    available_publications = [
+        {'id': pid, 'name': name} for pid, name in available_publications
+    ]
+
     # Show "API Key Validated — Go to Write" coach when creds are valid but the
     # initial post scan hasn't been run for the current publication (and no task
     # is already running).
     show_api_validated_coach = False
     if usage.api_key_valid and usage.beehiiv_pub_id:
-        initial_done = usage.beehiiv_pub_id in (usage.initial_fetched_pub_ids or [])
+        initial_done = UserPublication.objects.filter(
+            user=request.user,
+            publication__pub_id=usage.beehiiv_pub_id,
+            initial_fetch_done_at__isnull=False,
+        ).exists()
         task_running = PendingLearningTask.objects.filter(
             user=request.user,
             publication=publication,
@@ -332,12 +330,13 @@ def account_view(request):
     # (session flag set in the switch_publication action / dismiss endpoint).
     show_select_publication_coach = (
         show_api_validated_coach
-        and len(usage.available_publications or []) > 1
+        and len(available_publications) > 1
         and not request.session.get('publication_coach_dismissed', False)
     )
 
     context = {
         'usage': usage,
+        'available_publications': available_publications,
         'timezone_choices': TIMEZONE_CHOICES,
         'has_posts': has_posts,
         'has_processed_data': has_processed_data,
@@ -366,34 +365,51 @@ def dismiss_publication_coach(request):
     return JsonResponse({'success': True})
 
 
+def _sync_user_publications(user, beehiiv_pubs):
+    """
+    Mirror the Beehiiv API's pub list into Publication + UserPublication for
+    the given user. `beehiiv_pubs` is the list of dicts returned by
+    validate_beehiiv_api_key: [{'id', 'name', 'organization_name'}, ...].
+
+    Creates/updates Publication rows for each entry, ensures a UserPublication
+    row exists for (user, pub), and removes UserPublication rows for pubs no
+    longer present in the response. Existing initial_fetch_done_at timestamps
+    are preserved on UserPublications that persist.
+    """
+    pub_ids_in_response = set()
+    for entry in (beehiiv_pubs or []):
+        pid = (entry or {}).get('id')
+        if not pid:
+            continue
+        pub_ids_in_response.add(pid)
+        pub, _ = Publication.objects.update_or_create(
+            pub_id=pid,
+            defaults={
+                'name': entry.get('name', 'Unknown') or 'Unknown',
+                'organization_name': entry.get('organization_name', '') or '',
+            },
+        )
+        UserPublication.objects.get_or_create(user=user, publication=pub)
+
+    UserPublication.objects.filter(user=user).exclude(
+        publication__pub_id__in=pub_ids_in_response
+    ).delete()
+
+
 def _resolve_publication(user, beehiiv_pub_id):
     """
-    Return the Publication for the user's selected Beehiiv pub, creating the
-    row from UsageAccount.available_publications if it's missing. Returns
-    None if no metadata for the pub_id is available (caller should 400).
+    Return the Publication for the user's selected Beehiiv pub_id, or None
+    if the user has no UserPublication row for that pub (caller should 400).
+    Publication rows are created at credentials-validation time, so any pub
+    the user currently has access to is guaranteed to have a Publication row.
     """
-    pub = Publication.objects.filter(pub_id=beehiiv_pub_id).first()
-    if pub is not None:
-        return pub
-    try:
-        usage = UsageAccount.objects.get(user=user)
-    except UsageAccount.DoesNotExist:
-        return None
-    pub_data = next(
-        (p for p in (usage.available_publications or [])
-         if p.get('id') == beehiiv_pub_id),
-        None,
+    up = (
+        UserPublication.objects
+        .filter(user=user, publication__pub_id=beehiiv_pub_id)
+        .select_related('publication')
+        .first()
     )
-    if not pub_data:
-        return None
-    pub, _ = Publication.objects.update_or_create(
-        pub_id=beehiiv_pub_id,
-        defaults={
-            'name': pub_data.get('name', 'Unknown'),
-            'organization_name': pub_data.get('organization_name', ''),
-        },
-    )
-    return pub
+    return up.publication if up else None
 
 
 def _sweep_stale_learning_tasks(user):
@@ -462,8 +478,11 @@ def insights_view(request):
     )
 
     # --- Learning / Update flow gating ---
-    usage = UsageAccount.objects.get(user=request.user)
-    initial_done = beehiiv_pub_id in (usage.initial_fetched_pub_ids or [])
+    initial_done = UserPublication.objects.filter(
+        user=request.user,
+        publication__pub_id=beehiiv_pub_id,
+        initial_fetch_done_at__isnull=False,
+    ).exists()
 
     active_initial_task = PendingLearningTask.objects.filter(
         user=request.user,
@@ -525,28 +544,18 @@ def monetize_view(request):
     live publication stats (subscribers / open rate / click rate) from
     Beehiiv to display in the Newsletter profile card.
     """
-    usage = UsageAccount.objects.get(user=request.user)
     beehiiv_token, beehiiv_pub_id, _ = get_user_api_credentials(request.user)
 
-    # Resolve the newsletter name. We try the cached available_publications
-    # list first (matches what the user picked in the Account page), then
-    # fall back to the Publication row. The @require_valid_api_credentials
-    # decorator guarantees a pub_id exists, so the ultimate fallback
-    # ('your newsletter') is only reached if the Publication row is somehow
+    # Resolve the newsletter name from the Publication row. The
+    # @require_valid_api_credentials decorator guarantees a pub_id exists, and
+    # account_view creates Publication rows at credentials-validation time, so
+    # the fallback ('your newsletter') is only reached if the row is somehow
     # missing — flagged as a silent fallback per global instructions.
     newsletter_name = 'your newsletter'
-    pub = next(
-        (p for p in (usage.available_publications or [])
-         if p.get('id') == beehiiv_pub_id),
-        None,
-    )
-    if pub and pub.get('name'):
-        newsletter_name = pub['name']
-    else:
-        try:
-            newsletter_name = Publication.objects.get(pub_id=beehiiv_pub_id).name
-        except Publication.DoesNotExist:
-            pass
+    try:
+        newsletter_name = Publication.objects.get(pub_id=beehiiv_pub_id).name
+    except Publication.DoesNotExist:
+        pass
 
     # Fetch publication stats from Beehiiv on every page load. No caching —
     # the call is fast and the page is low-traffic. fetch_publication_stats

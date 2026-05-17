@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Post, UsageAccount, Publication, ExecutionLog, LLMCall, ProcessedPost, LinkData, Section, PendingContentSearch, ContentSearchFeedback, PendingLearningTask, PendingNicheAnalysis, PendingImprovementTips, Feedback
+from .models import Post, UsageAccount, Publication, UserPublication, ExecutionLog, LLMCall, ProcessedPost, LinkData, Section, PendingContentSearch, ContentSearchFeedback, PendingLearningTask, PendingNicheAnalysis, PendingImprovementTips, Feedback
 
 
 @admin.register(UsageAccount)
@@ -29,6 +29,15 @@ class PublicationAdmin(admin.ModelAdmin):
     list_display = ('name', 'pub_id', 'organization_name', 'created_at', 'updated_at')
     search_fields = ('name', 'pub_id', 'organization_name')
     ordering = ('name',)
+    readonly_fields = ('created_at', 'updated_at')
+
+
+@admin.register(UserPublication)
+class UserPublicationAdmin(admin.ModelAdmin):
+    list_display = ('user', 'publication', 'initial_fetch_done_at', 'created_at', 'updated_at')
+    list_filter = ('publication', 'created_at')
+    search_fields = ('user__email', 'publication__name', 'publication__pub_id')
+    ordering = ('-updated_at',)
     readonly_fields = ('created_at', 'updated_at')
 
 

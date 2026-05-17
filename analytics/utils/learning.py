@@ -12,6 +12,7 @@ from analytics.models import (
     Post,
     ProcessedPost,
     UsageAccount,
+    UserPublication,
 )
 
 from .beehiiv_api import fetch_subscriber_count
@@ -72,9 +73,9 @@ def _run_learning_task_impl(task_id, kind):
       `last_heartbeat` fresh so the stale-sweep only fires if the runner
       actually dies.
     - On abandoned flag (kind='initial' only): wipe user/publication data
-      and exit. `initial_fetched_pub_ids` is only set on a clean complete
-      with >0 posts processed, so a zero-result or abandoned run lets the
-      user hit the Learning coach again on their next visit.
+      and exit. `UserPublication.initial_fetch_done_at` is only stamped on a
+      clean complete with >0 posts processed, so a zero-result or abandoned
+      run lets the user hit the Learning coach again on their next visit.
     """
     task = None
     stop_heartbeat = threading.Event()
@@ -172,7 +173,7 @@ def _run_learning_task_impl(task_id, kind):
         task.save(update_fields=['target_process_count', 'phase'])
 
         if not post_ids_to_process:
-            # Empty run — don't flip initial_fetched_pub_ids so the user can
+            # Empty run — don't stamp initial_fetch_done_at so the user can
             # retry via the Learning coach on their next visit.
             task.status = 'complete'
             task.save(update_fields=['status'])
@@ -206,15 +207,14 @@ def _run_learning_task_impl(task_id, kind):
             task.save(update_fields=['status', 'posts_processed_count'])
             return
 
-        # Only flip initial_fetched_pub_ids after a clean, non-empty run so a
+        # Only stamp initial_fetch_done_at after a clean, non-empty run so a
         # zero-result initial scan doesn't strand the user on the "No Data"
         # fallback.
-        if kind == 'initial' and processed_count > 0:
-            if beehiiv_pub_id not in (usage.initial_fetched_pub_ids or []):
-                usage.initial_fetched_pub_ids = list(
-                    usage.initial_fetched_pub_ids or []
-                ) + [beehiiv_pub_id]
-                usage.save(update_fields=['initial_fetched_pub_ids'])
+        if kind == 'initial' and processed_count > 0 and publication is not None:
+            UserPublication.objects.filter(
+                user=task.user, publication=publication,
+                initial_fetch_done_at__isnull=True,
+            ).update(initial_fetch_done_at=dj_timezone.now())
 
         task.status = 'complete'
         task.save(update_fields=['status', 'posts_processed_count'])
