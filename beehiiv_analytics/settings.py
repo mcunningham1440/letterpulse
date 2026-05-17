@@ -266,10 +266,6 @@ MAX_POSTS_PROCESSED_PER_PERIOD = 45
 LINK_PROCESS_TOP_N = 60             # Total links to select across all sections
 LINK_PROCESS_MAX_RETRIES = 2        # Max LLM retries for link description count mismatch
 
-# Stale-task sweep: if a running PendingLearningTask's last_heartbeat is older
-# than this, treat it as abandoned (backup for the pagehide beacon).
-LEARNING_TASK_STALE_SECONDS = 15
-
 # =============================================================================
 # Execution Logging Configuration
 # =============================================================================

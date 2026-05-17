@@ -8,7 +8,7 @@ from typing import List
 
 from asgiref.sync import async_to_sync, sync_to_async
 from django.conf import settings
-from django.db import close_old_connections, connection
+from django.utils import timezone
 from perplexity import Perplexity
 from pydantic import BaseModel
 
@@ -23,7 +23,6 @@ from analytics.models import (
     ContentSearchFeedback,
     Feedback,
     LinkData,
-    PendingContentSearch,
     Section,
 )
 from analytics.prompts import (
@@ -33,6 +32,7 @@ from analytics.prompts import (
     CONTENT_FINDER_SEARCH_PROMPT,
 )
 
+from .background import refresh_db_connection
 from .links import format_link_history
 from .llm import llm_call
 from .text import html_to_text_with_links
@@ -419,113 +419,89 @@ async def run_all_searches(task):
     return await asyncio.gather(*agents)
 
 
-def run_content_finder_background(task_id):
+def run_content_finder_background(task):
     """
-    Background thread entry point for running content finder.
-    Branches on task.status: 'planning' runs Stage 1 (exits awaiting user feedback);
-    'dispatching' runs Stage 2 + Stage 3.
+    Background work fn for content finder. Branches on task.status: 'planning'
+    runs Stage 1 (exits awaiting user feedback); 'dispatching' runs Stage 2 +
+    Stage 3. The `spawn_background` wrapper handles claim, error-marking, and
+    DB connection cleanup.
     """
-    task = None
-    try:
-        task = PendingContentSearch.objects.get(task_id=task_id)
-        initial_status = task.status
+    set_llm_context(
+        user_id=task.user_id,
+        publication_id=task.publication_id,
+        task_id=task.task_id,
+        task_kind='content_finder',
+    )
 
-        set_llm_context(
-            user_id=task.user_id,
-            publication_id=task.publication_id,
-            task_id=task.task_id,
-            task_kind='content_finder',
+    if task.status == 'planning':
+        if settings.ENVIRONMENT == 'local':
+            start_tracking()
+
+        sections = list(
+            Section.objects.filter(post=task.post, user=task.user).order_by('start_line')
         )
-
-        if initial_status == 'planning':
-            if settings.ENVIRONMENT == 'local':
-                start_tracking()
-
-            sections = list(
-                Section.objects.filter(post=task.post, user=task.user).order_by('start_line')
-            )
-            if not sections:
-                task.status = 'complete'
-                task.result_data = []
-                task.save(update_fields=['status', 'result_data'])
-                return
-
-            plan_text, plan_messages = async_to_sync(run_plan_stage)(task, sections)
-            close_old_connections()
-
-            task.plan_text = plan_text
-            task.plan_messages = plan_messages
-            task.status = 'awaiting_feedback'
-            if settings.ENVIRONMENT == 'local':
-                task.dev_panel_data = finish_tracking() or {}
-                task.save(update_fields=['plan_text', 'plan_messages', 'status', 'dev_panel_data'])
-            else:
-                task.save(update_fields=['plan_text', 'plan_messages', 'status'])
+        if not sections:
+            task.mark_complete(result_data=[])
             return
 
-        if initial_status == 'dispatching':
-            # Resume dev-panel accumulation from what Stage 1 recorded so the
-            # final panel shows plan + dispatch + all parallel searches together.
-            if settings.ENVIRONMENT == 'local':
-                seed_tracking(task.dev_panel_data)
+        plan_text, plan_messages = async_to_sync(run_plan_stage)(task, sections)
+        refresh_db_connection()
 
-            dispatch_sections, dispatch_messages = async_to_sync(run_dispatch_stage)(task)
-            close_old_connections()
-
-            task.dispatch_sections = dispatch_sections
-            task.dispatch_messages = dispatch_messages
-            task.status = 'searching'
-            task.save(update_fields=['dispatch_sections', 'dispatch_messages', 'status'])
-
-            if not dispatch_sections:
-                task.status = 'complete'
-                task.result_data = []
-                if settings.ENVIRONMENT == 'local':
-                    task.dev_panel_data = finish_tracking() or task.dev_panel_data
-                    task.save(update_fields=['status', 'result_data', 'dev_panel_data'])
-                else:
-                    task.save(update_fields=['status', 'result_data'])
-                return
-
-            raw_results = async_to_sync(run_all_searches)(task)
-            close_old_connections()
-
-            # Preserve dispatch output order. JSONB doesn't guarantee dict key
-            # order, so we store an explicit list keyed by `section` instead of
-            # a {section_name: links} dict.
-            links_by_section = {name: links for name, links in raw_results if links is not None}
-            result_data = [
-                {'section': name, 'links': links_by_section[name]}
-                for name in dispatch_sections
-                if name in links_by_section
-            ]
-
-            task.status = 'complete'
-            task.result_data = result_data
-            if settings.ENVIRONMENT == 'local':
-                task.dev_panel_data = finish_tracking() or task.dev_panel_data
-                task.save(update_fields=['status', 'result_data', 'dev_panel_data'])
-            else:
-                task.save(update_fields=['status', 'result_data'])
-
-            Feedback.objects.get_or_create(
-                user=task.user, feature='used_content_finder',
-                defaults={'response': 'completed'}
-            )
-            return
-
-        # Any other status shouldn't reach the thread; no-op defensively.
+        update_fields = ['plan_text', 'plan_messages', 'status', 'last_heartbeat', 'updated_at']
+        task.plan_text = plan_text
+        task.plan_messages = plan_messages
+        task.status = 'awaiting_feedback'
+        task.last_heartbeat = timezone.now()
+        if settings.ENVIRONMENT == 'local':
+            task.dev_panel_data = finish_tracking() or {}
+            update_fields.append('dev_panel_data')
+        task.save(update_fields=update_fields)
         return
 
-    except Exception as e:
-        logger.exception("Content finder background task failed")
-        try:
-            close_old_connections()
-            t = PendingContentSearch.objects.get(task_id=task_id)
-            t.status = 'error'
-            t.error_message = str(e)
-            t.save(update_fields=['status', 'error_message'])
-        except Exception:
-            logger.exception("Failed to save error status for content finder task")
-    finally:
-        connection.close()
+    if task.status == 'dispatching':
+        # Resume dev-panel accumulation from what Stage 1 recorded so the
+        # final panel shows plan + dispatch + all parallel searches together.
+        if settings.ENVIRONMENT == 'local':
+            seed_tracking(task.dev_panel_data)
+
+        dispatch_sections, dispatch_messages = async_to_sync(run_dispatch_stage)(task)
+        refresh_db_connection()
+
+        task.dispatch_sections = dispatch_sections
+        task.dispatch_messages = dispatch_messages
+        task.status = 'searching'
+        task.last_heartbeat = timezone.now()
+        task.save(update_fields=[
+            'dispatch_sections', 'dispatch_messages', 'status',
+            'last_heartbeat', 'updated_at',
+        ])
+
+        if not dispatch_sections:
+            extras = {'result_data': []}
+            if settings.ENVIRONMENT == 'local':
+                extras['dev_panel_data'] = finish_tracking() or task.dev_panel_data
+            task.mark_complete(**extras)
+            return
+
+        raw_results = async_to_sync(run_all_searches)(task)
+        refresh_db_connection()
+
+        # Preserve dispatch output order. JSONB doesn't guarantee dict key
+        # order, so we store an explicit list keyed by `section` instead of
+        # a {section_name: links} dict.
+        links_by_section = {name: links for name, links in raw_results if links is not None}
+        result_data = [
+            {'section': name, 'links': links_by_section[name]}
+            for name in dispatch_sections
+            if name in links_by_section
+        ]
+
+        extras = {'result_data': result_data}
+        if settings.ENVIRONMENT == 'local':
+            extras['dev_panel_data'] = finish_tracking() or task.dev_panel_data
+        task.mark_complete(**extras)
+
+        Feedback.objects.get_or_create(
+            user=task.user, feature='used_content_finder',
+            defaults={'response': 'completed'}
+        )

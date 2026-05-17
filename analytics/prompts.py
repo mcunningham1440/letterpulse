@@ -63,7 +63,7 @@ CONTENT_FINDER_PLAN_PROMPT = """You are an expert newsletter content researcher 
 
 You are given:
 - The text content of a newsletter issue, broken down into its constitutent sections
-- Historical link performance data for this section across past issues, showing what readers click on
+- Historical link performance data for each section across past issues, showing what readers click on
 
 Your job will be to make a plan to search the web for content for the user. In a future round, you will be given a web search tool that allows you to do semantic searches for web content; for example, "artificial intelligence medical diagnosis accuracy".
 You will also be able to filter by domain name and date.

@@ -5,7 +5,7 @@ pub_ids the user finished the initial Learning fetch for) with a proper
 UserPublication join model.
 
 Step 1 of 2: add the UserPublication table and backfill rows from both legacy
-JSON fields. The legacy fields themselves are dropped in 0054.
+JSON fields. The legacy fields themselves are dropped in 0055.
 """
 
 from django.conf import settings
@@ -72,7 +72,7 @@ def reverse_noop(apps, schema_editor):
 class Migration(migrations.Migration):
 
     dependencies = [
-        ("analytics", "0052_add_user_publication_indexes"),
+        ("analytics", "0053_add_user_publication_indexes"),
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
     ]
 

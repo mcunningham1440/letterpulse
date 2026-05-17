@@ -16,7 +16,6 @@ urlpatterns = [
     path('insights/learning/start/', views.start_learning_task, name='start_learning_task'),
     path('insights/learning/update/', views.start_update_task, name='start_update_task'),
     path('insights/learning/status/<uuid:task_id>/', views.poll_learning_task, name='poll_learning_task'),
-    path('insights/learning/abandon/<uuid:task_id>/', views.abandon_learning_task, name='abandon_learning_task'),
     path('insights/load-processed-data/', views.load_processed_data, name='load_processed_data'),
     path('insights/load-link-data/', views.load_link_data, name='load_link_data'),
     path('insights/content-finder/posts/', views.content_finder_posts, name='content_finder_posts'),

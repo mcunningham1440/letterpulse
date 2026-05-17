@@ -6,8 +6,6 @@ import functools
 import json
 import logging
 import re
-import threading
-from datetime import timedelta
 
 from asgiref.sync import async_to_sync
 from django.conf import settings
@@ -17,7 +15,6 @@ from django.http import HttpResponse, JsonResponse
 from django.shortcuts import redirect, render
 from django.urls import reverse
 from django.utils import timezone
-from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
 
 from .models import (
@@ -36,17 +33,15 @@ from .models import (
     UserPublication,
 )
 from .utils import (
-    NotEnoughCredits,
     TIMEZONE_CHOICES,
-    charge_credits,
     fetch_publication_stats,
     run_content_finder_background,
     run_improvement_tips_background,
     run_initial_learning_task,
     run_niche_analysis_background,
     run_update_task,
+    spawn_background,
     validate_beehiiv_api_key,
-    wipe_user_publication_data,
 )
 
 logger = logging.getLogger(__name__)
@@ -412,42 +407,15 @@ def _resolve_publication(user, beehiiv_pub_id):
     return up.publication if up else None
 
 
-def _sweep_stale_learning_tasks(user):
-    """
-    Mark any pending or running PendingLearningTask whose last_heartbeat is
-    older than settings.LEARNING_TASK_STALE_SECONDS as abandoned. For kind
-    ='initial' we also wipe the pub so the user restarts cleanly; update
-    tasks have no cleanup. Runs for both kinds so a dead update thread
-    can't block future auto-updates.
-    """
-    cutoff = timezone.now() - timedelta(
-        seconds=getattr(settings, 'LEARNING_TASK_STALE_SECONDS', 15)
-    )
-    stale = PendingLearningTask.objects.filter(
-        user=user,
-        status__in=('pending', 'running'),
-        last_heartbeat__lt=cutoff,
-    )
-    for task in stale:
-        task.status = 'abandoned'
-        task.abandoned = True
-        task.save(update_fields=['status', 'abandoned'])
-        if task.kind == 'initial' and task.publication is not None:
-            try:
-                wipe_user_publication_data(user, task.publication.pub_id)
-            except Exception:
-                logger.exception("Stale-sweep wipe failed")
-
-
-
 @login_required
 @require_valid_api_credentials
 def insights_view(request):
     """
     Display the insights page with section data table.
     """
-    # Sweep stale initial Learning tasks first so the gating below uses fresh state.
-    _sweep_stale_learning_tasks(request.user)
+    # Drop any stuck learning rows so the active-task gating below reflects
+    # tasks whose clients are still actually polling.
+    PendingLearningTask.sweep_stale()
 
     # Get current publication for filtering
     _, beehiiv_pub_id, _ = get_user_api_credentials(request.user)
@@ -618,14 +586,12 @@ def monetize_view(request):
             new_task = PendingNicheAnalysis.objects.create(
                 user=request.user,
                 publication=publication,
-                status='pending',
             )
-            # TODO(scaling): replace daemon-thread background work with a real job queue (Celery/RQ) before scaling past 1 gunicorn worker.
-            threading.Thread(
-                target=run_niche_analysis_background,
-                args=(new_task.task_id,),
-                daemon=True,
-            ).start()
+            spawn_background(
+                PendingNicheAnalysis,
+                new_task.task_id,
+                run_niche_analysis_background,
+            )
             niche_status = 'running'
             niche_task_id = str(new_task.task_id)
 
@@ -760,7 +726,7 @@ def start_learning_task(request):
     process top-k eligible posts. Refuses if one is already running for this
     user/publication.
     """
-    _sweep_stale_learning_tasks(request.user)
+    PendingLearningTask.sweep_stale()
 
     _, beehiiv_pub_id, _ = get_user_api_credentials(request.user)
     publication = _resolve_publication(request.user, beehiiv_pub_id)
@@ -774,7 +740,7 @@ def start_learning_task(request):
         user=request.user,
         publication=publication,
         kind='initial',
-        status__in=('pending', 'running'),
+        status__in=PendingLearningTask.RUNNING_STATUSES,
     ).first()
     if existing:
         return JsonResponse({
@@ -787,15 +753,11 @@ def start_learning_task(request):
         user=request.user,
         publication=publication,
         kind='initial',
-        status='pending',
     )
 
-    # TODO(scaling): replace daemon-thread background work with a real job queue (Celery/RQ) before scaling past 1 gunicorn worker.
-    threading.Thread(
-        target=run_initial_learning_task,
-        args=(task.task_id,),
-        daemon=True,
-    ).start()
+    spawn_background(
+        PendingLearningTask, task.task_id, run_initial_learning_task,
+    )
 
     return JsonResponse({'success': True, 'task_id': str(task.task_id)})
 
@@ -809,7 +771,7 @@ def start_update_task(request):
     client-side via localStorage; here we only enforce "no duplicate running
     task" as defense-in-depth.
     """
-    _sweep_stale_learning_tasks(request.user)
+    PendingLearningTask.sweep_stale()
 
     _, beehiiv_pub_id, _ = get_user_api_credentials(request.user)
     publication = _resolve_publication(request.user, beehiiv_pub_id)
@@ -822,7 +784,7 @@ def start_update_task(request):
         user=request.user,
         publication=publication,
         kind='update',
-        status__in=('pending', 'running'),
+        status__in=PendingLearningTask.RUNNING_STATUSES,
     ).first()
     if existing:
         return JsonResponse({
@@ -835,15 +797,11 @@ def start_update_task(request):
         user=request.user,
         publication=publication,
         kind='update',
-        status='pending',
     )
 
-    # TODO(scaling): replace daemon-thread background work with a real job queue (Celery/RQ) before scaling past 1 gunicorn worker.
-    threading.Thread(
-        target=run_update_task,
-        args=(task.task_id,),
-        daemon=True,
-    ).start()
+    spawn_background(
+        PendingLearningTask, task.task_id, run_update_task,
+    )
 
     return JsonResponse({'success': True, 'task_id': str(task.task_id)})
 
@@ -852,14 +810,18 @@ def start_update_task(request):
 @require_GET
 def poll_learning_task(request, task_id):
     """
-    Poll the status of a PendingLearningTask. Does NOT touch last_heartbeat
-    — that's maintained by the runner's own heartbeat thread so stale-sweep
-    measures runner liveness, not client polling.
+    Poll the status of a PendingLearningTask. Bumps last_heartbeat — while a
+    client is actively polling, the sweep treats the task as live. Once
+    polling stops (tab closed, navigation), the heartbeat ages out and the
+    sweep marks the task errored (with the kind='initial' wipe via on_error).
     """
     try:
         task = PendingLearningTask.objects.get(task_id=task_id, user=request.user)
     except PendingLearningTask.DoesNotExist:
         return JsonResponse({'success': False, 'error': 'Task not found'}, status=404)
+
+    if task.status in PendingLearningTask.RUNNING_STATUSES:
+        task.touch_heartbeat()
 
     usage = request.user.usage_account
     return JsonResponse({
@@ -873,39 +835,6 @@ def poll_learning_task(request, task_id):
         'credits_used': usage.used_this_period,
         'credits_quota': usage.monthly_quota,
     })
-
-
-@csrf_exempt
-@login_required
-@require_POST
-def abandon_learning_task(request, task_id):
-    """
-    Called via `navigator.sendBeacon` on pagehide. Marks the task abandoned;
-    the wipe (for kind='initial') is performed by the runner's own
-    `_is_abandoned` check — doing it inline races against in-flight writes
-    from the runner thread. If the runner thread is dead, the stale-sweep
-    does the wipe when `last_heartbeat` ages out.
-
-    CSRF-exempt because `sendBeacon` cannot set custom headers. We instead
-    enforce that the request's Origin header matches one of our trusted
-    origins; sendBeacon always sends Origin, so legit beacons still pass.
-    """
-    origin = request.META.get('HTTP_ORIGIN', '')
-    if origin not in settings.CSRF_TRUSTED_ORIGINS:
-        return JsonResponse({'success': False, 'error': 'Forbidden'}, status=403)
-
-    try:
-        task = PendingLearningTask.objects.get(task_id=task_id, user=request.user)
-    except PendingLearningTask.DoesNotExist:
-        return JsonResponse({'success': False, 'error': 'Task not found'}, status=404)
-
-    if task.status in ('complete', 'abandoned', 'error'):
-        return JsonResponse({'success': True, 'already_finished': True})
-
-    task.abandoned = True
-    task.save(update_fields=['abandoned'])
-
-    return JsonResponse({'success': True})
 
 
 
@@ -975,9 +904,12 @@ def run_content_finder(request):
     if not Section.objects.filter(post=post, user=request.user).exists():
         return JsonResponse({'success': False, 'error': 'No sections found for this post'}, status=400)
 
-    try:
-        charge_credits(request.user, settings.CREDITS_PER_CONTENT_SEARCH)
-    except NotEnoughCredits:
+    # Pre-flight credit check: surface the friendly toast at the view layer
+    # before we create a Pending* row. The actual charge happens atomically
+    # inside spawn_background -> task.claim().
+    usage = request.user.usage_account
+    usage.ensure_current_period()
+    if usage.used_this_period + settings.CREDITS_PER_CONTENT_SEARCH > usage.monthly_quota:
         return JsonResponse({'success': False, 'error': 'Not enough credits'}, status=400)
 
     _, beehiiv_pub_id, _ = get_user_api_credentials(request.user)
@@ -990,15 +922,14 @@ def run_content_finder(request):
         user=request.user,
         publication=publication,
         post=post,
-        status='planning',
     )
 
-    # TODO(scaling): replace daemon-thread background work with a real job queue (Celery/RQ) before scaling past 1 gunicorn worker.
-    threading.Thread(
-        target=run_content_finder_background,
-        args=(task.task_id,),
-        daemon=True,
-    ).start()
+    spawn_background(
+        PendingContentSearch,
+        task.task_id,
+        run_content_finder_background,
+        running_status='planning',
+    )
 
     return JsonResponse({'success': True, 'task_id': str(task.task_id)})
 
@@ -1024,14 +955,17 @@ def confirm_content_finder_plan(request, task_id):
     feedback = (data.get('feedback') or '').strip()
     task.user_feedback = feedback
     task.status = 'dispatching'
-    task.save(update_fields=['user_feedback', 'status'])
+    task.last_heartbeat = timezone.now()
+    task.save(update_fields=['user_feedback', 'status', 'last_heartbeat', 'updated_at'])
 
-    # TODO(scaling): replace daemon-thread background work with a real job queue (Celery/RQ) before scaling past 1 gunicorn worker.
-    threading.Thread(
-        target=run_content_finder_background,
-        args=(task.task_id,),
-        daemon=True,
-    ).start()
+    # Re-spawn; the work fn branches on status and the wrapper's claim() is a
+    # no-op since the task is past 'pending' (credits were already charged on
+    # the initial claim into 'planning').
+    spawn_background(
+        PendingContentSearch,
+        task.task_id,
+        run_content_finder_background,
+    )
 
     return JsonResponse({'success': True})
 
@@ -1044,6 +978,9 @@ def poll_content_finder(request, task_id):
         task = PendingContentSearch.objects.get(task_id=task_id, user=request.user)
     except PendingContentSearch.DoesNotExist:
         return JsonResponse({'success': False, 'error': 'Task not found'}, status=404)
+
+    if task.status in PendingContentSearch.SWEEPABLE_STATUSES:
+        task.touch_heartbeat()
 
     usage = request.user.usage_account
     resp = {
@@ -1157,10 +1094,13 @@ def run_improvement_tips(request):
     except Post.DoesNotExist:
         return JsonResponse({'success': False, 'error': 'Post not found'}, status=404)
 
-    # Charge credits
-    try:
-        charge_credits(request.user, settings.CREDITS_PER_IMPROVEMENT_TIPS)
-    except NotEnoughCredits:
+    # Pre-flight credit check: surface the friendly toast before we create a
+    # Pending* row. The actual charge happens inside spawn_background ->
+    # task.claim() so a process crash between view and thread-start can't leak
+    # credits.
+    usage = request.user.usage_account
+    usage.ensure_current_period()
+    if usage.used_this_period + settings.CREDITS_PER_IMPROVEMENT_TIPS > usage.monthly_quota:
         return JsonResponse({'success': False, 'error': 'Not enough credits'}, status=400)
 
     # Get publication
@@ -1177,12 +1117,9 @@ def run_improvement_tips(request):
         post=post,
     )
 
-    # TODO(scaling): replace daemon-thread background work with a real job queue (Celery/RQ) before scaling past 1 gunicorn worker.
-    threading.Thread(
-        target=run_improvement_tips_background,
-        args=(task.task_id,),
-        daemon=True,
-    ).start()
+    spawn_background(
+        PendingImprovementTips, task.task_id, run_improvement_tips_background,
+    )
 
     return JsonResponse({'success': True, 'task_id': str(task.task_id)})
 
@@ -1195,6 +1132,9 @@ def poll_improvement_tips(request, task_id):
         task = PendingImprovementTips.objects.get(task_id=task_id, user=request.user)
     except PendingImprovementTips.DoesNotExist:
         return JsonResponse({'success': False, 'error': 'Task not found'}, status=404)
+
+    if task.status in PendingImprovementTips.SWEEPABLE_STATUSES:
+        task.touch_heartbeat()
 
     usage = request.user.usage_account
     resp = {
@@ -1247,6 +1187,9 @@ def poll_niche_analysis(request, task_id):
         task = PendingNicheAnalysis.objects.get(task_id=task_id, user=request.user)
     except PendingNicheAnalysis.DoesNotExist:
         return JsonResponse({'success': False, 'error': 'Task not found'}, status=404)
+
+    if task.status in PendingNicheAnalysis.SWEEPABLE_STATUSES:
+        task.touch_heartbeat()
 
     resp = {
         'success': True,

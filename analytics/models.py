@@ -1,10 +1,15 @@
-from django.db import models
-from django.conf import settings
-from django.utils import timezone
-from calendar import monthrange
+import logging
 import uuid
+from calendar import monthrange
+from datetime import timedelta
+
+from django.conf import settings
+from django.db import models, transaction
+from django.utils import timezone
 
 from .fields import EncryptedCharField
+
+logger = logging.getLogger(__name__)
 
 
 def get_default_monthly_credits():
@@ -504,10 +509,173 @@ class Section(models.Model):
         return f"{self.post.title} - {self.section_name}"
 
 
-class PendingContentSearch(models.Model):
-    """Tracks background content finder tasks"""
+class BackgroundTask(models.Model):
+    """
+    Shared scaffolding for the daemon-thread background tasks in this app
+    (content finder, improvement tips, niche analysis, learning).
+
+    Subclasses tune three knobs:
+      * RUNNING_STATUSES — every status the task can be in while live work is
+        ongoing. Used by views to detect "task already in progress".
+      * SWEEPABLE_STATUSES — subset of RUNNING_STATUSES that a stale-heartbeat
+        sweep is allowed to error out. Statuses where the task is intentionally
+        idle (e.g. content finder's `awaiting_feedback` waiting on a user
+        Confirm click) must be excluded.
+      * STALE_SECONDS — heartbeat age past which the sweep treats the task as
+        dead.
+
+    Override get_credits_cost() on the subclass to charge credits at claim()
+    time. The cost reads from `settings.CREDITS_PER_*` so a settings change
+    affects new tasks only — in-flight tasks honor whatever they were quoted at
+    creation.
+    """
 
     task_id = models.UUIDField(default=uuid.uuid4, unique=True)
+    status = models.CharField(max_length=20, default='pending')
+    last_heartbeat = models.DateTimeField(default=timezone.now)
+    error_message = models.TextField(blank=True, default='')
+    credits_charged = models.PositiveIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    RUNNING_STATUSES = ('pending', 'running')
+    SWEEPABLE_STATUSES = ('pending', 'running')
+    STALE_SECONDS = 60
+
+    class Meta:
+        abstract = True
+        ordering = ['-created_at']
+
+    def get_credits_cost(self) -> int:
+        """Credits to deduct on claim(). Override on subclasses that charge."""
+        return 0
+
+    def claim(self, running_status: str = 'running') -> bool:
+        """
+        Atomic transition from 'pending' to `running_status`, charging credits
+        if applicable. Returns True if this call claimed the task, False if it
+        was already past 'pending' (re-entry — e.g. content finder resuming
+        from 'awaiting_feedback' after the user's Confirm click).
+
+        Raises NotEnoughCredits if the user is over quota at claim time.
+        """
+        from analytics.utils.credits import charge_credits
+
+        cost = self.get_credits_cost()
+        with transaction.atomic():
+            fresh = type(self).objects.select_for_update().get(pk=self.pk)
+            if fresh.status != 'pending':
+                for f in ('status', 'credits_charged', 'last_heartbeat'):
+                    setattr(self, f, getattr(fresh, f))
+                return False
+
+            if cost > 0 and fresh.credits_charged == 0:
+                charge_credits(self.user, cost)
+                fresh.credits_charged = cost
+
+            fresh.status = running_status
+            fresh.last_heartbeat = timezone.now()
+            fresh.save(update_fields=[
+                'status', 'credits_charged', 'last_heartbeat', 'updated_at',
+            ])
+
+        for f in ('status', 'credits_charged', 'last_heartbeat'):
+            setattr(self, f, getattr(fresh, f))
+        return True
+
+    def touch_heartbeat(self) -> None:
+        """Bump last_heartbeat. Called by poll endpoints — while a client is
+        still polling, the sweep treats the task as live."""
+        type(self).objects.filter(pk=self.pk).update(
+            last_heartbeat=timezone.now()
+        )
+
+    def mark_complete(self, **extra_fields) -> None:
+        """
+        Set status='complete' and persist any extra terminal-state fields.
+        Idempotent against an already-terminal row (e.g. the sweep beat us to
+        it) — in that case we leave the existing status alone.
+        """
+        with transaction.atomic():
+            fresh = type(self).objects.select_for_update().get(pk=self.pk)
+            if fresh.status in ('complete', 'error'):
+                for f in ('status', 'error_message'):
+                    setattr(self, f, getattr(fresh, f))
+                return
+            for k, v in extra_fields.items():
+                setattr(fresh, k, v)
+            fresh.status = 'complete'
+            fresh.last_heartbeat = timezone.now()
+            fresh.save(update_fields=list(extra_fields.keys()) + [
+                'status', 'last_heartbeat', 'updated_at',
+            ])
+        for k, v in extra_fields.items():
+            setattr(self, k, v)
+        self.status = 'complete'
+
+    def mark_error(self, message: str, *, refund: bool = True) -> None:
+        """
+        Mark errored and refund any charged credits. Idempotent on terminal
+        rows. Subclasses can override on_error() to add cleanup (e.g. wipe
+        partial user data for the learning flow).
+        """
+        from analytics.utils.credits import refund_credits
+
+        with transaction.atomic():
+            fresh = type(self).objects.select_for_update().get(pk=self.pk)
+            if fresh.status in ('complete', 'error'):
+                return
+            to_refund = fresh.credits_charged if refund else 0
+            fresh.status = 'error'
+            fresh.error_message = (message or '')[:5000]
+            fresh.credits_charged = 0
+            fresh.save(update_fields=[
+                'status', 'error_message', 'credits_charged', 'updated_at',
+            ])
+            if to_refund > 0:
+                refund_credits(self.user, to_refund)
+
+        self.status = 'error'
+        self.error_message = (message or '')[:5000]
+        self.credits_charged = 0
+        try:
+            self.on_error()
+        except Exception:
+            logger.exception("on_error hook failed for %s", type(self).__name__)
+
+    def on_error(self) -> None:
+        """Subclass hook fired after a task is marked errored."""
+        pass
+
+    @classmethod
+    def sweep_stale(cls) -> int:
+        """
+        Mark any task in SWEEPABLE_STATUSES whose last_heartbeat is older than
+        STALE_SECONDS as errored, refunding credits. Returns the sweep count.
+
+        Called from AppConfig.ready() at boot (recovers tasks orphaned by a
+        prior process crash) and from views before they check for "task
+        already running" gating.
+        """
+        cutoff = timezone.now() - timedelta(seconds=cls.STALE_SECONDS)
+        stale = list(cls.objects.filter(
+            status__in=cls.SWEEPABLE_STATUSES,
+            last_heartbeat__lt=cutoff,
+        ))
+        for task in stale:
+            try:
+                task.mark_error("Task abandoned (no client activity).")
+            except Exception:
+                logger.exception(
+                    "sweep_stale failed to mark task %s as errored",
+                    task.task_id,
+                )
+        return len(stale)
+
+
+class PendingContentSearch(BackgroundTask):
+    """Tracks background content finder tasks"""
+
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
@@ -520,32 +688,35 @@ class PendingContentSearch(models.Model):
         blank=True,
     )
     post = models.ForeignKey(Post, on_delete=models.CASCADE)
-    status = models.CharField(
-        max_length=20,
-        default='pending',
-        help_text="pending, planning, awaiting_feedback, dispatching, searching, complete, or error"
-    )
     plan_text = models.TextField(blank=True, default='')
     plan_messages = models.JSONField(default=list, blank=True)
     user_feedback = models.TextField(blank=True, default='')
     dispatch_messages = models.JSONField(default=list, blank=True)
     dispatch_sections = models.JSONField(default=list, blank=True)
     result_data = models.JSONField(default=list, blank=True)
-    error_message = models.TextField(blank=True)
     dev_panel_data = models.JSONField(default=dict, blank=True)
-    created_at = models.DateTimeField(auto_now_add=True)
 
-    class Meta:
-        ordering = ['-created_at']
+    RUNNING_STATUSES = (
+        'pending', 'planning', 'awaiting_feedback', 'dispatching', 'searching',
+    )
+    # `awaiting_feedback` is intentionally idle — the task is waiting for the
+    # user to click Confirm on the plan modal, which may take minutes.
+    SWEEPABLE_STATUSES = ('pending', 'planning', 'dispatching', 'searching')
+    STALE_SECONDS = 180
+
+    class Meta(BackgroundTask.Meta):
+        pass
+
+    def get_credits_cost(self) -> int:
+        return settings.CREDITS_PER_CONTENT_SEARCH
 
     def __str__(self):
         return f"PendingContentSearch {self.task_id} ({self.status})"
 
 
-class PendingImprovementTips(models.Model):
+class PendingImprovementTips(BackgroundTask):
     """Tracks background improvement tips generation tasks"""
 
-    task_id = models.UUIDField(default=uuid.uuid4, unique=True)
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
@@ -558,35 +729,32 @@ class PendingImprovementTips(models.Model):
         blank=True,
     )
     post = models.ForeignKey(Post, on_delete=models.CASCADE)
-    status = models.CharField(
-        max_length=20,
-        default='pending',
-        help_text="pending, running, complete, or error"
-    )
     result_html = models.TextField(blank=True)
-    error_message = models.TextField(blank=True)
     dev_panel_data = models.JSONField(default=dict, blank=True)
-    created_at = models.DateTimeField(auto_now_add=True)
 
-    class Meta:
-        ordering = ['-created_at']
+    STALE_SECONDS = 180
+
+    class Meta(BackgroundTask.Meta):
+        pass
+
+    def get_credits_cost(self) -> int:
+        return settings.CREDITS_PER_IMPROVEMENT_TIPS
 
     def __str__(self):
         return f"PendingImprovementTips {self.task_id} ({self.status})"
 
 
-class PendingLearningTask(models.Model):
+class PendingLearningTask(BackgroundTask):
     """
     Tracks the two onboarding/refresh workflows that replaced the old Posts page:
 
     - kind='initial' : first-time "Learning Your Audience" flow (full fetch + initial processing).
-      If the user leaves mid-flow, all data for (user, publication) is wiped and they
-      restart at the Learning coach.
+      Each run wipes any leftover (user, publication) data first so a previous
+      abandoned attempt can't poison the new one.
     - kind='update'  : per-page-load "Updating Your Posts" flow (incremental fetch + processing
       of newly-eligible posts). No cleanup on abandon.
     """
 
-    task_id = models.UUIDField(default=uuid.uuid4, unique=True)
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
@@ -607,33 +775,39 @@ class PendingLearningTask(models.Model):
         default='fetch',
         help_text="fetch or process",
     )
-    status = models.CharField(
-        max_length=20,
-        default='pending',
-        help_text="pending, running, complete, error, or abandoned",
-    )
     target_process_count = models.IntegerField(
         default=0,
         help_text="Number of posts the process phase is expected to handle",
     )
     posts_processed_count = models.IntegerField(default=0)
-    error_message = models.TextField(blank=True)
-    abandoned = models.BooleanField(default=False)
-    last_heartbeat = models.DateTimeField(auto_now_add=True)
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
 
-    class Meta:
-        ordering = ['-created_at']
+    STALE_SECONDS = 30
+
+    class Meta(BackgroundTask.Meta):
         indexes = [
             models.Index(fields=['user', 'status']),
         ]
+
+    def on_error(self) -> None:
+        """Wipe partial state for an abandoned initial run so the next attempt
+        starts clean. Update runs leave their incremental writes in place."""
+        if self.kind == 'initial' and self.publication is not None:
+            try:
+                from analytics.utils.post_selection import (
+                    wipe_user_publication_data,
+                )
+                wipe_user_publication_data(self.user, self.publication.pub_id)
+            except Exception:
+                logger.exception(
+                    "wipe_user_publication_data failed for learning task %s",
+                    self.task_id,
+                )
 
     def __str__(self):
         return f"PendingLearningTask {self.task_id} ({self.kind}/{self.status})"
 
 
-class PendingNicheAnalysis(models.Model):
+class PendingNicheAnalysis(BackgroundTask):
     """
     Tracks the one-shot Monetize-tab niche analysis: an LLM call that reads the
     text of the user's last 3 processed posts plus the best-performing links per
@@ -642,7 +816,6 @@ class PendingNicheAnalysis(models.Model):
     for (user, publication) is reused on subsequent visits.
     """
 
-    task_id = models.UUIDField(default=uuid.uuid4, unique=True)
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
@@ -654,19 +827,13 @@ class PendingNicheAnalysis(models.Model):
         null=True,
         blank=True,
     )
-    status = models.CharField(
-        max_length=20,
-        default='pending',
-        help_text="pending, running, complete, or error",
-    )
     niche = models.CharField(max_length=255, blank=True, default='')
     content_types = models.JSONField(default=list, blank=True)
-    error_message = models.TextField(blank=True)
     dev_panel_data = models.JSONField(default=dict, blank=True)
-    created_at = models.DateTimeField(auto_now_add=True)
 
-    class Meta:
-        ordering = ['-created_at']
+    STALE_SECONDS = 180
+
+    class Meta(BackgroundTask.Meta):
         indexes = [
             models.Index(fields=['user', 'publication', '-created_at']),
         ]

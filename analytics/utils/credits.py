@@ -38,3 +38,23 @@ def charge_credits(user, credits_to_charge: int):
         # already locks the row, so F()'s atomicity benefit is redundant.
         usage.used_this_period = usage.used_this_period + credits_to_charge
         usage.save(update_fields=['used_this_period', 'period_start'])
+
+
+def refund_credits(user, credits_to_refund: int):
+    """
+    Return previously-charged credits to a user's current billing period.
+
+    Floors at 0: if the billing period has rolled over between the original
+    charge and the refund, used_this_period has already been reset, so a naive
+    subtract would underflow.
+    """
+    if credits_to_refund <= 0:
+        return
+    if user is None or not getattr(user, 'is_authenticated', False):
+        return
+
+    with transaction.atomic():
+        usage = UsageAccount.objects.select_for_update().get(user=user)
+        usage.ensure_current_period()
+        usage.used_this_period = max(0, usage.used_this_period - credits_to_refund)
+        usage.save(update_fields=['used_this_period', 'period_start'])
