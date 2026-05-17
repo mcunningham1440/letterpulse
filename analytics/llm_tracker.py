@@ -13,11 +13,14 @@ asyncio.gather each see their own section_name without cross-talk.
 """
 
 import contextvars
+import logging
 import time
 from datetime import timedelta
 
 from django.conf import settings
 from django.utils import timezone
+
+logger = logging.getLogger(__name__)
 
 _tracker_calls = contextvars.ContextVar('_tracker_calls', default=None)
 _tracker_start = contextvars.ContextVar('_tracker_start', default=None)
@@ -295,8 +298,9 @@ def _serialize_input_messages(messages):
 
 def _extract_output(response):
     """Extract text content from the OpenAI response output."""
+    output = getattr(response, 'output', [])
     parts = []
-    for item in getattr(response, 'output', []):
+    for item in output:
         if hasattr(item, 'content') and item.content:
             for content_piece in item.content:
                 if hasattr(content_piece, 'text'):
@@ -305,4 +309,9 @@ def _extract_output(response):
             name = getattr(item, 'name', '')
             args = getattr(item, 'arguments', '')
             parts.append(f"[tool_call: {name}] {args}")
+    if not parts:
+        item_types = [getattr(item, 'type', None) for item in output]
+        logger.warning(
+            "_extract_output produced no text; output item types=%r", item_types,
+        )
     return '\n'.join(parts) if parts else ''

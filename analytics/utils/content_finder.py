@@ -376,11 +376,8 @@ async def run_search_agent(section_name, dispatch_messages, historical_urls, tas
         timeout=60.0,
     )
 
-    try:
-        parsed = response.output[-1].content[0].parsed
-        links = [link.model_dump() for link in parsed.links]
-    except (AttributeError, IndexError):
-        links = []
+    parsed = response.output[-1].content[0].parsed
+    links = [link.model_dump() for link in parsed.links]
 
     return (section_name, links)
 
