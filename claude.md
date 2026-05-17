@@ -56,7 +56,12 @@ app/
 │   └── wsgi.py / asgi.py       # WSGI/ASGI entry points
 ├── analytics/                  # Main Django app
 │   ├── models.py               # All database models
-│   ├── views.py                # All view logic (login-protected)
+│   ├── views/                  # View logic, split by feature group. `__init__.py` re-exports
+│   │                           #   every public name so `urls.py`'s `from . import views`
+│   │                           #   keeps working. Submodules: _helpers (sanitize_filename,
+│   │                           #   get_user_api_credentials, require_valid_api_credentials,
+│   │                           #   _resolve_publication), public, account, insights, learning,
+│   │                           #   content_finder, improvement_tips, monetize, feedback.
 │   ├── urls.py                 # App URL patterns (analytics namespace)
 │   ├── utils/                  # Core utilities, split into topic submodules.
 │   │                           #   Submodules: credits, llm, text, beehiiv_api, post_selection,
