@@ -18,3 +18,7 @@ db.sqlite3
 media
 staticfiles
 open_worktree.sh
+
+.coverage
+htmlcov/
+.pytest_cache/

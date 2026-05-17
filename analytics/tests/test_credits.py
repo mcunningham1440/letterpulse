@@ -17,23 +17,8 @@ from analytics.utils import NotEnoughCredits, charge_credits
 User = get_user_model()
 
 
-class _CreditTestBase(TestCase):
-    """
-    Base class that suppresses the welcome-email thread spawned by the
-    post_save signal on User creation. That thread calls refresh_from_db()
-    and can race with SQLite's in-memory connection cleanup at test teardown.
-    """
-
-    @classmethod
-    def setUpClass(cls):
-        super().setUpClass()
-        cls._welcome_patch = mock.patch("analytics.signals._send_welcome_email")
-        cls._welcome_patch.start()
-
-    @classmethod
-    def tearDownClass(cls):
-        cls._welcome_patch.stop()
-        super().tearDownClass()
+# Welcome-email suppression now lives in analytics/tests/conftest.py as a
+# session-autouse fixture.
 
 
 def _make_user(email="alice@example.com", date_joined=None, monthly_quota=75,
@@ -65,7 +50,7 @@ def _patch_today(d: date):
     return mock.patch("analytics.models.timezone.now", return_value=fake_now)
 
 
-class EnsureCurrentPeriodTests(_CreditTestBase):
+class EnsureCurrentPeriodTests(TestCase):
     """Cover the billing-period rollover logic."""
 
     def test_no_rollover_when_inside_current_period(self):
@@ -166,7 +151,7 @@ class EnsureCurrentPeriodTests(_CreditTestBase):
         self.assertEqual(usage.used_this_period, 7)
 
 
-class ChargeCreditsTests(_CreditTestBase):
+class ChargeCreditsTests(TestCase):
     """Cover the atomic charge path."""
 
     def test_charge_within_quota_increments_used(self):
@@ -228,7 +213,7 @@ class ChargeCreditsTests(_CreditTestBase):
         self.assertEqual(usage.used_this_period, 5)
 
 
-class RemainingPropertyTests(_CreditTestBase):
+class RemainingPropertyTests(TestCase):
     """Quick sanity checks on the derived properties charge_credits leans on."""
 
     def test_remaining_is_quota_minus_used(self):

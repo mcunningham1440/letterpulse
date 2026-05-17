@@ -29,42 +29,33 @@ from analytics.utils.credits import NotEnoughCredits
 User = get_user_model()
 
 
-class _BackgroundTaskTestBase(TestCase):
-    """Shared scaffold: suppress the welcome-email side thread."""
+# Welcome-email suppression now lives in analytics/tests/conftest.py as a
+# session-autouse fixture.
 
-    @classmethod
-    def setUpClass(cls):
-        super().setUpClass()
-        cls._welcome_patch = mock.patch("analytics.signals._send_welcome_email")
-        cls._welcome_patch.start()
 
-    @classmethod
-    def tearDownClass(cls):
-        cls._welcome_patch.stop()
-        super().tearDownClass()
+def _make_user(email="alice@example.com", monthly_quota=10,
+               used_this_period=0):
+    user = User.objects.create_user(
+        username=email.split("@")[0], email=email, password="x",
+        date_joined=datetime(2025, 3, 15, tzinfo=dt_timezone.utc),
+    )
+    usage = user.usage_account
+    usage.monthly_quota = monthly_quota
+    usage.used_this_period = used_this_period
+    usage.period_start = date(2025, 3, 15)
+    usage.save()
+    return user, usage
 
-    def _make_user(self, email="alice@example.com", monthly_quota=10,
-                   used_this_period=0):
-        user = User.objects.create_user(
-            username=email.split("@")[0], email=email, password="x",
-            date_joined=datetime(2025, 3, 15, tzinfo=dt_timezone.utc),
+
+def _make_post(user, publication=None):
+    if publication is None:
+        publication = Publication.objects.create(
+            pub_id="pub-test", name="Test Pub",
         )
-        usage = user.usage_account
-        usage.monthly_quota = monthly_quota
-        usage.used_this_period = used_this_period
-        usage.period_start = date(2025, 3, 15)
-        usage.save()
-        return user, usage
-
-    def _make_post(self, user, publication=None):
-        if publication is None:
-            publication = Publication.objects.create(
-                pub_id="pub-test", name="Test Pub",
-            )
-        return Post.objects.create(
-            post_id="post-1", user=user, publication=publication,
-            title="Test post",
-        )
+    return Post.objects.create(
+        post_id="post-1", user=user, publication=publication,
+        title="Test post",
+    )
 
 
 def _patch_today(d: date):
@@ -72,14 +63,20 @@ def _patch_today(d: date):
     return mock.patch("analytics.models.timezone.now", return_value=fake_now)
 
 
+def _age_heartbeat(task, seconds):
+    type(task).objects.filter(pk=task.pk).update(
+        last_heartbeat=timezone.now() - timedelta(seconds=seconds),
+    )
+
+
 @override_settings(CREDITS_PER_IMPROVEMENT_TIPS=3)
-class ClaimChargesCreditsAtomicallyTests(_BackgroundTaskTestBase):
+class ClaimChargesCreditsAtomicallyTests(TestCase):
     """claim() pairs the status transition with the credit charge in one tx."""
 
     def test_claim_charges_credits_and_flips_status(self):
-        user, usage = self._make_user(monthly_quota=10, used_this_period=2)
+        user, usage = _make_user(monthly_quota=10, used_this_period=2)
         with _patch_today(date(2025, 3, 20)):
-            post = self._make_post(user)
+            post = _make_post(user)
             task = PendingImprovementTips.objects.create(
                 user=user, publication=post.publication, post=post,
             )
@@ -96,9 +93,9 @@ class ClaimChargesCreditsAtomicallyTests(_BackgroundTaskTestBase):
         self.assertEqual(usage.used_this_period, 5)
 
     def test_claim_refuses_over_quota_and_leaves_task_pending(self):
-        user, usage = self._make_user(monthly_quota=10, used_this_period=8)
+        user, usage = _make_user(monthly_quota=10, used_this_period=8)
         with _patch_today(date(2025, 3, 20)):
-            post = self._make_post(user)
+            post = _make_post(user)
             task = PendingImprovementTips.objects.create(
                 user=user, publication=post.publication, post=post,
             )
@@ -112,9 +109,9 @@ class ClaimChargesCreditsAtomicallyTests(_BackgroundTaskTestBase):
         self.assertEqual(usage.used_this_period, 8)
 
     def test_second_claim_is_a_noop_and_does_not_double_charge(self):
-        user, usage = self._make_user(monthly_quota=10, used_this_period=0)
+        user, usage = _make_user(monthly_quota=10, used_this_period=0)
         with _patch_today(date(2025, 3, 20)):
-            post = self._make_post(user)
+            post = _make_post(user)
             task = PendingImprovementTips.objects.create(
                 user=user, publication=post.publication, post=post,
             )
@@ -127,7 +124,7 @@ class ClaimChargesCreditsAtomicallyTests(_BackgroundTaskTestBase):
 
     def test_free_task_charges_nothing(self):
         # PendingLearningTask is free (no get_credits_cost override).
-        user, usage = self._make_user(monthly_quota=10, used_this_period=5)
+        user, usage = _make_user(monthly_quota=10, used_this_period=5)
         pub = Publication.objects.create(pub_id="pub-x", name="X")
         with _patch_today(date(2025, 3, 20)):
             task = PendingLearningTask.objects.create(
@@ -143,13 +140,13 @@ class ClaimChargesCreditsAtomicallyTests(_BackgroundTaskTestBase):
 
 
 @override_settings(CREDITS_PER_IMPROVEMENT_TIPS=3)
-class MarkErrorRefundsCreditsTests(_BackgroundTaskTestBase):
+class MarkErrorRefundsCreditsTests(TestCase):
     """mark_error() returns the credits charged by claim()."""
 
     def test_mark_error_refunds_full_charge(self):
-        user, usage = self._make_user(monthly_quota=10, used_this_period=0)
+        user, usage = _make_user(monthly_quota=10, used_this_period=0)
         with _patch_today(date(2025, 3, 20)):
-            post = self._make_post(user)
+            post = _make_post(user)
             task = PendingImprovementTips.objects.create(
                 user=user, publication=post.publication, post=post,
             )
@@ -167,9 +164,9 @@ class MarkErrorRefundsCreditsTests(_BackgroundTaskTestBase):
         self.assertEqual(usage.used_this_period, 0)
 
     def test_mark_error_idempotent_does_not_double_refund(self):
-        user, usage = self._make_user(monthly_quota=10, used_this_period=0)
+        user, usage = _make_user(monthly_quota=10, used_this_period=0)
         with _patch_today(date(2025, 3, 20)):
-            post = self._make_post(user)
+            post = _make_post(user)
             task = PendingImprovementTips.objects.create(
                 user=user, publication=post.publication, post=post,
             )
@@ -181,9 +178,9 @@ class MarkErrorRefundsCreditsTests(_BackgroundTaskTestBase):
         self.assertEqual(usage.used_this_period, 0)
 
     def test_mark_error_with_refund_false_keeps_charge(self):
-        user, usage = self._make_user(monthly_quota=10, used_this_period=0)
+        user, usage = _make_user(monthly_quota=10, used_this_period=0)
         with _patch_today(date(2025, 3, 20)):
-            post = self._make_post(user)
+            post = _make_post(user)
             task = PendingImprovementTips.objects.create(
                 user=user, publication=post.publication, post=post,
             )
@@ -194,9 +191,9 @@ class MarkErrorRefundsCreditsTests(_BackgroundTaskTestBase):
         self.assertEqual(usage.used_this_period, 3)
 
     def test_mark_error_after_complete_is_noop(self):
-        user, usage = self._make_user(monthly_quota=10, used_this_period=0)
+        user, usage = _make_user(monthly_quota=10, used_this_period=0)
         with _patch_today(date(2025, 3, 20)):
-            post = self._make_post(user)
+            post = _make_post(user)
             task = PendingImprovementTips.objects.create(
                 user=user, publication=post.publication, post=post,
             )
@@ -212,22 +209,17 @@ class MarkErrorRefundsCreditsTests(_BackgroundTaskTestBase):
 
 
 @override_settings(CREDITS_PER_IMPROVEMENT_TIPS=3)
-class SweepStaleTests(_BackgroundTaskTestBase):
+class SweepStaleTests(TestCase):
     """sweep_stale() marks heartbeat-stale rows errored and refunds."""
 
-    def _age_heartbeat(self, task, seconds):
-        type(task).objects.filter(pk=task.pk).update(
-            last_heartbeat=timezone.now() - timedelta(seconds=seconds),
-        )
-
     def test_stale_running_row_is_swept_and_refunded(self):
-        user, usage = self._make_user(monthly_quota=10, used_this_period=0)
-        post = self._make_post(user)
+        user, usage = _make_user(monthly_quota=10, used_this_period=0)
+        post = _make_post(user)
         task = PendingImprovementTips.objects.create(
             user=user, publication=post.publication, post=post,
         )
         task.claim()
-        self._age_heartbeat(task, PendingImprovementTips.STALE_SECONDS + 30)
+        _age_heartbeat(task, PendingImprovementTips.STALE_SECONDS + 30)
 
         swept = PendingImprovementTips.sweep_stale()
         self.assertEqual(swept, 1)
@@ -238,8 +230,8 @@ class SweepStaleTests(_BackgroundTaskTestBase):
         self.assertEqual(usage.used_this_period, 0)
 
     def test_fresh_heartbeat_is_left_alone(self):
-        user, _usage = self._make_user(monthly_quota=10, used_this_period=0)
-        post = self._make_post(user)
+        user, _usage = _make_user(monthly_quota=10, used_this_period=0)
+        post = _make_post(user)
         task = PendingImprovementTips.objects.create(
             user=user, publication=post.publication, post=post,
         )
@@ -252,14 +244,14 @@ class SweepStaleTests(_BackgroundTaskTestBase):
         self.assertEqual(task.status, 'running')
 
     def test_completed_task_is_not_swept(self):
-        user, _usage = self._make_user(monthly_quota=10, used_this_period=0)
-        post = self._make_post(user)
+        user, _usage = _make_user(monthly_quota=10, used_this_period=0)
+        post = _make_post(user)
         task = PendingImprovementTips.objects.create(
             user=user, publication=post.publication, post=post,
         )
         task.claim()
         task.mark_complete(result_html="<html>")
-        self._age_heartbeat(task, PendingImprovementTips.STALE_SECONDS + 30)
+        _age_heartbeat(task, PendingImprovementTips.STALE_SECONDS + 30)
 
         swept = PendingImprovementTips.sweep_stale()
         self.assertEqual(swept, 0)
@@ -267,33 +259,33 @@ class SweepStaleTests(_BackgroundTaskTestBase):
         self.assertEqual(task.status, 'complete')
 
     def test_recover_stuck_tasks_sweeps_every_subclass(self):
-        user, _usage = self._make_user(monthly_quota=10, used_this_period=0)
+        user, _usage = _make_user(monthly_quota=10, used_this_period=0)
         pub = Publication.objects.create(pub_id="pub-rec", name="Rec")
-        post = self._make_post(user, publication=pub)
+        post = _make_post(user, publication=pub)
 
         t1 = PendingImprovementTips.objects.create(
             user=user, publication=pub, post=post,
         )
         t1.claim()
-        self._age_heartbeat(t1, PendingImprovementTips.STALE_SECONDS + 60)
+        _age_heartbeat(t1, PendingImprovementTips.STALE_SECONDS + 60)
 
         t2 = PendingNicheAnalysis.objects.create(user=user, publication=pub)
         t2.claim()
-        self._age_heartbeat(t2, PendingNicheAnalysis.STALE_SECONDS + 60)
+        _age_heartbeat(t2, PendingNicheAnalysis.STALE_SECONDS + 60)
 
         counts = recover_stuck_tasks()
         self.assertEqual(counts['PendingImprovementTips'], 1)
         self.assertEqual(counts['PendingNicheAnalysis'], 1)
 
 
-class AwaitingFeedbackIsNotSweptTests(_BackgroundTaskTestBase):
+class AwaitingFeedbackIsNotSweptTests(TestCase):
     """Content finder's awaiting_feedback state is intentionally idle."""
 
     def test_awaiting_feedback_stale_row_is_not_swept(self):
         from analytics.models import PendingContentSearch
 
-        user, _ = self._make_user(monthly_quota=10, used_this_period=0)
-        post = self._make_post(user)
+        user, _ = _make_user(monthly_quota=10, used_this_period=0)
+        post = _make_post(user)
         task = PendingContentSearch.objects.create(
             user=user, publication=post.publication, post=post,
         )

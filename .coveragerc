@@ -1,0 +1,11 @@
+[run]
+source = analytics
+omit =
+    */migrations/*
+    */tests/*
+    manage.py
+    beehiiv_analytics/test_settings.py
+
+[report]
+show_missing = True
+skip_covered = False

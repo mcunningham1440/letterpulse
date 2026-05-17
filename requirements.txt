@@ -14,3 +14,10 @@ whitenoise>=6.7        # Static file serving for production
 cryptography>=42.0     # For encrypting sensitive data at rest
 pytz>=2024.1          # Timezone handling for migrations
 perplexityai>=0.20.0   # Perplexity search API client
+
+# Test-only dependencies
+pytest>=8.0
+pytest-django>=4.7
+pytest-asyncio>=0.23
+aioresponses>=0.7
+coverage>=7.4

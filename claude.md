@@ -224,16 +224,22 @@ Content Finder and Improvement Tips both use the same pattern: create a Pending*
 
 Tests live in `analytics/tests/` (e.g. `test_credits.py`) and run against a dedicated test settings module that uses an in-memory SQLite DB so they never touch RDS.
 
+Runner: **pytest-django**, configured in `pytest.ini` at the project root (`DJANGO_SETTINGS_MODULE = beehiiv_analytics.test_settings`, `testpaths = analytics/tests`).
+
 Run from the project root:
 ```bash
-.venv/bin/python manage.py test analytics --settings=beehiiv_analytics.test_settings
+# Run the suite
+.venv/bin/pytest
+
+# With coverage (config in .coveragerc)
+.venv/bin/coverage run -m pytest && .venv/bin/coverage report -m
 ```
 
 `beehiiv_analytics/test_settings.py`:
 - Imports from `settings.py` and overrides `DATABASES` to SQLite `:memory:`.
 - Provides `os.environ.setdefault(...)` defaults for `SECRET_KEY`, `OPENAI_API_KEY`, `DATABASE_SECRET`, `DB_HOST`, `ENVIRONMENT` so tests run without a real `.env`.
-- Uses `EMAIL_BACKEND = locmem` and blanks `SIGNUP_NOTIFICATION_EMAIL` so the post_save signal on `User` doesn't try to send mail. Tests should additionally patch `analytics.signals._send_welcome_email` (see `_CreditTestBase` in `test_credits.py`) to suppress the welcome-email daemon thread.
+- Uses `EMAIL_BACKEND = locmem` and blanks `SIGNUP_NOTIFICATION_EMAIL` so the post_save signal on `User` doesn't try to send mail.
 - Sets `MIGRATION_MODULES` to a sentinel that disables migrations — Django creates schema directly from models. This is purely for test-suite speed; real migrations run in both deployed envs (the Dockerfile invokes `migrate`) and the local-dev DB (`run_local_dev.sh` invokes `migrate`).
 - Switches `PASSWORD_HASHERS` to MD5 for speed.
 
-When adding new test files, prefer subclassing a base class that suppresses the welcome-email signal (or use `mock.patch("analytics.signals._send_welcome_email")` per test). The signal's daemon thread calls `user.refresh_from_db()` and can race with SQLite teardown.
+The session-autouse fixture in `analytics/tests/conftest.py` suppresses `analytics.signals._send_welcome_email` for every test, so no per-test setup is needed. The signal's daemon thread calls `user.refresh_from_db()` and can race with SQLite teardown. Note that this fixture is session-scoped because pytest-django does not run function-scoped autouse fixtures around `unittest.TestCase` tests.
