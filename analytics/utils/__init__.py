@@ -9,7 +9,13 @@ their submodules.
 
 from ._constants import TIMEZONE_CHOICES
 
-from .credits import NotEnoughCredits, charge_credits
+from .credits import NotEnoughCredits, charge_credits, refund_credits
+
+from .background import (
+    recover_stuck_tasks,
+    refresh_db_connection,
+    spawn_background,
+)
 
 from .llm import OPENAI_API_KEY, llm_call
 

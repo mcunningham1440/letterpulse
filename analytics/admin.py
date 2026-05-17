@@ -160,9 +160,9 @@ class PendingImprovementTipsAdmin(admin.ModelAdmin):
 @admin.register(PendingLearningTask)
 class PendingLearningTaskAdmin(admin.ModelAdmin):
     list_display = ('task_id', 'user', 'publication', 'kind', 'phase', 'status',
-                    'target_process_count', 'posts_processed_count', 'abandoned',
+                    'target_process_count', 'posts_processed_count',
                     'last_heartbeat', 'created_at')
-    list_filter = ('kind', 'phase', 'status', 'abandoned', 'created_at')
+    list_filter = ('kind', 'phase', 'status', 'created_at')
     search_fields = ('user__email', 'publication__name')
     ordering = ('-created_at',)
     readonly_fields = ('task_id', 'created_at', 'updated_at', 'last_heartbeat')

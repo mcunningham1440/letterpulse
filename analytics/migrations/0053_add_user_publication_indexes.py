@@ -6,7 +6,7 @@ from django.db import migrations, models
 
 class Migration(migrations.Migration):
     dependencies = [
-        ("analytics", "0051_drop_survey_and_cronrunlog"),
+        ("analytics", "0052_remove_pendinglearningtask_abandoned_and_more"),
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
     ]
 

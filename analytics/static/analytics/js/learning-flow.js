@@ -73,15 +73,10 @@
                 setTimeout(closeModal, 1200);
                 showToast(GENERIC_ERROR_TOAST, 'danger');
             }
-            return;
-        }
-
-        if (data.status === 'abandoned') {
-            // Another tab / pagehide aborted this run — reload so the
-            // Learning coach can re-fire if appropriate.
-            if (!silentUpdate) closeModal();
+            // Initial-run errors wipe partial data via PendingLearningTask.on_error;
+            // reload so the Learning coach re-fires for a clean retry.
             if (kind === 'initial') {
-                setTimeout(function () { window.location.reload(); }, 400);
+                setTimeout(function () { window.location.reload(); }, 600);
             }
             return;
         }
@@ -120,7 +115,7 @@
                     startPhase(data.kind, data.phase, data.target_process_count);
                 }
 
-                if (data.status === 'complete' || data.status === 'error' || data.status === 'abandoned') {
+                if (data.status === 'complete' || data.status === 'error') {
                     handleTaskFinished(data);
                 }
             } catch (err) {
@@ -181,15 +176,6 @@
             startTask('update');
         })();
     }
-
-    // Pagehide beacon — abandon active kind='initial' tasks only
-    window.addEventListener('pagehide', function () {
-        if (activeTaskId && activeKind === 'initial') {
-            try {
-                navigator.sendBeacon(`/insights/learning/abandon/${activeTaskId}/`);
-            } catch (e) {}
-        }
-    });
 
     // Dismiss the post-learning coach and reload so insights_view
     // recomputes has_processed_data etc. and the next coach can render.
