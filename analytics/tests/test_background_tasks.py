@@ -37,12 +37,12 @@ def _make_user(email="alice@example.com", monthly_quota=10,
                used_this_period=0):
     user = User.objects.create_user(
         username=email.split("@")[0], email=email, password="x",
-        date_joined=datetime(2025, 3, 15, tzinfo=dt_timezone.utc),
+        date_joined=datetime(2026, 3, 15, tzinfo=dt_timezone.utc),
     )
     usage = user.usage_account
     usage.monthly_quota = monthly_quota
     usage.used_this_period = used_this_period
-    usage.period_start = date(2025, 3, 15)
+    usage.period_start = date(2026, 3, 15)
     usage.save()
     return user, usage
 
@@ -75,7 +75,7 @@ class ClaimChargesCreditsAtomicallyTests(TestCase):
 
     def test_claim_charges_credits_and_flips_status(self):
         user, usage = _make_user(monthly_quota=10, used_this_period=2)
-        with _patch_today(date(2025, 3, 20)):
+        with _patch_today(date(2026, 3, 20)):
             post = _make_post(user)
             task = PendingImprovementTips.objects.create(
                 user=user, publication=post.publication, post=post,
@@ -94,7 +94,7 @@ class ClaimChargesCreditsAtomicallyTests(TestCase):
 
     def test_claim_refuses_over_quota_and_leaves_task_pending(self):
         user, usage = _make_user(monthly_quota=10, used_this_period=8)
-        with _patch_today(date(2025, 3, 20)):
+        with _patch_today(date(2026, 3, 20)):
             post = _make_post(user)
             task = PendingImprovementTips.objects.create(
                 user=user, publication=post.publication, post=post,
@@ -110,7 +110,7 @@ class ClaimChargesCreditsAtomicallyTests(TestCase):
 
     def test_second_claim_is_a_noop_and_does_not_double_charge(self):
         user, usage = _make_user(monthly_quota=10, used_this_period=0)
-        with _patch_today(date(2025, 3, 20)):
+        with _patch_today(date(2026, 3, 20)):
             post = _make_post(user)
             task = PendingImprovementTips.objects.create(
                 user=user, publication=post.publication, post=post,
@@ -126,7 +126,7 @@ class ClaimChargesCreditsAtomicallyTests(TestCase):
         # PendingLearningTask is free (no get_credits_cost override).
         user, usage = _make_user(monthly_quota=10, used_this_period=5)
         pub = Publication.objects.create(pub_id="pub-x", name="X")
-        with _patch_today(date(2025, 3, 20)):
+        with _patch_today(date(2026, 3, 20)):
             task = PendingLearningTask.objects.create(
                 user=user, publication=pub, kind='update',
             )
@@ -145,7 +145,7 @@ class MarkErrorRefundsCreditsTests(TestCase):
 
     def test_mark_error_refunds_full_charge(self):
         user, usage = _make_user(monthly_quota=10, used_this_period=0)
-        with _patch_today(date(2025, 3, 20)):
+        with _patch_today(date(2026, 3, 20)):
             post = _make_post(user)
             task = PendingImprovementTips.objects.create(
                 user=user, publication=post.publication, post=post,
@@ -165,7 +165,7 @@ class MarkErrorRefundsCreditsTests(TestCase):
 
     def test_mark_error_idempotent_does_not_double_refund(self):
         user, usage = _make_user(monthly_quota=10, used_this_period=0)
-        with _patch_today(date(2025, 3, 20)):
+        with _patch_today(date(2026, 3, 20)):
             post = _make_post(user)
             task = PendingImprovementTips.objects.create(
                 user=user, publication=post.publication, post=post,
@@ -179,7 +179,7 @@ class MarkErrorRefundsCreditsTests(TestCase):
 
     def test_mark_error_with_refund_false_keeps_charge(self):
         user, usage = _make_user(monthly_quota=10, used_this_period=0)
-        with _patch_today(date(2025, 3, 20)):
+        with _patch_today(date(2026, 3, 20)):
             post = _make_post(user)
             task = PendingImprovementTips.objects.create(
                 user=user, publication=post.publication, post=post,
@@ -192,7 +192,7 @@ class MarkErrorRefundsCreditsTests(TestCase):
 
     def test_mark_error_after_complete_is_noop(self):
         user, usage = _make_user(monthly_quota=10, used_this_period=0)
-        with _patch_today(date(2025, 3, 20)):
+        with _patch_today(date(2026, 3, 20)):
             post = _make_post(user)
             task = PendingImprovementTips.objects.create(
                 user=user, publication=post.publication, post=post,

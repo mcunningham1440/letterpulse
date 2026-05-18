@@ -54,100 +54,100 @@ class EnsureCurrentPeriodTests(TestCase):
     """Cover the billing-period rollover logic."""
 
     def test_no_rollover_when_inside_current_period(self):
-        # Joined Mar 15 2025; today is Mar 20 2025 -> still in the Mar 15 period.
+        # Joined Mar 15 2026; today is Mar 20 2026 -> still in the Mar 15 period.
         _, usage = _make_user(
-            date_joined=datetime(2025, 3, 15, tzinfo=dt_timezone.utc),
+            date_joined=datetime(2026, 3, 15, tzinfo=dt_timezone.utc),
             used_this_period=10,
-            period_start=date(2025, 3, 15),
+            period_start=date(2026, 3, 15),
         )
-        with _patch_today(date(2025, 3, 20)):
+        with _patch_today(date(2026, 3, 20)):
             usage.ensure_current_period()
-        self.assertEqual(usage.period_start, date(2025, 3, 15))
+        self.assertEqual(usage.period_start, date(2026, 3, 15))
         self.assertEqual(usage.used_this_period, 10)  # not reset
 
     def test_rollover_resets_used_credits(self):
         # Joined Mar 15; today is Apr 15 -> new period starts Apr 15, reset.
         _, usage = _make_user(
-            date_joined=datetime(2025, 3, 15, tzinfo=dt_timezone.utc),
+            date_joined=datetime(2026, 3, 15, tzinfo=dt_timezone.utc),
             used_this_period=50,
-            period_start=date(2025, 3, 15),
+            period_start=date(2026, 3, 15),
         )
-        with _patch_today(date(2025, 4, 15)):
+        with _patch_today(date(2026, 4, 15)):
             usage.ensure_current_period()
-        self.assertEqual(usage.period_start, date(2025, 4, 15))
+        self.assertEqual(usage.period_start, date(2026, 4, 15))
         self.assertEqual(usage.used_this_period, 0)
 
     def test_day_before_renewal_stays_in_old_period(self):
         # Today is Apr 14, billing day is 15 -> still in the Mar 15 period.
         _, usage = _make_user(
-            date_joined=datetime(2025, 3, 15, tzinfo=dt_timezone.utc),
+            date_joined=datetime(2026, 3, 15, tzinfo=dt_timezone.utc),
             used_this_period=50,
-            period_start=date(2025, 3, 15),
+            period_start=date(2026, 3, 15),
         )
-        with _patch_today(date(2025, 4, 14)):
+        with _patch_today(date(2026, 4, 14)):
             usage.ensure_current_period()
-        self.assertEqual(usage.period_start, date(2025, 3, 15))
+        self.assertEqual(usage.period_start, date(2026, 3, 15))
         self.assertEqual(usage.used_this_period, 50)
 
     def test_signup_on_31st_clamps_to_short_month(self):
-        # Joined Jan 31 2025. In Feb 2025 (28 days), billing day clamps to Feb 28.
+        # Joined Jan 31 2026. In Feb 2026 (28 days), billing day clamps to Feb 28.
         _, usage = _make_user(
-            date_joined=datetime(2025, 1, 31, tzinfo=dt_timezone.utc),
-            period_start=date(2025, 1, 31),
+            date_joined=datetime(2026, 1, 31, tzinfo=dt_timezone.utc),
+            period_start=date(2026, 1, 31),
             used_this_period=20,
         )
-        with _patch_today(date(2025, 2, 28)):
+        with _patch_today(date(2026, 2, 28)):
             usage.ensure_current_period()
-        self.assertEqual(usage.period_start, date(2025, 2, 28))
+        self.assertEqual(usage.period_start, date(2026, 2, 28))
         self.assertEqual(usage.used_this_period, 0)
 
     def test_signup_on_31st_then_31_day_month_uses_31st(self):
         # Joined Jan 31. By Mar 31 the period should land on Mar 31 (not Feb 28).
         _, usage = _make_user(
-            date_joined=datetime(2025, 1, 31, tzinfo=dt_timezone.utc),
-            period_start=date(2025, 2, 28),
+            date_joined=datetime(2026, 1, 31, tzinfo=dt_timezone.utc),
+            period_start=date(2026, 2, 28),
             used_this_period=10,
         )
-        with _patch_today(date(2025, 3, 31)):
+        with _patch_today(date(2026, 3, 31)):
             usage.ensure_current_period()
-        self.assertEqual(usage.period_start, date(2025, 3, 31))
+        self.assertEqual(usage.period_start, date(2026, 3, 31))
         self.assertEqual(usage.used_this_period, 0)
 
     def test_year_rollover(self):
-        # Joined Dec 10 2024. Today Jan 5 2025 -> still in Dec 10 2024 period.
+        # Joined Dec 10 2025. Today Jan 5 2026 -> still in Dec 10 2025 period.
         _, usage = _make_user(
-            date_joined=datetime(2024, 12, 10, tzinfo=dt_timezone.utc),
-            period_start=date(2024, 12, 10),
+            date_joined=datetime(2025, 12, 10, tzinfo=dt_timezone.utc),
+            period_start=date(2025, 12, 10),
             used_this_period=5,
         )
-        with _patch_today(date(2025, 1, 5)):
+        with _patch_today(date(2026, 1, 5)):
             usage.ensure_current_period()
-        self.assertEqual(usage.period_start, date(2024, 12, 10))
+        self.assertEqual(usage.period_start, date(2025, 12, 10))
         self.assertEqual(usage.used_this_period, 5)
 
     def test_year_rollover_into_new_period(self):
-        # Joined Dec 10 2024. Today Jan 10 2025 -> new period starts Jan 10.
+        # Joined Dec 10 2025. Today Jan 10 2026 -> new period starts Jan 10.
         _, usage = _make_user(
-            date_joined=datetime(2024, 12, 10, tzinfo=dt_timezone.utc),
-            period_start=date(2024, 12, 10),
+            date_joined=datetime(2025, 12, 10, tzinfo=dt_timezone.utc),
+            period_start=date(2025, 12, 10),
             used_this_period=42,
         )
-        with _patch_today(date(2025, 1, 10)):
+        with _patch_today(date(2026, 1, 10)):
             usage.ensure_current_period()
-        self.assertEqual(usage.period_start, date(2025, 1, 10))
+        self.assertEqual(usage.period_start, date(2026, 1, 10))
         self.assertEqual(usage.used_this_period, 0)
 
     def test_idempotent_within_same_period(self):
         # Calling twice in the same period must not double-reset or change state.
         _, usage = _make_user(
-            date_joined=datetime(2025, 3, 15, tzinfo=dt_timezone.utc),
-            period_start=date(2025, 3, 15),
+            date_joined=datetime(2026, 3, 15, tzinfo=dt_timezone.utc),
+            period_start=date(2026, 3, 15),
             used_this_period=7,
         )
-        with _patch_today(date(2025, 3, 25)):
+        with _patch_today(date(2026, 3, 25)):
             usage.ensure_current_period()
             usage.ensure_current_period()
-        self.assertEqual(usage.period_start, date(2025, 3, 15))
+        self.assertEqual(usage.period_start, date(2026, 3, 15))
         self.assertEqual(usage.used_this_period, 7)
 
 
@@ -156,27 +156,27 @@ class ChargeCreditsTests(TestCase):
 
     def test_charge_within_quota_increments_used(self):
         user, usage = _make_user(monthly_quota=75, used_this_period=10,
-                                 period_start=date(2025, 3, 15),
-                                 date_joined=datetime(2025, 3, 15, tzinfo=dt_timezone.utc))
-        with _patch_today(date(2025, 3, 20)):
+                                 period_start=date(2026, 3, 15),
+                                 date_joined=datetime(2026, 3, 15, tzinfo=dt_timezone.utc))
+        with _patch_today(date(2026, 3, 20)):
             charge_credits(user, 5)
         usage.refresh_from_db()
         self.assertEqual(usage.used_this_period, 15)
 
     def test_charge_exactly_remaining_succeeds(self):
         user, usage = _make_user(monthly_quota=10, used_this_period=7,
-                                 period_start=date(2025, 3, 15),
-                                 date_joined=datetime(2025, 3, 15, tzinfo=dt_timezone.utc))
-        with _patch_today(date(2025, 3, 20)):
+                                 period_start=date(2026, 3, 15),
+                                 date_joined=datetime(2026, 3, 15, tzinfo=dt_timezone.utc))
+        with _patch_today(date(2026, 3, 20)):
             charge_credits(user, 3)
         usage.refresh_from_db()
         self.assertEqual(usage.used_this_period, 10)
 
     def test_charge_over_quota_raises_and_does_not_mutate(self):
         user, usage = _make_user(monthly_quota=10, used_this_period=8,
-                                 period_start=date(2025, 3, 15),
-                                 date_joined=datetime(2025, 3, 15, tzinfo=dt_timezone.utc))
-        with _patch_today(date(2025, 3, 20)):
+                                 period_start=date(2026, 3, 15),
+                                 date_joined=datetime(2026, 3, 15, tzinfo=dt_timezone.utc))
+        with _patch_today(date(2026, 3, 20)):
             with self.assertRaises(NotEnoughCredits):
                 charge_credits(user, 5)
         usage.refresh_from_db()
@@ -186,12 +186,12 @@ class ChargeCreditsTests(TestCase):
         # User maxed out last period. After rollover, the charge should succeed
         # because used_this_period gets zeroed first.
         user, usage = _make_user(monthly_quota=10, used_this_period=10,
-                                 period_start=date(2025, 3, 15),
-                                 date_joined=datetime(2025, 3, 15, tzinfo=dt_timezone.utc))
-        with _patch_today(date(2025, 4, 15)):
+                                 period_start=date(2026, 3, 15),
+                                 date_joined=datetime(2026, 3, 15, tzinfo=dt_timezone.utc))
+        with _patch_today(date(2026, 4, 15)):
             charge_credits(user, 4)
         usage.refresh_from_db()
-        self.assertEqual(usage.period_start, date(2025, 4, 15))
+        self.assertEqual(usage.period_start, date(2026, 4, 15))
         self.assertEqual(usage.used_this_period, 4)
 
     def test_anonymous_user_raises(self):
@@ -205,9 +205,9 @@ class ChargeCreditsTests(TestCase):
 
     def test_zero_charge_succeeds_without_mutation(self):
         user, usage = _make_user(monthly_quota=10, used_this_period=5,
-                                 period_start=date(2025, 3, 15),
-                                 date_joined=datetime(2025, 3, 15, tzinfo=dt_timezone.utc))
-        with _patch_today(date(2025, 3, 20)):
+                                 period_start=date(2026, 3, 15),
+                                 date_joined=datetime(2026, 3, 15, tzinfo=dt_timezone.utc))
+        with _patch_today(date(2026, 3, 20)):
             charge_credits(user, 0)
         usage.refresh_from_db()
         self.assertEqual(usage.used_this_period, 5)

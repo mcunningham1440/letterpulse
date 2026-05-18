@@ -243,3 +243,17 @@ Run from the project root:
 - Switches `PASSWORD_HASHERS` to MD5 for speed.
 
 The session-autouse fixture in `analytics/tests/conftest.py` suppresses `analytics.signals._send_welcome_email` for every test, so no per-test setup is needed. The signal's daemon thread calls `user.refresh_from_db()` and can race with SQLite teardown. Note that this fixture is session-scoped because pytest-django does not run function-scoped autouse fixtures around `unittest.TestCase` tests.
+
+### External-boundary tests (`test_beehiiv_api.py`, `test_llm_call.py`)
+
+Both files use **hand-written inline mocks** rather than loading captured fixtures. Beehiiv calls are mocked via `aioresponses` (mocks `aiohttp.ClientSession`); the OpenAI wrapper test patches `analytics.utils.llm.AsyncOpenAI` and the `record_call` / `record_error` tracker hooks.
+
+The mocks were validated against real recordings (May 2026) — see `analytics/tests/fixtures/_record_phase2.py` for the recorder and `_scrub.py` for the identity scrubber. The recorded JSONs are **gitignored** and used only as a shape reference. To re-validate against the current live APIs (e.g. after a Beehiiv or OpenAI SDK upgrade):
+
+```bash
+# Add BEEHIIV_API_TOKEN to .env first; needs a pub with >=11 posts.
+.venv/bin/python -m analytics.tests.fixtures._record_phase2
+.venv/bin/python -m analytics.tests.fixtures._scrub
+```
+
+Diff the resulting JSONs against the shapes that the inline mocks assume. The recorder caches via per-file existence checks, so re-running is incremental — pass `--force` to overwrite.

@@ -22,3 +22,5 @@ open_worktree.sh
 .coverage
 htmlcov/
 .pytest_cache/
+
+analytics/tests/fixtures/*
