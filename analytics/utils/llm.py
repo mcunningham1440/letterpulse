@@ -1,4 +1,3 @@
-import asyncio
 import json
 import logging
 import os
@@ -7,7 +6,7 @@ from datetime import datetime
 
 from django.utils import timezone as dj_timezone
 from dotenv import load_dotenv
-from openai import AsyncOpenAI, OpenAI
+from openai import AsyncOpenAI
 
 from analytics.llm_tracker import record_call, record_error
 
@@ -72,28 +71,15 @@ async def llm_call(function_name, messages, model, reasoning_level, response_for
         kwargs["prompt_cache_retention"] = prompt_cache_retention
 
     try:
-        if asyncio.get_event_loop().is_running():
-            client = AsyncOpenAI(api_key=OPENAI_API_KEY, timeout=timeout, max_retries=2)
-            try:
-                if response_format is not None:
-                    kwargs["text_format"] = response_format
-
-                    response = await client.responses.parse(**kwargs)
-                else:
-                    response = await client.responses.create(**kwargs)
-            finally:
-                await client.close()
-        else:
-            client = OpenAI(api_key=OPENAI_API_KEY, timeout=timeout, max_retries=2)
-            try:
-                if response_format is not None:
-                    kwargs["text_format"] = response_format
-
-                    response = client.responses.parse(**kwargs)
-                else:
-                    response = client.responses.create(**kwargs)
-            finally:
-                client.close()
+        client = AsyncOpenAI(api_key=OPENAI_API_KEY, timeout=timeout, max_retries=2)
+        try:
+            if response_format is not None:
+                kwargs["text_format"] = response_format
+                response = await client.responses.parse(**kwargs)
+            else:
+                response = await client.responses.create(**kwargs)
+        finally:
+            await client.close()
     except Exception as e:
         logger.exception("llm_call failed")
         record_error(function_name, model, time.time() - start_time, e, start_ts=start_ts)

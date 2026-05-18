@@ -10,16 +10,31 @@ real SDK response shapes; tests below construct minimal stand-ins because
 the wrapper itself doesn't introspect the response beyond returning it.
 """
 
+from inspect import signature
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from pydantic import BaseModel
 
+from analytics.llm_tracker import record_call as _record_call_sig
+from analytics.llm_tracker import record_error as _record_error_sig
 from analytics.utils.llm import llm_call
 
 
 class _ExampleSchema(BaseModel):
     foo: str
+
+
+def _bind(mock_obj, real_func):
+    """
+    Bind a mock's most recent call against the real function's signature.
+    Returns a dict mapping parameter name -> value, so assertions can be
+    keyed by name and survive positional/keyword refactors of the callee.
+    """
+    args, kwargs = mock_obj.call_args
+    bound = signature(real_func).bind(*args, **kwargs)
+    bound.apply_defaults()
+    return bound.arguments
 
 
 @pytest.fixture
@@ -48,7 +63,10 @@ def mock_tracker():
 
 class StructuredOutputTests:
 
-    async def test_response_format_is_renamed_to_text_format(self, mock_async_openai):
+    async def test_response_format_kwarg_is_sent_to_sdk_as_text_format(self, mock_async_openai):
+        # The wrapper accepts `response_format=` (a Pydantic model) but the
+        # OpenAI Responses SDK expects that argument under the name
+        # `text_format`. Verify the wire-level kwarg.
         _, client, response = mock_async_openai
         result = await llm_call(
             function_name="f", messages=[{"role": "user", "content": "hi"}],
@@ -57,8 +75,6 @@ class StructuredOutputTests:
         )
         client.responses.parse.assert_awaited_once()
         kwargs = client.responses.parse.await_args.kwargs
-        # Production renames response_format -> text_format before calling
-        # the SDK; verify the wire-level kwarg.
         assert kwargs["text_format"] is _ExampleSchema
         assert "response_format" not in kwargs
         assert result is response
@@ -176,17 +192,22 @@ class KwargForwardingTests:
         assert "prompt_cache_key" not in kwargs
         assert "prompt_cache_retention" not in kwargs
 
-    async def test_timeout_passed_to_constructor(self, mock_async_openai):
+    async def test_timeout_and_api_key_passed_to_constructor(self, mock_async_openai):
         ctor, _, _ = mock_async_openai
         await llm_call(
             function_name="f", messages=[], model="m", reasoning_level="low",
             timeout=45.0,
         )
         ctor.assert_called_once()
-        assert ctor.call_args.kwargs["timeout"] == 45.0
+        ctor_kwargs = ctor.call_args.kwargs
+        assert ctor_kwargs["timeout"] == 45.0
         # max_retries=2 is hard-coded; verify it's set so future SDK upgrades
         # don't silently change behavior.
-        assert ctor.call_args.kwargs["max_retries"] == 2
+        assert ctor_kwargs["max_retries"] == 2
+        # api_key must be plumbed through (regression guard — without it,
+        # the SDK would silently fall back to env-var lookup).
+        assert "api_key" in ctor_kwargs
+        assert ctor_kwargs["api_key"]
 
 
 # -- Tracking hooks -------------------------------------------------------
@@ -204,15 +225,16 @@ class TrackingTests:
             reasoning_level="low",
         )
         rc.assert_called_once()
-        args, kwargs = rc.call_args
-        # record_call(function_name, model, messages, response, duration, ...)
-        assert args[0] == "my_fn"
-        assert args[1] == "gpt-5.4"
-        assert args[2] is msgs
-        assert args[3] is response
-        assert isinstance(args[4], float)  # duration
-        assert args[4] >= 0
-        assert "start_ts" in kwargs
+        # Bind by parameter name so positional/kwarg refactors of record_call
+        # don't silently break the assertion.
+        bound = _bind(rc, _record_call_sig)
+        assert bound["function_name"] == "my_fn"
+        assert bound["model"] == "gpt-5.4"
+        assert bound["messages"] is msgs
+        assert bound["response"] is response
+        assert isinstance(bound["duration"], float)
+        assert bound["duration"] >= 0
+        assert bound["start_ts"] is not None
 
     async def test_record_error_invoked_when_sdk_raises_then_reraises(
         self, mock_async_openai, mock_tracker
@@ -228,13 +250,12 @@ class TrackingTests:
             )
 
         re_.assert_called_once()
-        # record_error(function_name, model, duration, exception, start_ts=...)
-        args, kwargs = re_.call_args
-        assert args[0] == "my_fn"
-        assert args[1] == "gpt-5.4"
-        assert isinstance(args[2], float)
-        assert isinstance(args[3], RuntimeError)
-        assert "start_ts" in kwargs
+        bound = _bind(re_, _record_error_sig)
+        assert bound["function_name"] == "my_fn"
+        assert bound["model"] == "gpt-5.4"
+        assert isinstance(bound["duration"], float)
+        assert isinstance(bound["error"], RuntimeError)
+        assert bound["start_ts"] is not None
         # And record_call must NOT have been invoked.
         rc.assert_not_called()
 
@@ -251,6 +272,8 @@ class TrackingTests:
                 response_format=_ExampleSchema,
             )
         re_.assert_called_once()
+        bound = _bind(re_, _record_error_sig)
+        assert isinstance(bound["error"], RuntimeError)
         rc.assert_not_called()
 
 

@@ -6,7 +6,8 @@ actually returned in May 2026 — see analytics/tests/fixtures/_record_phase2.py
 to re-record against the live API if it ever drifts.
 """
 
-from datetime import datetime, timedelta, timezone as dt_timezone
+import asyncio
+from datetime import datetime, timezone as dt_timezone
 
 import aiohttp
 import pytest
@@ -77,6 +78,37 @@ def _ts_ago(seconds):
     return _ts_now() - seconds
 
 
+def _auth_header_for(mock, url, method="GET"):
+    """
+    Return the Authorization header sent for the most recent call matching
+    (method, path, query-params-as-set). aioresponses canonicalises URL
+    query order in its keys, so we compare on path + sorted query items
+    rather than the raw URL string.
+    """
+    from yarl import URL
+    target = URL(url)
+    target_path = target.path
+    target_query = sorted(target.query.items())
+    matches = []
+    for (m_method, m_url), calls in mock.requests.items():
+        if m_method != method:
+            continue
+        if m_url.path != target_path:
+            continue
+        if sorted(m_url.query.items()) != target_query:
+            continue
+        matches.extend(calls)
+    assert matches, f"No recorded request for {method} {url}"
+    return matches[-1].kwargs.get("headers", {}).get("Authorization")
+
+
+@pytest.fixture
+async def session_and_sem():
+    """Shared aiohttp session + semaphore for per-post fetch helpers."""
+    async with aiohttp.ClientSession() as session:
+        yield session, asyncio.Semaphore(1)
+
+
 # -- validate_beehiiv_api_key ----------------------------------------------
 
 class ValidateBeehiivApiKeyTests:
@@ -89,6 +121,7 @@ class ValidateBeehiivApiKeyTests:
                 {"id": "pub_b", "name": "B", "organization_name": ""},
             ]})
             ok, pubs = await validate_beehiiv_api_key(TOKEN)
+            assert _auth_header_for(m, _publications_url()) == TOKEN
         assert ok is True
         # The extractor strips every key but id/name/organization_name.
         assert pubs == [
@@ -142,6 +175,15 @@ class ValidateBeehiivApiKeyTests:
         assert msg.startswith("Network error")
         assert "boom" in msg
 
+    async def test_unexpected_exception_returns_unexpected_error(self):
+        # Covers the bare-Exception fallback (anything not aiohttp.ClientError).
+        with aioresponses() as m:
+            m.get(_publications_url(), exception=ValueError("weird"))
+            ok, msg = await validate_beehiiv_api_key(TOKEN)
+        assert ok is False
+        assert msg.startswith("Unexpected error")
+        assert "weird" in msg
+
 
 # -- fetch_subscriber_count -----------------------------------------------
 
@@ -153,6 +195,7 @@ class FetchSubscriberCountTests:
                 "data": {"id": PUB, "stats": {"active_subscriptions": 4406}}
             })
             n = await fetch_subscriber_count(TOKEN, PUB)
+            assert _auth_header_for(m, _pub_detail_url()) == TOKEN
         assert n == 4406
 
     async def test_missing_stats_returns_zero(self):
@@ -200,6 +243,7 @@ class FetchPublicationStatsTests:
                 }}
             })
             out = await fetch_publication_stats(TOKEN, PUB)
+            assert _auth_header_for(m, _pub_detail_url()) == TOKEN
         assert out == {
             "active_subscriptions": 4406,
             "average_open_rate": 51.17,
@@ -264,47 +308,40 @@ class FetchPublicationStatsTests:
 
 class FetchPostHtmlTests:
 
-    async def test_success_returns_email_content_string(self):
-        async with aiohttp.ClientSession() as session:
-            import asyncio
-            sem = asyncio.Semaphore(1)
-            with aioresponses() as m:
-                m.get(_post_html_url("post_1"), payload={
-                    "data": {"id": "post_1", "content": {"free": {
-                        "email": "<html>hello</html>"}}}
-                })
-                pid, html = await fetch_post_html(session, "post_1", sem, TOKEN, PUB)
+    async def test_success_returns_email_content_string(self, session_and_sem):
+        session, sem = session_and_sem
+        with aioresponses() as m:
+            m.get(_post_html_url("post_1"), payload={
+                "data": {"id": "post_1", "content": {"free": {
+                    "email": "<html>hello</html>"}}}
+            })
+            pid, html = await fetch_post_html(session, "post_1", sem, TOKEN, PUB)
+            assert _auth_header_for(m, _post_html_url("post_1")) == TOKEN
         assert pid == "post_1"
         assert html == "<html>hello</html>"
 
-    async def test_missing_content_chain_returns_empty_string(self):
+    async def test_missing_content_chain_returns_empty_string(self, session_and_sem):
         # The chained .get('data',{}).get('content',{}).get('free',{}).get('email','')
         # ladder defaults to empty string when any segment is missing.
-        async with aiohttp.ClientSession() as session:
-            import asyncio
-            sem = asyncio.Semaphore(1)
-            with aioresponses() as m:
-                m.get(_post_html_url("post_1"), payload={"data": {"id": "post_1"}})
-                pid, html = await fetch_post_html(session, "post_1", sem, TOKEN, PUB)
+        session, sem = session_and_sem
+        with aioresponses() as m:
+            m.get(_post_html_url("post_1"), payload={"data": {"id": "post_1"}})
+            pid, html = await fetch_post_html(session, "post_1", sem, TOKEN, PUB)
         assert pid == "post_1"
         assert html == ""
 
-    async def test_404_returns_none(self):
-        async with aiohttp.ClientSession() as session:
-            import asyncio
-            sem = asyncio.Semaphore(1)
-            with aioresponses() as m:
-                m.get(_post_html_url("post_x"), status=404, payload={})
-                pid, html = await fetch_post_html(session, "post_x", sem, TOKEN, PUB)
+    async def test_404_returns_none(self, session_and_sem):
+        session, sem = session_and_sem
+        with aioresponses() as m:
+            m.get(_post_html_url("post_x"), status=404, payload={})
+            pid, html = await fetch_post_html(session, "post_x", sem, TOKEN, PUB)
         assert pid == "post_x"
         assert html is None
 
-    async def test_missing_token_short_circuits_to_none(self):
-        async with aiohttp.ClientSession() as session:
-            import asyncio
-            sem = asyncio.Semaphore(1)
-            with aioresponses():  # no mock — should not be called
-                pid, html = await fetch_post_html(session, "post_1", sem, "", PUB)
+    async def test_missing_token_short_circuits_to_none(self, session_and_sem):
+        session, sem = session_and_sem
+        with aioresponses():  # no mock — should not be called
+            pid, html = await fetch_post_html(session, "post_1", sem, "", PUB)
         assert pid == "post_1"
         assert html is None
 
@@ -313,71 +350,71 @@ class FetchPostHtmlTests:
 
 class FetchPostClicksTests:
 
-    async def test_extracts_url_to_unique_clicks_dict(self):
-        async with aiohttp.ClientSession() as session:
-            import asyncio
-            sem = asyncio.Semaphore(1)
-            with aioresponses() as m:
-                m.get(_post_stats_url("post_1"), payload={
-                    "data": {"id": "post_1", "stats": {"clicks": [
-                        {"url": "https://x.example/a", "email": {"unique_clicks": 5}},
-                        {"url": "https://x.example/b", "email": {"unique_clicks": 12}},
-                    ]}}
-                })
-                pid, clicks = await fetch_post_clicks(session, "post_1", sem, TOKEN, PUB)
+    async def test_extracts_url_to_unique_clicks_dict(self, session_and_sem):
+        session, sem = session_and_sem
+        with aioresponses() as m:
+            m.get(_post_stats_url("post_1"), payload={
+                "data": {"id": "post_1", "stats": {"clicks": [
+                    {"url": "https://x.example/a", "email": {"unique_clicks": 5}},
+                    {"url": "https://x.example/b", "email": {"unique_clicks": 12}},
+                ]}}
+            })
+            pid, clicks = await fetch_post_clicks(session, "post_1", sem, TOKEN, PUB)
+            assert _auth_header_for(m, _post_stats_url("post_1")) == TOKEN
         assert pid == "post_1"
         assert clicks == {"https://x.example/a": 5, "https://x.example/b": 12}
 
-    async def test_dedupes_same_url_taking_max_clicks(self):
-        async with aiohttp.ClientSession() as session:
-            import asyncio
-            sem = asyncio.Semaphore(1)
-            with aioresponses() as m:
-                m.get(_post_stats_url("post_1"), payload={
-                    "data": {"stats": {"clicks": [
-                        {"url": "https://x/dup", "email": {"unique_clicks": 3}},
-                        {"url": "https://x/dup", "email": {"unique_clicks": 8}},
-                        {"url": "https://x/dup", "email": {"unique_clicks": 1}},
-                    ]}}
-                })
-                _, clicks = await fetch_post_clicks(session, "post_1", sem, TOKEN, PUB)
+    async def test_dedupes_same_url_taking_max_clicks(self, session_and_sem):
+        session, sem = session_and_sem
+        with aioresponses() as m:
+            m.get(_post_stats_url("post_1"), payload={
+                "data": {"stats": {"clicks": [
+                    {"url": "https://x/dup", "email": {"unique_clicks": 3}},
+                    {"url": "https://x/dup", "email": {"unique_clicks": 8}},
+                    {"url": "https://x/dup", "email": {"unique_clicks": 1}},
+                ]}}
+            })
+            _, clicks = await fetch_post_clicks(session, "post_1", sem, TOKEN, PUB)
         assert clicks == {"https://x/dup": 8}
 
-    async def test_filters_zero_click_urls(self):
-        async with aiohttp.ClientSession() as session:
-            import asyncio
-            sem = asyncio.Semaphore(1)
-            with aioresponses() as m:
-                m.get(_post_stats_url("post_1"), payload={
-                    "data": {"stats": {"clicks": [
-                        {"url": "https://x/zero", "email": {"unique_clicks": 0}},
-                        {"url": "https://x/one", "email": {"unique_clicks": 1}},
-                    ]}}
-                })
-                _, clicks = await fetch_post_clicks(session, "post_1", sem, TOKEN, PUB)
+    async def test_filters_zero_click_urls(self, session_and_sem):
+        session, sem = session_and_sem
+        with aioresponses() as m:
+            m.get(_post_stats_url("post_1"), payload={
+                "data": {"stats": {"clicks": [
+                    {"url": "https://x/zero", "email": {"unique_clicks": 0}},
+                    {"url": "https://x/one", "email": {"unique_clicks": 1}},
+                ]}}
+            })
+            _, clicks = await fetch_post_clicks(session, "post_1", sem, TOKEN, PUB)
         assert clicks == {"https://x/one": 1}
 
-    async def test_filters_beehiiv_homepage_url(self):
-        async with aiohttp.ClientSession() as session:
-            import asyncio
-            sem = asyncio.Semaphore(1)
-            with aioresponses() as m:
-                m.get(_post_stats_url("post_1"), payload={
-                    "data": {"stats": {"clicks": [
-                        {"url": "https://www.beehiiv.com/", "email": {"unique_clicks": 50}},
-                        {"url": "https://x.example/keep", "email": {"unique_clicks": 1}},
-                    ]}}
-                })
-                _, clicks = await fetch_post_clicks(session, "post_1", sem, TOKEN, PUB)
+    async def test_filters_beehiiv_homepage_url(self, session_and_sem):
+        session, sem = session_and_sem
+        with aioresponses() as m:
+            m.get(_post_stats_url("post_1"), payload={
+                "data": {"stats": {"clicks": [
+                    {"url": "https://www.beehiiv.com/", "email": {"unique_clicks": 50}},
+                    {"url": "https://x.example/keep", "email": {"unique_clicks": 1}},
+                ]}}
+            })
+            _, clicks = await fetch_post_clicks(session, "post_1", sem, TOKEN, PUB)
         assert clicks == {"https://x.example/keep": 1}
 
-    async def test_404_returns_none(self):
-        async with aiohttp.ClientSession() as session:
-            import asyncio
-            sem = asyncio.Semaphore(1)
-            with aioresponses() as m:
-                m.get(_post_stats_url("post_x"), status=404, payload={})
-                _, clicks = await fetch_post_clicks(session, "post_x", sem, TOKEN, PUB)
+    async def test_404_returns_none(self, session_and_sem):
+        session, sem = session_and_sem
+        with aioresponses() as m:
+            m.get(_post_stats_url("post_x"), status=404, payload={})
+            _, clicks = await fetch_post_clicks(session, "post_x", sem, TOKEN, PUB)
+        assert clicks is None
+
+    async def test_missing_token_short_circuits_to_none(self, session_and_sem):
+        # Parity with fetch_post_html: an empty token must short-circuit
+        # without ever issuing the request.
+        session, sem = session_and_sem
+        with aioresponses():  # no mock — should not be called
+            pid, clicks = await fetch_post_clicks(session, "post_1", sem, "", PUB)
+        assert pid == "post_1"
         assert clicks is None
 
 
@@ -396,6 +433,7 @@ class FetchAllPostsTests:
             for p in (2, 3, 4, 5):
                 m.get(_all_posts_url(p), payload={"data": []})
             posts = await fetch_all_posts(TOKEN, PUB)
+            assert _auth_header_for(m, _all_posts_url(1)) == TOKEN
         # Stops on page 1's short result; pages 2-5 also fetched but contribute nothing.
         assert [p["id"] for p in posts] == ["p0", "p1", "p2"]
 
@@ -439,6 +477,8 @@ class IncrementalFetchPostsTests:
                 "data": [_make_post("new_b"), _make_post("known_x")]
             })
             posts = await incremental_fetch_posts(TOKEN, PUB, existing_post_ids={"known_x"})
+            assert _auth_header_for(m, _incremental_url(1, "publish_date")) == TOKEN
+            assert _auth_header_for(m, _incremental_url(1, "created")) == TOKEN
         ids = sorted(p["id"] for p in posts)
         assert ids == ["known_x", "new_a", "new_b"]
 
@@ -490,18 +530,24 @@ class IncrementalFetchPostsTests:
         ids = sorted(p["id"] for p in posts)
         assert ids == ["draft_a", "known_x"]
 
-    async def test_deduplicates_across_tracks(self):
-        # Same post id appears in both tracks; final result has one copy.
+    async def test_deduplicates_across_tracks_track_b_wins(self):
+        # Same post id appears in both tracks. The merge does
+        # `by_id[pid] = post` over `track_a + track_b`, so Track B's copy
+        # ends up in the final result. This pins that merge semantic — if
+        # someone later swaps the order, this test catches it.
         with aioresponses() as m:
             m.get(_incremental_url(1, "publish_date"), payload={
-                "data": [_make_post("shared", publish_date=_ts_ago(3600))]
+                "data": [_make_post("shared", publish_date=_ts_ago(3600),
+                                    title="from-track-a")]
             })
             m.get(_incremental_url(2, "publish_date"), payload={"data": []})
             m.get(_incremental_url(1, "created"), payload={
-                "data": [_make_post("shared")]
+                "data": [_make_post("shared", title="from-track-b")]
             })
             posts = await incremental_fetch_posts(TOKEN, PUB, existing_post_ids=set())
-        assert [p["id"] for p in posts] == ["shared"]
+        assert len(posts) == 1
+        assert posts[0]["id"] == "shared"
+        assert posts[0]["title"] == "from-track-b"
 
     async def test_short_page_stops_track(self):
         # Page returns < PAGE_SIZE posts -> stop.
@@ -516,3 +562,18 @@ class IncrementalFetchPostsTests:
             posts = await incremental_fetch_posts(TOKEN, PUB, existing_post_ids=set())
         ids = sorted(p["id"] for p in posts)
         assert ids == ["a0", "a1", "a2", "b0", "b1"]
+
+    async def test_non_200_page_aborts_track_without_raising(self):
+        # _fetch_incremental_track converts non-200 mid-pagination into a
+        # None page result, which breaks the loop and cancels pending fetches.
+        # The wrapper still returns whatever the other track produced.
+        with aioresponses() as m:
+            # Track A page 1 errors -> track A yields nothing.
+            m.get(_incremental_url(1, "publish_date"), status=500, payload={})
+            # Track B returns one new post then empty -> contributes normally.
+            m.get(_incremental_url(1, "created"), payload={
+                "data": [_make_post("only_b")]
+            })
+            m.get(_incremental_url(2, "created"), payload={"data": []})
+            posts = await incremental_fetch_posts(TOKEN, PUB, existing_post_ids=set())
+        assert [p["id"] for p in posts] == ["only_b"]
