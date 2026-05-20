@@ -13,6 +13,7 @@ import os
 # developer chooses to set them, but avoids requiring them.
 os.environ.setdefault("SECRET_KEY", "test-secret-key-not-for-production")
 os.environ.setdefault("OPENAI_API_KEY", "test-openai-key")
+os.environ.setdefault("ANTHROPIC_API_KEY", "test-anthropic-key")
 os.environ.setdefault("DATABASE_SECRET", '{"username": "test", "password": "test"}')
 os.environ.setdefault("DB_HOST", "localhost")
 os.environ.setdefault("ENVIRONMENT", "local")

@@ -318,4 +318,33 @@ LLM_PRICING = {
         'cached_input_per_million': 0.075,
         'output_per_million': 4.50,
     },
+    'claude-sonnet-4-6': {
+        'input_per_million': 3.00,
+        'cached_input_per_million': 0.30,
+        'cache_write_per_million': 3.75,
+        'output_per_million': 15.00,
+    },
+    'claude-haiku-4-5': {
+        'input_per_million': 1.00,
+        'cached_input_per_million': 0.10,
+        'cache_write_per_million': 1.25,
+        'output_per_million': 5.00,
+    },
+}
+
+ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
+
+try:
+    ANTHROPIC_API_KEY = json.loads(ANTHROPIC_API_KEY)["ANTHROPIC_API_KEY"]
+except (json.JSONDecodeError, KeyError, TypeError):
+    pass  # Already a plain string, use as-is
+
+# A model NOT in this dict gets no fallback (raises on the
+# first retryable failure). Keep the mapping explicit so a typo in a model
+# name doesn't silently disable the safety net.
+LLM_FALLBACK_MAP = {
+    "gpt-5.4": "claude-sonnet-4-6",
+    "claude-sonnet-4-6": "gpt-5.4",
+    "gpt-5.4-mini": "claude-haiku-4-5",
+    "claude-haiku-4-5": "gpt-5.4-mini",
 }

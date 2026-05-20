@@ -150,8 +150,7 @@ async def _run_niche_analysis_llm(user_prompt):
         response_format=NicheAnalysisResult,
         timeout=90.0,
     )
-    parsed = response.output[-1].content[0].parsed
-    return parsed
+    return response.output_parsed
 
 
 def run_niche_analysis_background(task):
