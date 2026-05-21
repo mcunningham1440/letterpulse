@@ -1,9 +1,5 @@
 ## LLM/AI agent instructions
 
-Any time you make a change to the code, determine whether it makes any information in this file obsolete. If so, update it; otherwise, state that no update to claude.md was necessary. This should ALWAYS be the last thing you do when editing the code. Keep your additions to claude.md as succinct as possible, avoiding unnecessary details. Make sure the file stays below 200 lines. If it exceeds 150, warn the user that it is getting too long and should probably be shortened.
-
-Whenever the actual repo structure changes (files/directories added, removed, renamed, or moved), also update the `### Project layout` tree in `readme.md` so it stays accurate.
-
 ### Django admin
 
 - **Always register new models in `analytics/admin.py`** with an `@admin.register` decorator and a `ModelAdmin` class that includes sensible `list_display`, `list_filter`, and `ordering` fields.
