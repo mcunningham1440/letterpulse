@@ -85,7 +85,11 @@ app/
 │   │   └── feedback.py              #   feedback submission
 │   ├── utils/                       # business logic, importable from views
 │   │   ├── beehiiv_api.py           #   Beehiiv HTTP client
-│   │   ├── llm.py                   #   OpenAI Responses API wrapper
+│   │   ├── llm.py                   #   multi-provider llm_call orchestrator (primary -> fallback)
+│   │   ├── llm_providers/           #   per-provider adapters (NormalizedResponse, ProviderError)
+│   │   │   ├── base.py              #     normalized response + usage types, provider-name dispatch
+│   │   │   ├── openai_provider.py   #     OpenAI Responses API adapter
+│   │   │   └── anthropic_provider.py #    Anthropic Messages API adapter (canonical-format translator)
 │   │   ├── credits.py               #   billing / quota
 │   │   ├── posts.py, sections.py,   #   post fetching + processing
 │   │   │   links.py, text.py
