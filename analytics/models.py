@@ -320,8 +320,13 @@ class ExecutionLog(models.Model):
 
 class LLMCall(models.Model):
     """
-    Per-call record for every OpenAI Responses API invocation made through
+    Per-call record for every LLM invocation made through
     analytics.utils.llm_call. Written asynchronously via the LogSink queue.
+
+    `provider` distinguishes the two backends ('openai' / 'anthropic'). When
+    a call fell back from the other provider after a retryable failure, the
+    primary's failure is in its own row (success=False) and the successful
+    fallback row carries `additional_info['fell_back_from']`.
     """
 
     ts_start = models.DateTimeField(help_text="When the LLM call was initiated")
@@ -341,7 +346,9 @@ class LLMCall(models.Model):
     )
 
     function_name = models.CharField(max_length=100, help_text="Logical function the call is for (e.g. 'content_finder')")
-    model = models.CharField(max_length=100, help_text="OpenAI model name")
+    model = models.CharField(max_length=100, help_text="Model id (e.g. 'gpt-5.4', 'claude-sonnet-4-6')")
+    provider = models.CharField(max_length=20, blank=True, default='', db_index=True,
+                                help_text="LLM provider ('openai' or 'anthropic'); empty for pre-multiprovider rows")
 
     input_tokens_cached = models.PositiveIntegerField(default=0)
     input_tokens_new = models.PositiveIntegerField(default=0)

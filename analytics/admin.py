@@ -82,17 +82,17 @@ class ExecutionLogAdmin(admin.ModelAdmin):
 @admin.register(LLMCall)
 class LLMCallAdmin(admin.ModelAdmin):
     list_display = (
-        'ts_start', 'function_name', 'model', 'success', 'duration_display',
+        'ts_start', 'function_name', 'provider', 'model', 'success', 'duration_display',
         'user', 'publication', 'task_kind',
         'input_tokens_new', 'input_tokens_cached',
         'output_tokens_response', 'output_tokens_reasoning',
         'error_type',
     )
-    list_filter = ('function_name', 'model', 'task_kind', 'success', 'ts_start')
+    list_filter = ('provider', 'function_name', 'model', 'task_kind', 'success', 'ts_start')
     search_fields = ('function_name', 'model', 'task_id', 'error_type', 'error_message', 'user__email')
     ordering = ('-ts_start',)
     readonly_fields = (
-        'ts_start', 'ts_end', 'user', 'publication', 'function_name', 'model',
+        'ts_start', 'ts_end', 'user', 'publication', 'function_name', 'provider', 'model',
         'input_tokens_cached', 'input_tokens_new',
         'output_tokens_reasoning', 'output_tokens_response',
         'success', 'error_type', 'error_message',

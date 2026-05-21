@@ -375,17 +375,18 @@ Newsletter HTML:
     for attempt in range(1, max_retries + 2):
         response = await llm_call("process_post_links", messages, "gpt-5.4-mini", "low",
                                    response_format=AllLinkDescriptions, user=user)
-        parsed = response.output[-1].content[0].parsed
-        if len(parsed.links) == n_links:
+        parsed = response.output_parsed
+        got = len(parsed.links) if parsed is not None else 'no parsed output'
+        if parsed is not None and len(parsed.links) == n_links:
             break
         if attempt <= max_retries:
             logger.warning(
-                f"[{post.title}] Expected {n_links} descriptions, got {len(parsed.links)} — "
+                f"[{post.title}] Expected {n_links} descriptions, got {got} — "
                 f"retrying (attempt {attempt}/{max_retries})"
             )
         else:
             raise ValueError(
-                f"[{post.title}] Expected {n_links} descriptions, got {len(parsed.links)} "
+                f"[{post.title}] Expected {n_links} descriptions, got {got} "
                 f"after {max_retries} retries"
             )
 

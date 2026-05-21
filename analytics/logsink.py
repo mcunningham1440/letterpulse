@@ -193,6 +193,7 @@ class LogSink:
                         publication_id=entry.get('publication_id'),
                         function_name=entry.get('function_name', 'unknown')[:100],
                         model=entry.get('model', '')[:100],
+                        provider=entry.get('provider', '')[:20],
                         input_tokens_cached=entry.get('input_tokens_cached', 0),
                         input_tokens_new=entry.get('input_tokens_new', 0),
                         output_tokens_reasoning=entry.get('output_tokens_reasoning', 0),

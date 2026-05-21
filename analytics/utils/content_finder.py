@@ -2,7 +2,6 @@ import asyncio
 import hashlib
 import json
 import logging
-import warnings as _warnings
 from datetime import date, datetime, timedelta
 from typing import List
 
@@ -176,55 +175,6 @@ def build_all_sections_user_prompt(sections, max_links=60, max_url_len=75):
     return "\n".join(blocks)
 
 
-def _serialize_response_output(response):
-    """Serialize response.output items to JSON-safe dicts so they can be appended
-    to a growing input message list on subsequent LLM calls. Each successive agent
-    (plan → dispatch → search) carries forward the full conversation verbatim.
-
-    responses.parse() returns ParsedResponseOutputText content items that carry a
-    SDK-local `parsed` field alongside `text`. The API input schema doesn't accept
-    it and serializing it against the ResponseOutputText|Refusal union triggers
-    noisy Pydantic warnings, so we suppress those warnings during the dump and
-    strip `parsed` from each content item before returning.
-    """
-    serialized = []
-    for item in response.output:
-        try:
-            with _warnings.catch_warnings():
-                _warnings.filterwarnings(
-                    'ignore',
-                    message=r'Pydantic serializer warnings:',
-                    category=UserWarning,
-                )
-                data = item.model_dump(mode='json', exclude_none=True)
-        except AttributeError:
-            data = dict(item)
-
-        for content_piece in (data.get('content') or []):
-            if isinstance(content_piece, dict):
-                content_piece.pop('parsed', None)
-
-        serialized.append(data)
-    return serialized
-
-
-def _extract_plan_text(response):
-    text = ""
-    try:
-        text = response.output_text or ""
-    except AttributeError:
-        pass
-    if text:
-        return text
-    for item in response.output:
-        if getattr(item, "type", None) == "message":
-            for part in getattr(item, "content", []) or []:
-                t = getattr(part, "text", None)
-                if t:
-                    text += t
-    return text
-
-
 async def run_plan_stage(task, sections):
     """Stage 1: single LLM call that sees all sections and drafts a search plan.
 
@@ -254,9 +204,8 @@ async def run_plan_stage(task, sections):
         timeout=90.0,
     )
 
-    plan_text = _extract_plan_text(response)
-    plan_messages = messages + _serialize_response_output(response)
-    return plan_text, plan_messages
+    plan_messages = messages + response.output_items
+    return response.output_text, plan_messages
 
 
 async def run_dispatch_stage(task):
@@ -285,15 +234,13 @@ async def run_dispatch_stage(task):
         timeout=60.0,
     )
 
-    dispatch_sections = []
-    try:
-        parsed = response.output[-1].content[0].parsed
-        dispatch_sections = list(parsed.sections)
-    except (AttributeError, IndexError):
-        dispatch_sections = []
-
+    parsed = response.output_parsed
+    # Soft fallback: a None/empty parsed output completes the pipeline with
+    # zero search agents rather than raising — same behavior as the previous
+    # try/except block. Flagged.
+    dispatch_sections = list(parsed.sections) if parsed is not None else []
     dispatch_sections = dispatch_sections[:settings.CONTENT_FINDER_DISPATCH_MAX_SECTIONS]
-    dispatch_messages = messages + _serialize_response_output(response)
+    dispatch_messages = messages + response.output_items
     return dispatch_sections, dispatch_messages
 
 
@@ -337,16 +284,21 @@ async def run_search_agent(section_name, dispatch_messages, historical_urls, tas
             timeout=45.0,
         )
 
-        # Carry the assistant output (including any reasoning items) forward.
-        messages = messages + _serialize_response_output(response)
+        # Carry the assistant output (incl. any reasoning items) forward.
+        messages = messages + response.output_items
 
-        tool_calls = [item for item in response.output if item.type == "function_call"]
-        if not tool_calls:
+        if not response.tool_calls:
             break
 
-        for call in tool_calls:
-            args = json.loads(call.arguments)
-            queries = args["queries"]
+        for call in response.tool_calls:
+            try:
+                args = json.loads(call.get('arguments_json') or '{}')
+            except json.JSONDecodeError:
+                # Soft fallback: skip malformed tool call rather than crash.
+                # Flagged — would mean the model produced invalid JSON for a
+                # strict-schema tool.
+                args = {}
+            queries = args.get("queries") or []
             domains = args.get("domains") or None
             max_days_ago = args.get("max_days_ago") or None
 
@@ -356,7 +308,7 @@ async def run_search_agent(section_name, dispatch_messages, historical_urls, tas
             )
             messages.append({
                 "type": "function_call_output",
-                "call_id": call.call_id,
+                "call_id": call.get('call_id', ''),
                 "output": result,
             })
 
@@ -376,8 +328,8 @@ async def run_search_agent(section_name, dispatch_messages, historical_urls, tas
         timeout=60.0,
     )
 
-    parsed = response.output[-1].content[0].parsed
-    links = [link.model_dump() for link in parsed.links]
+    parsed = response.output_parsed
+    links = [link.model_dump() for link in parsed.links] if parsed is not None else []
 
     return (section_name, links)
 

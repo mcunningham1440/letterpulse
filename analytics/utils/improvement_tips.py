@@ -205,7 +205,7 @@ async def generate_improvement_tips_html(post, user, publication, beehiiv_token,
         response_format=AllImprovementTips,
         user=user,
     )
-    tips = response.output[-1].content[0].parsed
+    tips = response.output_parsed
 
     # --- 5) Build two-column annotated HTML ---
     tip_type_to_header = {

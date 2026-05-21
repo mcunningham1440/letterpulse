@@ -17,7 +17,7 @@ from .background import (
     spawn_background,
 )
 
-from .llm import OPENAI_API_KEY, llm_call
+from .llm import llm_call
 
 from .text import html_to_text_with_links, truncate_url
 

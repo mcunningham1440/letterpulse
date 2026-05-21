@@ -1,294 +1,164 @@
 """
-Phase 2 tests for analytics/utils/llm.py — the OpenAI Responses API wrapper.
+Tests for analytics/utils/llm.py — the multi-provider orchestrator.
 
-`AsyncOpenAI` is mocked at the class level so no live calls are made. Tests
-cover the request shape (kwarg plumbing), the structured-output mapping
-(response_format -> text_format), and the success / error tracking hooks.
-
-The captured fixtures in analytics/tests/fixtures/openai_*.json confirm the
-real SDK response shapes; tests below construct minimal stand-ins because
-the wrapper itself doesn't introspect the response beyond returning it.
+These tests stub out the underlying providers at the orchestrator boundary
+(`get_provider`) so we exercise dispatch + tracking without touching real
+SDKs. Per-provider tests live in test_openai_provider.py and
+test_anthropic_provider.py; fallback orchestration lives in
+test_provider_fallback.py.
 """
 
-from inspect import signature
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from pydantic import BaseModel
 
-from analytics.llm_tracker import record_call as _record_call_sig
-from analytics.llm_tracker import record_error as _record_error_sig
 from analytics.utils.llm import llm_call
+from analytics.utils.llm_providers.base import (
+    NormalizedResponse,
+    NormalizedUsage,
+    provider_name_for,
+)
 
 
-class _ExampleSchema(BaseModel):
-    foo: str
+def _make_normalized(provider="openai", model="gpt-5.4"):
+    """A NormalizedResponse with minimal usage so the tracker doesn't choke."""
+    return NormalizedResponse(
+        output_parsed=None,
+        output_text="ok",
+        output_items=[],
+        tool_calls=[],
+        usage=NormalizedUsage(),
+        id="resp_1",
+        provider=provider,
+        model=model,
+        raw=None,
+    )
 
 
-def _bind(mock_obj, real_func):
-    """
-    Bind a mock's most recent call against the real function's signature.
-    Returns a dict mapping parameter name -> value, so assertions can be
-    keyed by name and survive positional/keyword refactors of the callee.
-    """
-    args, kwargs = mock_obj.call_args
-    bound = signature(real_func).bind(*args, **kwargs)
-    bound.apply_defaults()
-    return bound.arguments
-
-
-@pytest.fixture
-def mock_async_openai():
-    """Patch AsyncOpenAI. Yields (constructor_mock, client_mock, response_sentinel)."""
-    with patch("analytics.utils.llm.AsyncOpenAI") as ctor:
-        client = MagicMock(name="AsyncOpenAIClient")
-        ctor.return_value = client
-        response = MagicMock(name="OpenAIResponse")
-        client.responses.parse = AsyncMock(return_value=response)
-        client.responses.create = AsyncMock(return_value=response)
-        client.close = AsyncMock()
-        yield ctor, client, response
+def _provider_with_make_call(name, response, api_key_setting):
+    """Build a stand-in Provider record whose make_call returns `response`."""
+    p = MagicMock(name=f"{name}Provider")
+    p.name = name
+    p.api_key_setting = api_key_setting
+    p.make_call = AsyncMock(return_value=response)
+    return p
 
 
 @pytest.fixture(autouse=True)
-def mock_tracker():
-    """Stub record_call / record_error so the wrapper's logging side effects
-    don't touch the DB through the logsink queue."""
+def _stub_tracker():
+    """Tracker writes go to a queue that touches the DB. Stub them out so
+    these tests stay hermetic."""
     with patch("analytics.utils.llm.record_call") as rc, \
          patch("analytics.utils.llm.record_error") as re_:
         yield rc, re_
 
 
-# -- Structured-output path -----------------------------------------------
+@pytest.fixture
+def _seed_keys():
+    """Seed the orchestrator's API key cache so _get_api_key short-circuits
+    instead of reading os.environ / .env on every test."""
+    from analytics.utils import llm as llm_mod
+    llm_mod._API_KEY_CACHE["OPENAI_API_KEY"] = "test-openai"
+    llm_mod._API_KEY_CACHE["ANTHROPIC_API_KEY"] = "test-anthropic"
+    yield
+    llm_mod._API_KEY_CACHE.clear()
 
-class StructuredOutputTests:
 
-    async def test_response_format_kwarg_is_sent_to_sdk_as_text_format(self, mock_async_openai):
-        # The wrapper accepts `response_format=` (a Pydantic model) but the
-        # OpenAI Responses SDK expects that argument under the name
-        # `text_format`. Verify the wire-level kwarg.
-        _, client, response = mock_async_openai
-        result = await llm_call(
-            function_name="f", messages=[{"role": "user", "content": "hi"}],
-            model="gpt-5.4", reasoning_level="low",
-            response_format=_ExampleSchema,
-        )
-        client.responses.parse.assert_awaited_once()
-        kwargs = client.responses.parse.await_args.kwargs
-        assert kwargs["text_format"] is _ExampleSchema
-        assert "response_format" not in kwargs
+# -- Provider dispatch by model name -------------------------------------
+
+class ProviderDispatchTests:
+
+    def test_gpt_prefix_routes_to_openai(self):
+        assert provider_name_for("gpt-5.4") == "openai"
+        assert provider_name_for("gpt-5.4-mini") == "openai"
+
+    def test_claude_prefix_routes_to_anthropic(self):
+        assert provider_name_for("claude-sonnet-4-6") == "anthropic"
+        assert provider_name_for("claude-haiku-4-5") == "anthropic"
+
+    def test_unknown_prefix_raises_value_error(self):
+        with pytest.raises(ValueError):
+            provider_name_for("llama-3")
+
+    async def test_gpt_model_invokes_openai_provider(self, _seed_keys):
+        response = _make_normalized(provider="openai", model="gpt-5.4")
+        openai_p = _provider_with_make_call("openai", response, "OPENAI_API_KEY")
+
+        with patch("analytics.utils.llm.get_provider", return_value=openai_p):
+            result = await llm_call(
+                "f", [{"role": "user", "content": "x"}], "gpt-5.4", "low",
+            )
+        openai_p.make_call.assert_awaited_once()
+        assert openai_p.make_call.await_args.kwargs["model"] == "gpt-5.4"
         assert result is response
 
-    async def test_create_is_not_called_when_response_format_provided(self, mock_async_openai):
-        _, client, _ = mock_async_openai
-        await llm_call(
-            function_name="f", messages=[], model="m", reasoning_level="low",
-            response_format=_ExampleSchema,
-        )
-        client.responses.create.assert_not_awaited()
+    async def test_claude_model_invokes_anthropic_provider(self, _seed_keys):
+        response = _make_normalized(provider="anthropic", model="claude-sonnet-4-6")
+        anthropic_p = _provider_with_make_call("anthropic", response, "ANTHROPIC_API_KEY")
 
-
-# -- Free-form path -------------------------------------------------------
-
-class FreeFormTests:
-
-    async def test_no_response_format_calls_responses_create(self, mock_async_openai):
-        _, client, response = mock_async_openai
-        result = await llm_call(
-            function_name="f", messages=[], model="m", reasoning_level="low",
-        )
-        client.responses.create.assert_awaited_once()
-        kwargs = client.responses.create.await_args.kwargs
-        assert "text_format" not in kwargs
-        assert "response_format" not in kwargs
+        with patch("analytics.utils.llm.get_provider", return_value=anthropic_p):
+            result = await llm_call(
+                "f", [{"role": "user", "content": "x"}], "claude-sonnet-4-6", "low",
+            )
+        anthropic_p.make_call.assert_awaited_once()
+        assert anthropic_p.make_call.await_args.kwargs["model"] == "claude-sonnet-4-6"
         assert result is response
 
-    async def test_parse_not_called_in_free_form_path(self, mock_async_openai):
-        _, client, _ = mock_async_openai
-        await llm_call(function_name="f", messages=[], model="m", reasoning_level="low")
-        client.responses.parse.assert_not_awaited()
 
+# -- Tracking integration -------------------------------------------------
 
-# -- Kwarg forwarding -----------------------------------------------------
+class TrackingHookTests:
 
-class KwargForwardingTests:
-
-    async def test_model_and_messages_and_reasoning_forwarded(self, mock_async_openai):
-        _, client, _ = mock_async_openai
-        msgs = [{"role": "user", "content": "hi"}]
-        await llm_call(
-            function_name="f", messages=msgs, model="gpt-5.4-mini",
-            reasoning_level="medium",
-        )
-        kwargs = client.responses.create.await_args.kwargs
-        assert kwargs["model"] == "gpt-5.4-mini"
-        assert kwargs["input"] is msgs  # messages -> input rename
-        # reasoning_level is wrapped in {"effort": ...}
-        assert kwargs["reasoning"] == {"effort": "medium"}
-
-    async def test_tools_and_tool_choice_forwarded(self, mock_async_openai):
-        _, client, _ = mock_async_openai
-        tools = [{"type": "function", "name": "web_search"}]
-        await llm_call(
-            function_name="f", messages=[], model="m", reasoning_level="low",
-            tools=tools, tool_choice="required",
-        )
-        kwargs = client.responses.create.await_args.kwargs
-        assert kwargs["tools"] is tools
-        assert kwargs["tool_choice"] == "required"
-
-    async def test_tools_absent_when_not_provided(self, mock_async_openai):
-        _, client, _ = mock_async_openai
-        await llm_call(function_name="f", messages=[], model="m", reasoning_level="low")
-        kwargs = client.responses.create.await_args.kwargs
-        assert "tools" not in kwargs
-        assert "tool_choice" not in kwargs
-
-    async def test_store_true_forwarded(self, mock_async_openai):
-        _, client, _ = mock_async_openai
-        await llm_call(
-            function_name="f", messages=[], model="m", reasoning_level="low",
-            store=True,
-        )
-        kwargs = client.responses.create.await_args.kwargs
-        assert kwargs["store"] is True
-
-    async def test_store_false_omitted_from_kwargs(self, mock_async_openai):
-        # Production only adds `store` when truthy; default False is dropped.
-        _, client, _ = mock_async_openai
-        await llm_call(function_name="f", messages=[], model="m", reasoning_level="low")
-        kwargs = client.responses.create.await_args.kwargs
-        assert "store" not in kwargs
-
-    async def test_previous_response_id_forwarded(self, mock_async_openai):
-        _, client, _ = mock_async_openai
-        await llm_call(
-            function_name="f", messages=[], model="m", reasoning_level="low",
-            previous_response_id="resp_xyz",
-        )
-        kwargs = client.responses.create.await_args.kwargs
-        assert kwargs["previous_response_id"] == "resp_xyz"
-
-    async def test_previous_response_id_omitted_when_none(self, mock_async_openai):
-        _, client, _ = mock_async_openai
-        await llm_call(function_name="f", messages=[], model="m", reasoning_level="low")
-        kwargs = client.responses.create.await_args.kwargs
-        assert "previous_response_id" not in kwargs
-
-    async def test_prompt_cache_key_and_retention_forwarded(self, mock_async_openai):
-        _, client, _ = mock_async_openai
-        await llm_call(
-            function_name="f", messages=[], model="m", reasoning_level="low",
-            prompt_cache_key="cf_plan_abc", prompt_cache_retention="24h",
-        )
-        kwargs = client.responses.create.await_args.kwargs
-        assert kwargs["prompt_cache_key"] == "cf_plan_abc"
-        assert kwargs["prompt_cache_retention"] == "24h"
-
-    async def test_cache_kwargs_omitted_when_none(self, mock_async_openai):
-        _, client, _ = mock_async_openai
-        await llm_call(function_name="f", messages=[], model="m", reasoning_level="low")
-        kwargs = client.responses.create.await_args.kwargs
-        assert "prompt_cache_key" not in kwargs
-        assert "prompt_cache_retention" not in kwargs
-
-    async def test_timeout_and_api_key_passed_to_constructor(self, mock_async_openai):
-        ctor, _, _ = mock_async_openai
-        await llm_call(
-            function_name="f", messages=[], model="m", reasoning_level="low",
-            timeout=45.0,
-        )
-        ctor.assert_called_once()
-        ctor_kwargs = ctor.call_args.kwargs
-        assert ctor_kwargs["timeout"] == 45.0
-        # max_retries=2 is hard-coded; verify it's set so future SDK upgrades
-        # don't silently change behavior.
-        assert ctor_kwargs["max_retries"] == 2
-        # api_key must be plumbed through (regression guard — without it,
-        # the SDK would silently fall back to env-var lookup).
-        assert "api_key" in ctor_kwargs
-        assert ctor_kwargs["api_key"]
-
-
-# -- Tracking hooks -------------------------------------------------------
-
-class TrackingTests:
-
-    async def test_record_call_invoked_exactly_once_on_success(
-        self, mock_async_openai, mock_tracker
-    ):
-        rc, _ = mock_tracker
-        _, _, response = mock_async_openai
-        msgs = [{"role": "user", "content": "x"}]
-        await llm_call(
-            function_name="my_fn", messages=msgs, model="gpt-5.4",
-            reasoning_level="low",
-        )
+    async def test_record_call_invoked_on_success_with_provider(self, _seed_keys, _stub_tracker):
+        rc, _ = _stub_tracker
+        response = _make_normalized(provider="openai", model="gpt-5.4")
+        openai_p = _provider_with_make_call("openai", response, "OPENAI_API_KEY")
+        with patch("analytics.utils.llm.get_provider", return_value=openai_p):
+            await llm_call("my_fn", [{"role": "user", "content": "x"}], "gpt-5.4", "low")
         rc.assert_called_once()
-        # Bind by parameter name so positional/kwarg refactors of record_call
-        # don't silently break the assertion.
-        bound = _bind(rc, _record_call_sig)
-        assert bound["function_name"] == "my_fn"
-        assert bound["model"] == "gpt-5.4"
-        assert bound["messages"] is msgs
-        assert bound["response"] is response
-        assert isinstance(bound["duration"], float)
-        assert bound["duration"] >= 0
-        assert bound["start_ts"] is not None
+        # `provider` arrives as a kwarg from the orchestrator.
+        assert rc.call_args.kwargs.get("provider") == "openai"
 
-    async def test_record_error_invoked_when_sdk_raises_then_reraises(
-        self, mock_async_openai, mock_tracker
-    ):
-        rc, re_ = mock_tracker
-        _, client, _ = mock_async_openai
-        client.responses.create.side_effect = RuntimeError("api boom")
+    async def test_record_error_invoked_on_nonretryable_then_reraises(
+            self, _seed_keys, _stub_tracker):
+        from analytics.utils.llm_providers.base import ProviderError
+        rc, re_ = _stub_tracker
 
-        with pytest.raises(RuntimeError, match="api boom"):
-            await llm_call(
-                function_name="my_fn", messages=[], model="gpt-5.4",
-                reasoning_level="low",
-            )
+        underlying = RuntimeError("client bug")
+        bad_provider = MagicMock()
+        bad_provider.name = "openai"
+        bad_provider.api_key_setting = "OPENAI_API_KEY"
+        bad_provider.make_call = AsyncMock(side_effect=ProviderError(
+            underlying, is_retryable=False, provider="openai",
+        ))
 
+        with patch("analytics.utils.llm.get_provider", return_value=bad_provider):
+            with pytest.raises(RuntimeError, match="client bug"):
+                await llm_call("f", [], "gpt-5.4", "low")
         re_.assert_called_once()
-        bound = _bind(re_, _record_error_sig)
-        assert bound["function_name"] == "my_fn"
-        assert bound["model"] == "gpt-5.4"
-        assert isinstance(bound["duration"], float)
-        assert isinstance(bound["error"], RuntimeError)
-        assert bound["start_ts"] is not None
-        # And record_call must NOT have been invoked.
-        rc.assert_not_called()
-
-    async def test_record_error_invoked_when_parse_raises(
-        self, mock_async_openai, mock_tracker
-    ):
-        rc, re_ = mock_tracker
-        _, client, _ = mock_async_openai
-        client.responses.parse.side_effect = RuntimeError("parse boom")
-
-        with pytest.raises(RuntimeError):
-            await llm_call(
-                function_name="f", messages=[], model="m", reasoning_level="low",
-                response_format=_ExampleSchema,
-            )
-        re_.assert_called_once()
-        bound = _bind(re_, _record_error_sig)
-        assert isinstance(bound["error"], RuntimeError)
         rc.assert_not_called()
 
 
-# -- Client lifecycle -----------------------------------------------------
+# -- Missing API key short-circuit ---------------------------------------
 
-class ClientLifecycleTests:
+class MissingApiKeyTests:
 
-    async def test_client_closed_on_success(self, mock_async_openai):
-        _, client, _ = mock_async_openai
-        await llm_call(function_name="f", messages=[], model="m", reasoning_level="low")
-        client.close.assert_awaited_once()
-
-    async def test_client_closed_on_exception(self, mock_async_openai):
-        _, client, _ = mock_async_openai
-        client.responses.create.side_effect = RuntimeError("boom")
-        with pytest.raises(RuntimeError):
-            await llm_call(function_name="f", messages=[], model="m", reasoning_level="low")
-        client.close.assert_awaited_once()
+    async def test_missing_key_raises_runtime_error_without_attempting_call(
+            self, _stub_tracker):
+        from analytics.utils import llm as llm_mod
+        # Force the cache to report missing for OpenAI specifically.
+        llm_mod._API_KEY_CACHE["OPENAI_API_KEY"] = ""
+        llm_mod._API_KEY_CACHE["ANTHROPIC_API_KEY"] = "x"
+        try:
+            response = _make_normalized()
+            p = _provider_with_make_call("openai", response, "OPENAI_API_KEY")
+            with patch("analytics.utils.llm.get_provider", return_value=p):
+                with pytest.raises(RuntimeError, match="OPENAI_API_KEY is not set"):
+                    await llm_call("f", [], "gpt-5.4", "low")
+            p.make_call.assert_not_awaited()
+            # The failure is still recorded so the dev panel / LLMCall table
+            # surface the misconfig.
+            re_ = _stub_tracker[1]
+            re_.assert_called_once()
+        finally:
+            llm_mod._API_KEY_CACHE.clear()

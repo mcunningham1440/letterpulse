@@ -71,13 +71,36 @@ const DevPanel = (function () {
         </div>`;
     }
 
+    function _providerChip(provider) {
+        // Subtle colored pill so OpenAI vs Anthropic calls are scannable at a glance.
+        if (!provider) return '';
+        const colors = { openai: '#10a37f', anthropic: '#cc785c' };
+        const bg = colors[provider] || '#666';
+        return '<span style="background:' + bg + ';color:#fff;border-radius:3px;'
+            + 'padding:0 4px;font-size:10px;margin-right:4px;text-transform:uppercase;">'
+            + esc(provider) + '</span>';
+    }
+
+    function _fellBackBanner(extra) {
+        if (!extra || !extra.fell_back_from) return '';
+        const from = esc(extra.fell_back_from);
+        const fromProv = extra.fell_back_from_provider
+            ? ' (' + esc(extra.fell_back_from_provider) + ')' : '';
+        return '<div style="background:#3a2a1a;color:#ffb86c;border-left:3px solid #ffb86c;'
+            + 'padding:4px 8px;margin-bottom:4px;font-size:11px;">'
+            + '↩︎ fell back from ' + from + fromProv
+            + '</div>';
+    }
+
     function _renderCall(call, idx) {
         const id = 'dpc_' + idx;
+        const extra = call.extra_info || {};
         return `
         <div style="border-bottom:1px solid #333;padding:8px 12px;">
             <div class="dp-toggle" data-target="${id}" style="cursor:pointer;display:flex;justify-content:space-between;align-items:center;">
                 <span>
                     <span style="color:#569cd6;">[${idx + 1}]</span>
+                    ${_providerChip(call.provider)}
                     <span style="color:#dcdcaa;">${esc(call.function_name)}</span>
                     <span style="color:#888;">(${esc(call.model)})</span>
                 </span>
@@ -89,7 +112,8 @@ const DevPanel = (function () {
                 </span>
             </div>
             <div id="${id}" style="display:none;margin-top:6px;">
-                <div style="margin-bottom:4px;"><b style="color:#c586c0;">Model:</b> ${esc(call.model)}</div>
+                ${_fellBackBanner(extra)}
+                <div style="margin-bottom:4px;"><b style="color:#c586c0;">Provider:</b> ${esc(call.provider || '—')} &nbsp; <b style="color:#c586c0;">Model:</b> ${esc(call.model)}</div>
                 ${_collapsible(id + '_inputs', 'Input Messages', _renderInputMessages(call, id))}
                 <div style="margin-bottom:4px;"><b style="color:#c586c0;">Runtime:</b> ${fmtTime(call.runtime_seconds)}</div>
                 ${_collapsible(id + '_out', 'Output', _pre(call.output_text))}
@@ -168,10 +192,17 @@ const DevPanel = (function () {
 
     function _usageBlock(usage, type) {
         if (type === 'input') {
+            // Anthropic-only: cache_creation_tokens (cache writes) — render
+            // only when nonzero so OpenAI rows don't get a confusing 0 line.
+            const cacheCreate = usage.cache_creation_tokens || 0;
+            const cacheCreateRow = cacheCreate
+                ? '<div><span style="color:#9cdcfe;">Cache write:</span> ' + fmtTokens(cacheCreate) + '</div>'
+                : '';
             return `
             <div style="padding-left:12px;">
                 <div><span style="color:#9cdcfe;">New:</span> ${fmtTokens(usage.new_tokens)}</div>
                 <div><span style="color:#9cdcfe;">Cached:</span> ${fmtTokens(usage.cached_tokens)}</div>
+                ${cacheCreateRow}
                 <div><span style="color:#9cdcfe;">Total:</span> ${fmtTokens(usage.total_tokens)}</div>
                 <div><span style="color:#4ec9b0;">Cost:</span> ${fmt$(usage.cost)}</div>
             </div>`;
