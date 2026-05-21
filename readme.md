@@ -4,7 +4,7 @@ LetterPulse is an LLM-powered application designed to assist Beehiiv newsletter 
 
 It works by pulling each user's click data from Beehiiv, identifying the topics and link types their subscribers actually engage with, and using that signal to power the two capabilities below.
 
-This is a personal project that I test-marketed but decided not to launch. I may return to it someday if the circumstances are right.
+This is a personal project that I test-marketed an early version of but decided not to launch. I may return to it someday if the circumstances are right. It is currently in an incomplete state, with some features not yet fully developed.
 
 ## Capabilities
 
