@@ -38,6 +38,7 @@ import json
 import logging
 from typing import Any, List, Optional
 
+import anthropic
 from anthropic import (
     APIConnectionError,
     APITimeoutError,
@@ -48,12 +49,13 @@ from anthropic import (
 
 # Newer 5xx classes that may not exist on every SDK version — pull
 # defensively so the import doesn't explode on an older anthropic install.
-_extra_retryable = []
-for _name in ("OverloadedError", "ServiceUnavailableError", "DeadlineExceededError"):
-    try:
-        _extra_retryable.append(getattr(__import__('anthropic'), _name))
-    except AttributeError:
-        pass
+_extra_retryable = [
+    exc for exc in (
+        getattr(anthropic, name, None)
+        for name in ("OverloadedError", "ServiceUnavailableError", "DeadlineExceededError")
+    )
+    if exc is not None
+]
 
 from .base import NormalizedResponse, NormalizedUsage, ProviderError
 

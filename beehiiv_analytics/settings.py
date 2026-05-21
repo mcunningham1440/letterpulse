@@ -332,13 +332,6 @@ LLM_PRICING = {
     },
 }
 
-ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
-
-try:
-    ANTHROPIC_API_KEY = json.loads(ANTHROPIC_API_KEY)["ANTHROPIC_API_KEY"]
-except (json.JSONDecodeError, KeyError, TypeError):
-    pass  # Already a plain string, use as-is
-
 # A model NOT in this dict gets no fallback (raises on the
 # first retryable failure). Keep the mapping explicit so a typo in a model
 # name doesn't silently disable the safety net.

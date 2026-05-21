@@ -208,7 +208,7 @@ class ToolTranslationTests:
         kwargs = client.messages.create.await_args.kwargs
         assert kwargs["thinking"] == {"type": "disabled"}
         # output_config should be empty/absent (no effort when thinking off).
-        assert kwargs.get("output_config") in (None, {}, ...) or "output_config" not in kwargs
+        assert not kwargs.get("output_config")
 
 
 # -- Reasoning-effort mapping ---------------------------------------------

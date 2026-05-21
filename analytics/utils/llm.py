@@ -164,10 +164,10 @@ async def _single_attempt(provider, model, call_kwargs, *, extra_info=None):
     Raises ProviderError on failure (whether retryable or not — the
     orchestrator decides what to do).
 
-    Missing API key is treated as a configuration error: raises immediately
-    after logging an LLMCall row, *without* wrapping in ProviderError, so the
-    orchestrator doesn't try to fall back (which would just mask the bug
-    if the other side is also misconfigured).
+    Missing API key is treated as a non-retryable configuration error and
+    raised as ProviderError(is_retryable=False). The orchestrator unwraps
+    it back to the underlying RuntimeError, so callers see the same
+    surfaced exception regardless of which provider it came from.
     """
     api_key = _get_api_key(provider.api_key_setting)
     if not api_key:
@@ -179,7 +179,7 @@ async def _single_attempt(provider, model, call_kwargs, *, extra_info=None):
             call_kwargs['function_name'], model, 0.0, err,
             start_ts=start_ts, provider=provider.name, extra_info=extra_info,
         )
-        raise err
+        raise ProviderError(err, is_retryable=False, provider=provider.name)
 
     start_ts = dj_timezone.now()
     start_time = time.time()
@@ -200,12 +200,3 @@ async def _single_attempt(provider, model, call_kwargs, *, extra_info=None):
         provider=provider.name, extra_info=extra_info,
     )
     return response
-
-
-# ---------------------------------------------------------------------------
-# Back-compat re-export
-# ---------------------------------------------------------------------------
-# Tests that pre-date the multi-provider split patch `analytics.utils.llm.AsyncOpenAI`
-# directly. Keep the symbol available here so those patches still work. Production
-# code should import AsyncOpenAI from analytics.utils.llm_providers.openai_provider.
-from openai import AsyncOpenAI  # noqa: E402,F401
