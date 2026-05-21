@@ -10,7 +10,7 @@ VOLUME_NAME="letterpulse_pg_data"
 PG_IMAGE="postgres:16"
 PG_DB="letterpulse"
 PG_USER="letterpulse"
-PG_PASSWORD="letterpulse"
+PG_PASSWORD="devpassword"
 # Host-side port. We use 5433 (not 5432) because there's commonly a native
 # Postgres bound to 127.0.0.1:5432 on dev machines, and loopback bindings
 # win over wildcard bindings on macOS, which would silently route Django's
