@@ -10,6 +10,11 @@ Context is supplied via contextvars so call sites don't need to thread
 user / publication / task / section through every function signature.
 asyncio.Task inherits the context at creation, so parallel sections in
 asyncio.gather each see their own section_name without cross-talk.
+
+`record_call` and `record_error` accept a `NormalizedResponse` and a
+`provider` string. Token splits and dev-panel pricing are derived from
+the normalized usage object, which both providers populate identically
+(except `cache_creation_tokens`, which only Anthropic emits).
 """
 
 import contextvars
@@ -80,21 +85,41 @@ def seed_tracking(prior_data):
     _tracker_start.set(time.time())
 
 
-def record_call(function_name, model, messages, response, duration, start_ts=None):
+def record_call(function_name, model, messages, response, duration, start_ts=None,
+                provider='', extra_info=None):
+    """Record a successful LLM call.
+
+    `response` is a NormalizedResponse (from analytics.utils.llm_providers.base).
+    `provider` is 'openai' | 'anthropic' — written verbatim to LLMCall.provider.
+    `extra_info` is merged into the additional_info dict (e.g. the orchestrator
+    passes {'fell_back_from': ...} when this call won via fallback).
+
+    Always enqueues a DB row; also appends to the dev-panel accumulator when
+    local tracking is active.
     """
-    Record a successful LLM call. Always enqueues a DB row; also appends
-    to the dev-panel accumulator when local tracking is active.
-    """
-    input_tokens = response.usage.input_tokens
-    cached_tokens = response.usage.input_tokens_details.cached_tokens
-    new_input_tokens = input_tokens - cached_tokens
-    output_tokens = response.usage.output_tokens
-    reasoning_tokens = response.usage.output_tokens_details.reasoning_tokens
-    response_tokens = output_tokens - reasoning_tokens
+    usage = getattr(response, 'usage', None)
+    if usage is None:
+        new_input_tokens = cached_tokens = cache_creation = 0
+        response_tokens = reasoning_tokens = 0
+    else:
+        new_input_tokens = int(getattr(usage, 'input_tokens', 0) or 0)
+        cached_tokens = int(getattr(usage, 'cached_input_tokens', 0) or 0)
+        cache_creation = int(getattr(usage, 'cache_creation_tokens', 0) or 0)
+        response_tokens = int(getattr(usage, 'output_tokens', 0) or 0)
+        reasoning_tokens = int(getattr(usage, 'reasoning_tokens', 0) or 0)
+
+    row_extra = dict(extra_info or {})
+    if cache_creation:
+        # cache_creation_tokens lives in additional_info (Anthropic-only signal,
+        # nonzero only when prompt caching actually writes a new prefix). Kept
+        # out of the column set so we don't need a second migration for a
+        # provider-specific token category.
+        row_extra['cache_creation_tokens'] = cache_creation
 
     _enqueue_llm_row(
         function_name=function_name,
         model=model,
+        provider=provider,
         duration=duration,
         start_ts=start_ts,
         success=True,
@@ -102,6 +127,7 @@ def record_call(function_name, model, messages, response, duration, start_ts=Non
         input_tokens_new=new_input_tokens,
         output_tokens_reasoning=reasoning_tokens,
         output_tokens_response=response_tokens,
+        extra_info=row_extra,
     )
 
     calls = _tracker_calls.get()
@@ -109,15 +135,21 @@ def record_call(function_name, model, messages, response, duration, start_ts=Non
         return
 
     input_messages = _serialize_input_messages(messages)
-    output_text = _extract_output(response)
+    output_text = getattr(response, 'output_text', '') or ''
 
     pricing = settings.LLM_PRICING.get(model, {})
     input_cost = _token_cost(new_input_tokens, pricing.get('input_per_million', 0))
     cached_cost = _token_cost(cached_tokens, pricing.get('cached_input_per_million', 0))
-    output_cost = _token_cost(output_tokens, pricing.get('output_per_million', 0))
+    cache_write_cost = _token_cost(cache_creation, pricing.get('cache_write_per_million', 0))
+    output_cost = _token_cost(response_tokens + reasoning_tokens,
+                              pricing.get('output_per_million', 0))
 
-    calls.append({
+    total_input_tokens = new_input_tokens + cached_tokens + cache_creation
+    total_output_tokens = response_tokens + reasoning_tokens
+
+    call_dict = {
         'function_name': function_name,
+        'provider': provider,
         'model': model,
         'input_messages': input_messages,
         'runtime_seconds': round(duration, 3),
@@ -125,29 +157,36 @@ def record_call(function_name, model, messages, response, duration, start_ts=Non
         'input_usage': {
             'new_tokens': new_input_tokens,
             'cached_tokens': cached_tokens,
-            'total_tokens': input_tokens,
-            'cost': round(input_cost + cached_cost, 6),
+            'cache_creation_tokens': cache_creation,
+            'total_tokens': total_input_tokens,
+            'cost': round(input_cost + cached_cost + cache_write_cost, 6),
         },
         'output_usage': {
             'reasoning_tokens': reasoning_tokens,
             'response_tokens': response_tokens,
-            'total_tokens': output_tokens,
+            'total_tokens': total_output_tokens,
             'cost': round(output_cost, 6),
         },
-        'total_cost': round(input_cost + cached_cost + output_cost, 6),
-    })
+        'total_cost': round(input_cost + cached_cost + cache_write_cost + output_cost, 6),
+    }
+    if row_extra:
+        call_dict['extra_info'] = row_extra
+    calls.append(call_dict)
 
 
-def record_error(function_name, model, duration, error, start_ts=None):
+def record_error(function_name, model, duration, error, start_ts=None,
+                 provider='', extra_info=None):
     """Record a failed LLM call (exception raised before a response was returned)."""
     _enqueue_llm_row(
         function_name=function_name,
         model=model,
+        provider=provider,
         duration=duration,
         start_ts=start_ts,
         success=False,
         error_type=type(error).__name__,
         error_message=str(error)[:5000],
+        extra_info=extra_info,
     )
 
 
@@ -164,15 +203,16 @@ def finish_tracking():
 
     wall_clock = round(time.time() - start_time, 3)
 
-    tot_new_input = sum(c['input_usage']['new_tokens'] for c in calls)
-    tot_cached = sum(c['input_usage']['cached_tokens'] for c in calls)
-    tot_input = sum(c['input_usage']['total_tokens'] for c in calls)
-    tot_input_cost = sum(c['input_usage']['cost'] for c in calls)
+    tot_new_input = sum(c['input_usage'].get('new_tokens', 0) for c in calls)
+    tot_cached = sum(c['input_usage'].get('cached_tokens', 0) for c in calls)
+    tot_cache_create = sum(c['input_usage'].get('cache_creation_tokens', 0) for c in calls)
+    tot_input = sum(c['input_usage'].get('total_tokens', 0) for c in calls)
+    tot_input_cost = sum(c['input_usage'].get('cost', 0) for c in calls)
 
-    tot_reasoning = sum(c['output_usage']['reasoning_tokens'] for c in calls)
-    tot_response = sum(c['output_usage']['response_tokens'] for c in calls)
-    tot_output = sum(c['output_usage']['total_tokens'] for c in calls)
-    tot_output_cost = sum(c['output_usage']['cost'] for c in calls)
+    tot_reasoning = sum(c['output_usage'].get('reasoning_tokens', 0) for c in calls)
+    tot_response = sum(c['output_usage'].get('response_tokens', 0) for c in calls)
+    tot_output = sum(c['output_usage'].get('total_tokens', 0) for c in calls)
+    tot_output_cost = sum(c['output_usage'].get('cost', 0) for c in calls)
 
     tot_cost = sum(c['total_cost'] for c in calls)
 
@@ -183,6 +223,7 @@ def finish_tracking():
             'input_usage': {
                 'new_tokens': tot_new_input,
                 'cached_tokens': tot_cached,
+                'cache_creation_tokens': tot_cache_create,
                 'total_tokens': tot_input,
                 'cost': round(tot_input_cost, 6),
             },
@@ -206,16 +247,17 @@ def finish_tracking():
 # Internals
 # ---------------------------------------------------------------------------
 
-def _enqueue_llm_row(*, function_name, model, duration, start_ts, success,
+def _enqueue_llm_row(*, function_name, model, provider, duration, start_ts, success,
                      input_tokens_cached=0, input_tokens_new=0,
                      output_tokens_reasoning=0, output_tokens_response=0,
-                     error_type='', error_message=''):
+                     error_type='', error_message='', extra_info=None):
     """Build an LLMCall entry dict and hand it to log_sink. Never raises."""
     try:
         from .logsink import log_sink
         now = timezone.now()
         ts_start = (now - timedelta(seconds=duration)) if start_ts is None else start_ts
-        additional_info = _additional_info_ctx.get() or {}
+        ctx_extra = _additional_info_ctx.get() or {}
+        merged_extra = {**ctx_extra, **(extra_info or {})}
         log_sink.put({
             '_target': 'LLMCall',
             'ts_start': ts_start,
@@ -224,6 +266,7 @@ def _enqueue_llm_row(*, function_name, model, duration, start_ts, success,
             'publication_id': _publication_id_ctx.get(),
             'function_name': function_name,
             'model': model,
+            'provider': provider or '',
             'input_tokens_cached': input_tokens_cached,
             'input_tokens_new': input_tokens_new,
             'output_tokens_reasoning': output_tokens_reasoning,
@@ -233,7 +276,7 @@ def _enqueue_llm_row(*, function_name, model, duration, start_ts, success,
             'error_message': error_message,
             'task_id': _task_id_ctx.get(),
             'task_kind': _task_kind_ctx.get(),
-            'additional_info': dict(additional_info),
+            'additional_info': dict(merged_extra),
         })
     except Exception:
         # Telemetry must never break the app.
@@ -294,24 +337,3 @@ def _serialize_input_messages(messages):
 
         out.append({'label': label, 'text': text})
     return out
-
-
-def _extract_output(response):
-    """Extract text content from the OpenAI response output."""
-    output = getattr(response, 'output', [])
-    parts = []
-    for item in output:
-        if hasattr(item, 'content') and item.content:
-            for content_piece in item.content:
-                if hasattr(content_piece, 'text'):
-                    parts.append(content_piece.text)
-        elif hasattr(item, 'type') and item.type == 'function_call':
-            name = getattr(item, 'name', '')
-            args = getattr(item, 'arguments', '')
-            parts.append(f"[tool_call: {name}] {args}")
-    if not parts:
-        item_types = [getattr(item, 'type', None) for item in output]
-        logger.warning(
-            "_extract_output produced no text; output item types=%r", item_types,
-        )
-    return '\n'.join(parts) if parts else ''
