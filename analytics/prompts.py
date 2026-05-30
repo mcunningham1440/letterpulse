@@ -161,6 +161,7 @@ Rules and tips:
 - You can filter by domain using the "domains" arg (NOT using 'site:' prefixes on query args!). If top-performing results seem to consistently come from the same set of domains,
 try including targeted searches for these domains. Be sure to include whole-web searches as well, however, and only limit to a domain if it appears multiple times in the prior links
 - You can also use the max_days_ago parameter to restrict results by date
+- Do not include dates in your search terms, for example: "artificial intelligence medical diagnosis accuracy May 2026". Instead, search "artificial intelligence medical diagnosis accuracy" and use max_days_ago to restrict to recent content
 
 CRITICAL: You MUST NOT use 'site:' prefixes in queries! To filter by domain, use the 'domains' parameter instead.
 """

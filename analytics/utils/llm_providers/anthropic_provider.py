@@ -27,9 +27,11 @@ Notable provider differences handled here:
 - **Tool input schema.** OpenAI tool dicts get translated to Claude's
   `{name, description, input_schema}` shape via `_translate_tools`.
 
-Token usage: Claude doesn't expose a thinking-tokens count separate from
-`output_tokens`, so `reasoning_tokens` is always 0 on this path.
-`cache_creation_tokens` (cache writes) is recorded separately.
+Token usage: Claude reports thinking tokens inside `output_tokens`, with a
+separate `output_tokens_details.thinking_tokens` breakdown. We subtract it
+out of `output_tokens` and surface it on `reasoning_tokens` to match the
+OpenAI normalization convention (response_tokens = all-output minus
+reasoning). `cache_creation_tokens` (cache writes) is recorded separately.
 """
 
 from __future__ import annotations
@@ -482,9 +484,11 @@ def _extract_usage(response) -> NormalizedUsage:
 
     `cache_read_input_tokens` is the count of tokens served from cache.
 
-    There's no per-call thinking-tokens breakdown in the response — thinking
-    is billed inside `output_tokens`. We surface 0 in `reasoning_tokens` so
-    the LLMCall split is consistent (response_tokens = all output).
+    Thinking tokens are reported by the API at
+    `output_tokens_details.thinking_tokens` and are already counted inside
+    the gross `output_tokens` value. We split them out into `reasoning_tokens`
+    and net them out of `output_tokens` so the result mirrors OpenAI's
+    convention (response_tokens = all output minus reasoning).
     """
     u = getattr(response, 'usage', None)
     if u is None:
@@ -495,10 +499,28 @@ def _extract_usage(response) -> NormalizedUsage:
     cache_create = int(getattr(u, 'cache_creation_input_tokens', 0) or 0)
     output = int(getattr(u, 'output_tokens', 0) or 0)
 
+    # `output_tokens_details` is not a declared field on anthropic.types.Usage
+    # in SDK 0.103 — it arrives via Pydantic's model_extra and shows up as a
+    # plain dict, not an attribute-accessible object. Handle both shapes so
+    # the extractor keeps working if the SDK promotes it to a typed model
+    # later. Also fall back to model_extra if the field isn't surfaced via
+    # getattr on the live SDK Usage instance.
+    thinking = 0
+    out_details = getattr(u, 'output_tokens_details', None)
+    if out_details is None:
+        extra = getattr(u, 'model_extra', None) or {}
+        out_details = extra.get('output_tokens_details')
+    if isinstance(out_details, dict):
+        thinking = int(out_details.get('thinking_tokens', 0) or 0)
+    elif out_details is not None:
+        thinking = int(getattr(out_details, 'thinking_tokens', 0) or 0)
+
+    response_tokens = max(0, output - thinking)
+
     return NormalizedUsage(
         input_tokens=new_input,
         cached_input_tokens=cache_read,
         cache_creation_tokens=cache_create,
-        output_tokens=output,
-        reasoning_tokens=0,
+        output_tokens=response_tokens,
+        reasoning_tokens=thinking,
     )
